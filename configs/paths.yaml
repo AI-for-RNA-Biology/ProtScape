@@ -1,0 +1,13 @@
+data_root: /storage/research/dbmr_luisierlab/database/PINNACLE/data
+networks_bulk: /storage/research/dbmr_luisierlab/database/PINNACLE/data/networks_bulk
+global_ppi: /storage/research/dbmr_luisierlab/database/PINNACLE/networks/global_ppi_edgelist.txt
+raw_data_root: /storage/research/dbmr_luisierlab/database
+inference_root: /storage/research/dbmr_luisierlab/database/PINNACLE/inference
+output_root: /storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo
+
+als_motor_neuron_kallisto: /storage/research/dbmr_luisierlab/temp/zmxu/ALS_Compartmentalization/3UTR_Quant/data/hg38_kallisto/output
+als_motor_neuron_metadata: /storage/research/dbmr_luisierlab/group/genomics/zmxu/ALS_Compartmentalization/data/Metadata/SraRunTable.txt
+als_astrocyte_kallisto: /storage/research/dbmr_luisierlab/group/genomics/zmxu/Astrocytes_PRJNA672040/3UTR_Quant/data/BAM/kallisto/output
+als_astrocyte_metadata: /storage/research/dbmr_luisierlab/group/genomics/zmxu/Astrocytes_PRJNA672040/3UTR_Quant/data/Metadata/SraRunTable.txt
+
+cellphonedb_database: /storage/homefs/at25c279/.cpdb/releases/v3.0.0/cellphone.db

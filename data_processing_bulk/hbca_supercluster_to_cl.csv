@@ -1,0 +1,15 @@
+﻿supercluster,cl_id,cl_name
+CGE interneuron,CL:4023064,caudal ganglionic eminence derived cortical interneuron
+MGE interneuron,CL:4023063,medial ganglionic eminence derived interneuron
+Medium spiny neuron,CL:1001474,medium spiny neuron
+Midbrain-derived inhibitory,CL:4023079,midbrain-derived inhibitory neuron
+Amygdala excitatory,CL:4023039,amygdala excitatory neuron
+Thalamic excitatory,CL:4023068,thalamic excitatory neuron
+Deep-layer corticothalamic and 6b,CL:4023038,L6b glutamatergic cortical neuron
+Hippocampal CA1-3,CL:4023060,hippocampal CA1-3 neuron
+LAMP5-LHX6 and Chandelier,CL:4042013,Lamp5 Lhx6 neuron
+Eccentric medium spiny neuron,CL:4030057,eccentric medium spiny neuron
+Deep-layer near-projecting,CL:4023012,near-projecting glutamatergic cortical neuron
+Mammillary body,CL:4023074,mammillary body neuron
+Cerebellar inhibitory,CL:4023057,cerebellar inhibitory GABAergic interneuron
+Hippocampal CA4,CL:4023061,hippocampal CA4 neuron

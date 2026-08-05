@@ -1,0 +1,103 @@
+"""Checkpoint loading helpers for the paper models."""
+
+import importlib
+import sys
+from pathlib import Path
+
+import torch
+from omegaconf import DictConfig
+
+from .models.hierarchical_model import hierarchical_model
+from .models.pinnacle_model import Pinnacle
+
+
+# The original checkpoints stored complete Python model objects under these
+# module names. The aliases let trusted paper checkpoints load after the code
+# was moved into the ``pretraining`` package.
+_LEGACY_MODULES = {
+    "models": "pretraining.models",
+    "models.attention": "pretraining.models.attention",
+    "models.cell_modules": "pretraining.models.cell_modules",
+    "models.custom_gnn": "pretraining.models.custom_gnn",
+    "models.hierarchical_model": "pretraining.models.hierarchical_model",
+    "models.pinnacle_conv": "pretraining.models.pinnacle_conv",
+    "models.pinnacle_model": "pretraining.models.pinnacle_model",
+    "models.protein_modules": "pretraining.models.protein_modules",
+    "s2gae_utils": "pretraining.s2gae_utils",
+}
+
+
+def load_legacy_checkpoint(path, map_location="cpu", mmap=False):
+    """Load one of the trusted, full-object checkpoints produced for the paper."""
+    previous_modules = {name: sys.modules.get(name) for name in _LEGACY_MODULES}
+    try:
+        for old_name, new_name in _LEGACY_MODULES.items():
+            sys.modules[old_name] = importlib.import_module(new_name)
+        return torch.load(
+            Path(path),
+            map_location=map_location,
+            mmap=mmap,
+            weights_only=False,
+        )
+    finally:
+        for name, previous in previous_modules.items():
+            if previous is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = previous
+
+
+def model_state_dict(checkpoint):
+    """Return a state dictionary from either legacy or portable checkpoints."""
+    if "model_state_dict" in checkpoint:
+        return checkpoint["model_state_dict"]
+
+    model = checkpoint["model"]
+    return model if isinstance(model, dict) else model.state_dict()
+
+
+def load_protscape_model(checkpoint, ppi_data, device="cpu"):
+    """Rebuild ProtScape and load a portable state-dictionary checkpoint."""
+    config = checkpoint["config"]
+    model = hierarchical_model(
+        config["hierarchical_mode"],
+        config["protein_config"].copy(),
+        config["cell_config"].copy(),
+        DictConfig(config["tissue_config"]),
+        ppi_data,
+        device,
+        s2gae_config=config.get("s2gae_config"),
+        use_metagraph=config.get("use_metagraph", False),
+        graph_saint_norm=config.get("graph_saint_norm", False),
+        uniformity_dim=config.get("uniformity_config", {}).get("dim", 0),
+    )
+    model.load_state_dict(model_state_dict(checkpoint))
+
+    cell_memory = getattr(model.cell_encoder, "cell_memory_layers", None)
+    if cell_memory is not None and "cell_memory_step" in checkpoint:
+        cell_memory.step = int(checkpoint["cell_memory_step"])
+
+    return model.to(device).eval()
+
+
+def load_pinnacle_model(checkpoint, ppi_data, device="cpu"):
+    """Rebuild the adapted PINNACLE comparator from a portable checkpoint."""
+    config = checkpoint["config"]
+    if set(ppi_data) != set(range(len(ppi_data))):
+        raise ValueError("PINNACLE expects contiguous cell IDs starting at zero.")
+    model = Pinnacle(
+        config["gnn_method"],
+        config["input_dim"],
+        config["hidden"],
+        config["output"],
+        config["num_ppi_relations"],
+        config["num_mg_relations"],
+        ppi_data,
+        config["n_heads"],
+        config["pc_att_channels"],
+        config["dropout"],
+        shared_ppi_gnn=config.get("shared_ppi_gnn", False),
+        device=device,
+    )
+    model.load_state_dict(model_state_dict(checkpoint))
+    return model.to(device).eval()

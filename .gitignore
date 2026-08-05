@@ -1,0 +1,32 @@
+__pycache__/
+*.py[cod]
+*.so
+
+.env
+.venv/
+env/
+venv/
+.ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
+
+*.log
+*.out
+*.err
+.DS_Store
+
+# Large inputs are distributed separately from the source repository.
+data/*
+!data/README.md
+*.pt
+*.pth
+*.plk
+*.pkl
+*.h5ad
+*.npz
+*.parquet
+
+# Guard against accidental local outputs; normal runs use the external path
+# configured in configs/paths.yaml.
+outputs/
+outputs_protscape_repo/

@@ -1,0 +1,16 @@
+name: protscape-cellphonedb
+channels:
+  - conda-forge
+dependencies:
+  - python=3.7.13
+  - numpy=1.19.5
+  - pandas=1.1.4
+  - scipy=1.7.3
+  - scikit-learn=0.22
+  - anndata=0.7.8
+  - h5py=2.10.0
+  - r-base=3.6.1
+  - pip
+  - pip:
+      - cellphonedb==3.1.0
+      - rpy2==3.5.4
