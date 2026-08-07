@@ -82,6 +82,22 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--cell-embedding-file",
+        default="cell_embeddings.pt",
+        help="Cell representation file within the inference directory.",
+    )
+    parser.add_argument(
+        "--output-model-key",
+        default=None,
+        help="Optional output folder name for a selected configuration.",
+    )
+    parser.add_argument("--scope", default="")
+    parser.add_argument("--disease", default="")
+    parser.add_argument("--inference-key", default="")
+    parser.add_argument("--inference-label", default="")
+    parser.add_argument("--readout-key", default="")
+    parser.add_argument("--readout-label", default="")
+    parser.add_argument(
         "--task",
         help="corum or one of the 15 therapeutic_target_<disease_id> tasks.",
     )
@@ -270,7 +286,10 @@ def main():
         print(f"[ERROR] Inference model not found: {inference_path}")
         return 1
     else:
-        hc_paths = get_hc_embedding_paths(inference_path)
+        hc_paths = get_hc_embedding_paths(
+            inference_path,
+            cell_embedding_file=args.cell_embedding_file,
+        )
         if hc_paths["protein_embed"] is None:
             print(f"[ERROR] No HC protein embeddings found in {inference_path}")
             return 1
@@ -342,13 +361,31 @@ def main():
 
         hp_suffix = _build_hp_suffix(variant, config)
         dataset_suffix = "" if config.dataset_mode == "bulk" else f"__data_{config.dataset_mode}"
-        output_model_key = f"{model_key}__hp_{hp_suffix}__emb_{config.embedding_source}{dataset_suffix}"
+        output_model_key = args.output_model_key or (
+            f"{model_key}__hp_{hp_suffix}__emb_{config.embedding_source}"
+            f"{dataset_suffix}"
+        )
 
         output_dir = setup_output_dirs(
             config.output_root,
             args.task,
             args.inference_model,
             output_model_key,
+        )
+        split_arrays = {
+            "genes": np.asarray(shared_genes, dtype=str),
+            **{
+                f"fold_{fold}": np.asarray(indices, dtype=np.int64)
+                for fold, indices in enumerate(shared_split_plan.folds)
+            },
+        }
+        np.savez_compressed(output_dir / "split_indices.npz", **split_arrays)
+        np.save(
+            output_dir / "test_idx.npy",
+            np.asarray(
+                shared_split_plan.folds[shared_split_plan.test_fold_idx],
+                dtype=np.int64,
+            ),
         )
 
         trainer = Trainer(
@@ -377,6 +414,12 @@ def main():
         result["model_key"] = model_key
         result["base_model_key"] = model_key
         result["output_model_key"] = output_model_key
+        result["scope"] = args.scope
+        result["disease"] = args.disease
+        result["inference_key"] = args.inference_key or args.inference_model
+        result["inference_label"] = args.inference_label or args.inference_model
+        result["readout_key"] = args.readout_key or model_key
+        result["readout_label"] = args.readout_label or variant.name
         result["embedding_source"] = config.embedding_source
         result["dataset_mode"] = config.dataset_mode
         result["gene_universe"] = (
@@ -434,6 +477,7 @@ def main():
         result["patience"] = int(config.patience)
 
         save_results_csv(result, output_dir)
+        save_results_csv(result, output_dir, "model_config.csv")
         print(f"[OK] Finished {variant.name} -> {output_dir}")
 
     print(f"Results in: {config.output_root / args.task / args.inference_model}")

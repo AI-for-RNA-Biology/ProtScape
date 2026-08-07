@@ -166,10 +166,13 @@ def load_config(
     )
 
 
-def get_hc_embedding_paths(inference_path: Path) -> Dict[str, Optional[Path]]:
+def get_hc_embedding_paths(
+    inference_path: Path,
+    cell_embedding_file: str = "cell_embeddings.pt",
+) -> Dict[str, Optional[Path]]:
     """Return the canonical contextual protein and cell embedding exports."""
     protein_embed = inference_path / "protein_embeddings.pt"
-    cell_embed = inference_path / "cell_embeddings.pt"
+    cell_embed = inference_path / cell_embedding_file
     missing = [path for path in (protein_embed, cell_embed) if not path.is_file()]
     if missing:
         raise FileNotFoundError(

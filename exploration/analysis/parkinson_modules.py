@@ -294,6 +294,10 @@ def build_module_reactome_enrichment(
     nodes: pd.DataFrame,
     annotations: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    role_by_protein = nodes.set_index("protein")["node_role"].to_dict()
+    expected_roles = {"benchmark_positive", "candidate"}
+    if not set(role_by_protein.values()).issubset(expected_roles):
+        raise ValueError("Reactome enrichment contains an unexpected node role")
     string_by_protein = nodes.set_index("protein")["string_id"].to_dict()
     protein_by_string = {
         string_id: protein
@@ -321,6 +325,20 @@ def build_module_reactome_enrichment(
                 ]
             )
             hits = sorted(module & members)
+            benchmark_hits = [
+                protein
+                for protein in hits
+                if role_by_protein[protein] == "benchmark_positive"
+            ]
+            candidate_hits = [
+                protein
+                for protein in hits
+                if role_by_protein[protein] == "candidate"
+            ]
+            if len(benchmark_hits) + len(candidate_hits) != len(hits):
+                raise RuntimeError(
+                    "Module term hits do not have exactly one target role"
+                )
             fold = (len(hits) / len(module)) / (
                 len(members) / background_size
             )
@@ -334,6 +352,24 @@ def build_module_reactome_enrichment(
                     "term_network_size": len(members),
                     "module_hits": len(hits),
                     "module_hit_genes": ";".join(hits),
+                    "benchmark_positive_hits": len(benchmark_hits),
+                    "benchmark_positive_hit_genes": ";".join(
+                        benchmark_hits
+                    ),
+                    "protscape_candidate_hits": len(candidate_hits),
+                    "protscape_candidate_hit_genes": ";".join(
+                        candidate_hits
+                    ),
+                    "benchmark_positive_hit_percent": (
+                        100 * len(benchmark_hits) / len(hits)
+                        if hits
+                        else np.nan
+                    ),
+                    "protscape_candidate_hit_percent": (
+                        100 * len(candidate_hits) / len(hits)
+                        if hits
+                        else np.nan
+                    ),
                     "fold_enrichment": fold,
                     "p_value": hypergeom.sf(
                         len(hits) - 1,

@@ -14,6 +14,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
 python -m pretraining.generate_esm2_embeddings
+python -m pretraining.generate_prostt5_embeddings
 
 DROPOUT_VALUES=(0 0.2 0.4 0.6)
 PDL_PMAX_VALUES=(0.2 0.3 0.4 0.5 0.6 0.7)

@@ -9,13 +9,13 @@ Set these paths in `configs/paths.yaml`:
 - `inference_root`: pretrained embedding directories.
 - `corum_dataset_dir`: processed CORUM tables.
 - `therapeutic_target_dataset_dir`: processed disease label tables.
-- `protein_sequences`: table used to generate ESM-2 features when needed.
+- `protein_sequences`: table used to generate ESM-2 or ProstT5 features when needed.
 - `esm2_embeddings` and `prostt5_embeddings`: sequence embeddings used by the sequence and late-fusion models.
 - `output_root`: destination for checkpoints, predictions and metrics.
 
 Each `<inference-model>` is a directory below `inference_root` containing `protein_embeddings.pt` and `cell_embeddings.pt`. When using newly generated embeddings, set `inference_root` to `<output_root>/inference`.
 
-The CORUM and therapeutic-target shell scripts generate the configured ESM-2 embedding file first if it is absent.
+The CORUM and therapeutic-target shell scripts generate the configured ESM-2 and ProstT5 embedding files first if they are absent.
 
 The released processed labels are the default inputs. `corum_dataset_dir` must contain `corum_memberships_filtered.csv`; `therapeutic_target_dataset_dir` must contain the 15 `therapeutic_target_<DISEASE_ID>.csv` tables.
 
@@ -54,8 +54,8 @@ Run CORUM once for each pretrained embedding directory:
 ```bash
 bash scripts/run_downstream_corum.sh <inference-model>
 
-# Example for <inference_root>/protscape_main/
-bash scripts/run_downstream_corum.sh protscape_main
+# Example using the released ProtScape embeddings
+bash scripts/run_downstream_corum.sh s2gae_att_k1_fixed_do04_uni5e6
 ```
 
 Run all 15 therapeutic-target disease areas:
@@ -63,12 +63,26 @@ Run all 15 therapeutic-target disease areas:
 ```bash
 bash scripts/run_downstream_tt.sh <inference-model>
 
-# Example for <inference_root>/protscape_main/
-bash scripts/run_downstream_tt.sh protscape_main
+# Example using the released ProtScape embeddings
+bash scripts/run_downstream_tt.sh s2gae_att_k1_fixed_do04_uni5e6
 ```
 
 The scripts evaluate the sequence-only linear baselines, contextual linear models, ABMIL models across dropout values 0, 0.2, 0.4 and 0.6, and ABMIL-PDL models across `pmax` values 0.2--0.7. Model selection uses validation AUPRC.
 
 All outputs are written below `<output_root>/downstream_tasks/`. Each run contains the five fold checkpoints, held-out predictions, training histories and summary metrics. Task-level summaries are generated automatically after each sweep.
 
-The companion release also provides the selected retraining parameters in `models/downstream/corum/selected_hyperparameters.csv` and `models/downstream/therapeutic_targets/selected_hyperparameters.csv`.
+## Selected configurations
+
+The validation-selected settings used in the paper are stored in:
+
+- `configs/downstream/corum_selected_hyperparameters.csv`
+- `configs/downstream/therapeutic_target_selected_hyperparameters.csv`
+
+Retrain every distinct selected configuration with:
+
+```bash
+python -m downstream_tasks.run_selected corum
+python -m downstream_tasks.run_selected therapeutic_targets
+```
+
+These runs are consumed directly by the analysis scripts. The full sweep scripts above remain available for repeating model selection from scratch.

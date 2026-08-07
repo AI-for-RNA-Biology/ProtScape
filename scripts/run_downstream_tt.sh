@@ -14,6 +14,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
 python -m pretraining.generate_esm2_embeddings
+python -m pretraining.generate_prostt5_embeddings
 
 THERAPEUTIC_TASKS=(
     therapeutic_target_efo_0003767

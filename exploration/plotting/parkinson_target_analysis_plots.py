@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import pandas as pd
+from matplotlib.patches import Patch
 
 
 CM = 1 / 2.54
@@ -31,6 +32,11 @@ BAR_EDGE_LINEWIDTH = 0.55
 DATA_LINEWIDTH = 0.8
 TICK_LABEL_SIZE = 6.0
 PANEL_TITLE_SIZE = 7.0
+MODULE_PLOT_HEIGHT_CM = 10.5
+MODULE_TERM_LABEL_SIZE = 8.5
+MODULE_AXIS_LABEL_SIZE = 8.5
+MODULE_TICK_LABEL_SIZE = 8.0
+MODULE_TITLE_SIZE = 9.5
 
 MODULE_COLORS = {
     1: "#4477AA",
@@ -133,6 +139,12 @@ def save_figure(fig: plt.Figure, output_dir: Path, stem: str) -> None:
     plt.close(fig)
 
 
+def lighten_color(color: str, white_fraction: float = 0.58) -> tuple[float, ...]:
+    """Blend a module colour with white for ProtScape-candidate segments."""
+    rgb = np.asarray(matplotlib.colors.to_rgb(color))
+    return tuple(rgb + white_fraction * (1.0 - rgb))
+
+
 def plot_candidate_recovery(source: Path, output: Path) -> None:
     curve = pd.read_csv(source / "parkinson_candidate_recovery_curve.csv")
     summary = pd.read_csv(source / "parkinson_candidate_recovery_summary.csv").set_index("model")
@@ -184,12 +196,10 @@ def plot_external_support(source: Path, output: Path) -> None:
     support_order = [
         "current_opentargets_parkinson_association_non_literature_only",
         "approved_human_drugbank_target_any_indication",
-        "other_opentargets_disease_association",
     ]
     support_labels = {
         support_order[0]: "Current Parkinson\nassociation",
         support_order[1]: "Approved human\nDrugBank target",
-        support_order[2]: "Other Open Targets\ndisease association",
     }
     model_specs = [
         ("protscape", PROTSCAPE_COLOR),
@@ -476,7 +486,6 @@ def plot_string_enrichment(source: Path, output: Path) -> None:
 
 def plot_reactome_modules(source: Path, output: Path) -> None:
     display = pd.read_csv(source / "parkinson_reactome_module_enrichment.csv")
-    composition = pd.read_csv(source / "parkinson_leiden_module_summary.csv").set_index("leiden_cluster")
     for module_id in sorted(MODULE_COLORS):
         rows = display[display["leiden_cluster"].eq(module_id)].sort_values(
             ["fdr", "fold_enrichment", "module_hits", "term"],
@@ -486,32 +495,75 @@ def plot_reactome_modules(source: Path, output: Path) -> None:
             continue
         y = np.arange(len(rows), dtype=float)
         labels = [textwrap.fill(label, width=37, break_long_words=False) for label in rows["description"]]
-        fig, ax = plt.subplots(figsize=figure_size(18.0, 8.9))
+        significance = rows["minus_log10_fdr"].to_numpy(dtype=float)
+        known_fraction = (
+            rows["benchmark_positive_hits"] / rows["module_hits"]
+        ).to_numpy(dtype=float)
+        known_width = significance * known_fraction
+        candidate_width = significance - known_width
+
+        fig, ax = plt.subplots(
+            figsize=figure_size(18.0, MODULE_PLOT_HEIGHT_CM)
+        )
         ax.barh(
-            y, rows["minus_log10_fdr"], height=0.55,
-            color=MODULE_COLORS[module_id], edgecolor="#222222",
+            y, known_width, height=0.55,
+            color=MODULE_COLORS[module_id], edgecolor="none",
+        )
+        ax.barh(
+            y, candidate_width, left=known_width, height=0.55,
+            color=lighten_color(MODULE_COLORS[module_id]), edgecolor="none",
+        )
+        ax.barh(
+            y, significance, height=0.55, color="none", edgecolor="#222222",
             linewidth=BAR_EDGE_LINEWIDTH,
         )
         ax.set_yticks(y)
-        ax.set_yticklabels(labels)
+        ax.set_yticklabels(labels, fontsize=MODULE_TERM_LABEL_SIZE)
         ax.invert_yaxis()
         ax.set_xlim(0, float(rows["minus_log10_fdr"].max()) * 1.04)
-        ax.set_xlabel(r"$-\log_{10}$(FDR)")
+        ax.set_xlabel(
+            r"$-\log_{10}$(FDR)",
+            fontsize=MODULE_AXIS_LABEL_SIZE,
+        )
         ax.set_title(
             textwrap.fill(MODULE_LABELS[module_id], width=52, break_long_words=False),
-            fontweight="bold", pad=28,
-        )
-        module = composition.loc[module_id]
-        ax.text(
-            0.5, 1.015,
-            f"ProtScape candidates: {int(module['protscape_proteins'])}/"
-            f"{int(module['total_proteins'])} proteins ({module['protscape_percent']:.1f}%)",
-            transform=ax.transAxes, ha="center", va="bottom",
-            fontsize=TICK_LABEL_SIZE, color="#555555",
+            fontsize=MODULE_TITLE_SIZE, fontweight="bold", pad=12,
         )
         clean_axes(ax)
-        fig.subplots_adjust(left=0.50, right=0.98, bottom=0.18, top=0.78)
+        ax.tick_params(axis="x", labelsize=MODULE_TICK_LABEL_SIZE)
+        ax.tick_params(axis="y", labelsize=MODULE_TERM_LABEL_SIZE)
+        fig.subplots_adjust(left=0.52, right=0.98, bottom=0.17, top=0.88)
         save_figure(fig, output, f"parkinson_M{module_id}_reactome_top5")
+
+
+def plot_reactome_hit_composition_legend(output: Path) -> None:
+    color = "#555555"
+    handles = [
+        Patch(
+            facecolor=color,
+            edgecolor="#222222",
+            linewidth=BAR_EDGE_LINEWIDTH,
+            label="Known benchmark targets",
+        ),
+        Patch(
+            facecolor=lighten_color(color),
+            edgecolor="#222222",
+            linewidth=BAR_EDGE_LINEWIDTH,
+            label="ProtScape-predicted candidates",
+        ),
+    ]
+    fig, ax = plt.subplots(figsize=figure_size(8.8, 4.0))
+    ax.legend(
+        handles=handles,
+        title="Proteins contributing to enriched term",
+        loc="center",
+        ncol=1,
+        fontsize=MODULE_TERM_LABEL_SIZE,
+        title_fontsize=MODULE_TERM_LABEL_SIZE,
+        frameon=False,
+    )
+    ax.set_axis_off()
+    save_figure(fig, output, "parkinson_reactome_hit_composition_legend")
 
 
 def plot_all(source: Path, output: Path) -> None:
@@ -530,3 +582,4 @@ def plot_all(source: Path, output: Path) -> None:
             "parkinson_known_candidates_experimental_network", "#B8B8B8",
         )
         plot_reactome_modules(source, output)
+        plot_reactome_hit_composition_legend(output)

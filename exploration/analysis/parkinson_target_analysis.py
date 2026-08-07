@@ -139,18 +139,21 @@ def build_external_support(
         raise ValueError(
             f"External-support input lacks {len(missing)} rebuilt candidates"
         )
-    flags = [
+    displayed_flags = [
         "current_opentargets_parkinson_association_non_literature_only",
         "approved_human_drugbank_target_any_indication",
+    ]
+    annotation_flags = [
+        *displayed_flags,
         "other_opentargets_disease_association",
     ]
-    annotations = snapshot[["protein", *flags, "query_utc"]].copy()
+    annotations = snapshot[["protein", *annotation_flags, "query_utc"]].copy()
     joined = candidates.merge(
         annotations, on="protein", how="left", validate="many_to_one"
     )
     summary_rows = []
     for model, rows in joined.groupby("model", sort=False):
-        for flag in flags:
+        for flag in displayed_flags:
             count = int(rows[flag].astype(bool).sum())
             summary_rows.append(
                 {
