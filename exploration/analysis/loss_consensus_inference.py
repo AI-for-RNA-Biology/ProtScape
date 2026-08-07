@@ -531,7 +531,7 @@ class PrioritySample:
 
 
 def similarity_table(exact_summary: pd.DataFrame) -> pd.DataFrame:
-    """Build the compact source table consumed by Supplementary Figure 2e."""
+    """Build the compact per-class score summary."""
     rows = []
     for record in exact_summary.to_dict("records"):
         other_loss = record["comparison"].replace("BCE vs ", "", 1)

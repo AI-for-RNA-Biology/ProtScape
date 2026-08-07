@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot the standalone Parkinson target-discovery panels."""
+"""Plot Parkinson target-discovery results."""
 
 from __future__ import annotations
 
@@ -20,20 +20,6 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 
-
-# Input and output directories.
-SOURCE_DATA_DIR = Path(
-    "/storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/"
-    "figure_source_data/parkinson_target_discovery"
-)
-FIGURE_5_OUTPUT_DIR = Path(
-    "/storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/"
-    "figures/figure_5"
-)
-SUPPLEMENTARY_FIGURE_5_OUTPUT_DIR = Path(
-    "/storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/"
-    "figures/supplementary_figure_5"
-)
 
 CM = 1 / 2.54
 PROTSCAPE_COLOR = "#E85D24"
@@ -528,30 +514,19 @@ def plot_reactome_modules(source: Path, output: Path) -> None:
         save_figure(fig, output, f"parkinson_M{module_id}_reactome_top5")
 
 
-def plot_all(
-    source: Path = SOURCE_DATA_DIR,
-    figure_output: Path = FIGURE_5_OUTPUT_DIR,
-    supplementary_output: Path = SUPPLEMENTARY_FIGURE_5_OUTPUT_DIR,
-) -> None:
+def plot_all(source: Path, output: Path) -> None:
     source = Path(source)
-    figure_output = Path(figure_output)
-    supplementary_output = Path(supplementary_output)
+    output = Path(output)
     with matplotlib.rc_context(PLOT_RC):
-        plot_candidate_recovery(source, figure_output)
-        plot_external_support(source, figure_output)
-        plot_synaptic_completion(source, figure_output)
-        plot_leiden_network(source, figure_output)
-        plot_leiden_legend(figure_output)
-        plot_string_enrichment(source, figure_output)
+        plot_candidate_recovery(source, output)
+        plot_external_support(source, output)
+        plot_synaptic_completion(source, output)
+        plot_leiden_network(source, output)
+        plot_leiden_legend(output)
+        plot_string_enrichment(source, output)
 
         plot_role_network(
-            source, supplementary_output,
+            source, output,
             "parkinson_known_candidates_experimental_network", "#B8B8B8",
         )
-        plot_leiden_network(source, supplementary_output)
-        plot_leiden_legend(supplementary_output)
-        plot_reactome_modules(source, supplementary_output)
-
-
-if __name__ == "__main__":
-    plot_all()
+        plot_reactome_modules(source, output)

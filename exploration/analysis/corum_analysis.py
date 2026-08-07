@@ -1300,7 +1300,7 @@ def main() -> None:
     for filename, table in tables.items():
         table.to_csv(ANALYSIS_DIR / filename, index=False)
 
-    from exploration.plotting.plot_figure_3 import plot_all
+    from exploration.plotting.corum_analysis_plots import plot_all
 
     plot_all(ANALYSIS_DIR, ANALYSIS_DIR)
     print(f"Wrote CORUM analysis tables and plots to {ANALYSIS_DIR}")

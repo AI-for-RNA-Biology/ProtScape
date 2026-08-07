@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Plot the standalone network-statistics panels for Supplementary Figure 1."""
+"""Plot processed-network statistics."""
 
 from __future__ import annotations
 
@@ -31,17 +31,6 @@ matplotlib.rcParams.update(
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
-
-# Input and output directories.
-SOURCE_DATA_DIR = Path(
-    "/storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/"
-    "figure_source_data/supplementary_figure_1"
-)
-FIGURE_OUTPUT_DIR = Path(
-    "/storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/"
-    "figures/supplementary_figure_1"
-)
 
 
 CM = 1 / 2.54
@@ -464,12 +453,12 @@ def plot_context_tissue_histogram(data, output):
     save_figure(fig, output, "context_tissue_assignment_histogram")
 
 
-def plot_all(source=SOURCE_DATA_DIR, output=FIGURE_OUTPUT_DIR):
-    """Render the original standalone source plots from prepared CSV tables."""
+def plot_all(source: str | Path, output: str | Path) -> None:
+    """Render all processed-network statistics plots."""
     source = Path(source)
     output = Path(output)
     if not source.exists():
-        raise FileNotFoundError(f"Missing figure source data: {source}")
+        raise FileNotFoundError(f"Missing analysis tables: {source}")
     output.mkdir(parents=True, exist_ok=True)
 
     retention = pd.read_csv(source / "gene_retention.csv")
@@ -518,12 +507,4 @@ def plot_all(source=SOURCE_DATA_DIR, output=FIGURE_OUTPUT_DIR):
     plot_tissue_counts(tissue_counts, output)
     plot_context_tissue_histogram(context_counts, output)
 
-    print(f"Wrote individual Supplementary Figure 1 plots to {output}")
-
-
-def main():
-    plot_all()
-
-
-if __name__ == "__main__":
-    main()
+    print(f"Wrote processed-network statistics plots to {output}")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot the individual components of Supplementary Figure 2."""
+"""Plot model and loss-consensus diagnostic results."""
 
 from __future__ import annotations
 
@@ -17,23 +17,12 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
 
-# Input and output directories.
-SOURCE_DATA_DIR = Path(
-    "/storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/"
-    "figure_source_data/supplementary_figure_2"
-)
-FIGURE_OUTPUT_DIR = Path(
-    "/storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/"
-    "figures/supplementary_figure_2"
-)
-
 import matplotlib.pyplot as plt
 
 
 CM = 1 / 2.54
 
-# Preserve the source analysis style, with Arial forced so every regenerated
-# Supplementary Figure 2 component uses the same typeface.
+# Preserve the source analysis style and use Arial throughout.
 SOURCE_STYLE = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
@@ -523,7 +512,7 @@ def plot_string_correlations(ax, table):
 
 
 def plot_pretraining(source, output):
-    """Render panels a-b from pretraining-evaluation tables."""
+    """Render model-performance and pooling diagnostics."""
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     auprc = pd.read_csv(source / "contextwise_ppi_auprc.csv")
@@ -536,9 +525,9 @@ def plot_pretraining(source, output):
     plot_contextwise_boxplots(
         a_legend_ax, [a_auprc_ax, a_f1_ax], auprc, f1
     )
-    save_original(a_legend_fig, output, "core_model_legend")
-    save_original(a_auprc_fig, output, "supp_contextwise_ppi_auprc_curated")
-    save_original(a_f1_fig, output, "supp_contextwise_ppi_f1_curated")
+    save_original(a_legend_fig, output, "contextwise_core_model_legend")
+    save_original(a_auprc_fig, output, "contextwise_ppi_auprc")
+    save_original(a_f1_fig, output, "contextwise_ppi_f1")
 
     b_legend_fig, b_legend_ax = plt.subplots(figsize=(7 * CM, 2.2 * CM))
     b_fig, b_ax = plt.subplots(figsize=(7 * CM, 4.5 * CM))
@@ -549,7 +538,7 @@ def plot_pretraining(source, output):
 
 
 def plot_consensus(source, output):
-    """Render panels c-e from loss-consensus analysis tables."""
+    """Render loss-score geometry and agreement diagnostics."""
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     score_sample = pd.read_csv(source / "score_sample.csv.gz")
@@ -559,7 +548,7 @@ def plot_consensus(source, output):
     observed = score_sample.groupby(["edge_label", "consensus_class"]).size()
     expected = sample_summary.set_index(["label", "loss_class"])["edge_contexts_sampled"]
     if not observed.sort_index().equals(expected.sort_index()):
-        raise ValueError("Panel c/d score sample does not match its sample summary")
+        raise ValueError("Score sample does not match its sample summary")
 
     c_legend_fig, c_legend_ax = plt.subplots(figsize=(2 * CM, 4.5 * CM), dpi=300)
     c_legend_ax.set_position([0.0, 0.0, 1.0, 1.0])
@@ -605,7 +594,7 @@ def plot_consensus(source, output):
 
 
 def plot_string(source, output):
-    """Render panel f from the STRING-validation table."""
+    """Render STRING-validation correlations."""
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     string_correlations = pd.read_csv(source / "string_correlations.csv")
@@ -639,23 +628,3 @@ def plot_string(source, output):
             "loss_descriptor_correlations_mean_std",
             pad_inches=0.03,
         )
-
-
-
-def plot_all(source=SOURCE_DATA_DIR, output=FIGURE_OUTPUT_DIR):
-    """Render every standalone Supplementary Figure 2 plot from prepared CSVs."""
-    source, output = Path(source), Path(output)
-    if not source.exists():
-        raise FileNotFoundError(f"Missing figure source data: {source}")
-    plot_pretraining(source, output)
-    plot_consensus(source, output)
-    plot_string(source, output)
-    print(f"Wrote individual Supplementary Figure 2 plots to {output}")
-
-
-def main():
-    plot_all()
-
-
-if __name__ == "__main__":
-    main()

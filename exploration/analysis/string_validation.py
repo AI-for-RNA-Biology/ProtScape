@@ -131,7 +131,7 @@ def string_stats_row(stats: dict[str, float]) -> dict[str, float]:
 
 
 def build_string_support_tables() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Reduce exhaustive pair classes to Figure 2g source tables."""
+    """Reduce exhaustive pair classes to STRING-support tables."""
     counts, string_scores = load_pair_inputs()
     string_stats = {
         (label_id, class_id): empty_string_stats()
@@ -154,7 +154,7 @@ def build_string_support_tables() -> tuple[pd.DataFrame, pd.DataFrame]:
             if not present.any():
                 continue
             observed = block[:, present]
-            # Match Figure 2e: lower class wins exact modal ties.
+            # Use the lower class for exact modal ties.
             majority = observed.argmax(axis=0)
             scores = score_chunk[present]
             score_bins = np.rint(scores * 1000).astype(np.int16)
@@ -241,7 +241,7 @@ def standardized_ols_predictions(
 
 
 def build_string_correlation_table() -> pd.DataFrame:
-    """Fit held-out mean/s.d. descriptors for Supplementary Figure 2f."""
+    """Fit held-out mean and standard-deviation descriptors."""
     require_file(STRING_SCORE_STATISTICS)
     with np.load(STRING_SCORE_STATISTICS, allow_pickle=False) as statistics:
         required = {
@@ -314,16 +314,16 @@ def write_table(table: pd.DataFrame, path: Path) -> None:
 
 
 def render_plots() -> None:
-    """Render this analysis through the same functions used by plot-only scripts."""
-    from exploration.plotting.plot_figure_2 import plot_string as plot_figure_2_string
-    from exploration.plotting.plot_supplementary_figure_2 import (
-        plot_string as plot_supplementary_figure_2_string,
+    """Render the plots from the computed analysis tables."""
+    from exploration.plotting.model_evaluation_plots import (
+        plot_string as plot_model_evaluation,
+    )
+    from exploration.plotting.model_diagnostic_plots import (
+        plot_string as plot_model_diagnostics,
     )
 
-    plot_figure_2_string(ANALYSIS_DIR, ANALYSIS_DIR)
-    plot_supplementary_figure_2_string(
-        ANALYSIS_DIR, ANALYSIS_DIR
-    )
+    plot_model_evaluation(ANALYSIS_DIR, ANALYSIS_DIR)
+    plot_model_diagnostics(ANALYSIS_DIR, ANALYSIS_DIR)
 
 
 def write_results() -> None:

@@ -15,7 +15,6 @@ from exploration.analysis.therapeutic_target.checkpoint_lrp import (
     generate_lrp,
     recompute_performance,
 )
-from exploration.plotting.therapeutic_target_core_plots import plot_all
 
 
 CHECKPOINT_ROOT = Path(PATHS["downstream_checkpoint_root"]) / "therapeutic_targets"
@@ -670,6 +669,8 @@ def main() -> None:
     relevance_summary.to_csv(
         ANALYSIS_DIR / "absolute_contextual_relevance_summary.csv", index=False
     )
+
+    from exploration.plotting.therapeutic_target_analysis_plots import plot_all
 
     plot_all(ANALYSIS_DIR, ANALYSIS_DIR)
     print(f"Wrote therapeutic-target analysis to {ANALYSIS_DIR}")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot the therapeutic-target panels for Figures 5 and S5."""
+"""Plot therapeutic-target analysis results."""
 
 from __future__ import annotations
 
@@ -579,8 +579,14 @@ def wrap_label(value: object) -> str:
 
 def plot_focal_targets(top: pd.DataFrame, output: Path) -> None:
     stems = {
-        ("therapeutic_target_mondo_0005180", "HTR1A"): "D1_parkinson_HTR1A_cell_type_dots",
-        ("therapeutic_target_efo_0000571", "ERBB3"): "E1_lung_ERBB3_cell_type_dots",
+        (
+            "therapeutic_target_mondo_0005180",
+            "HTR1A",
+        ): "parkinson_htr1a_cell_type_attribution",
+        (
+            "therapeutic_target_efo_0000571",
+            "ERBB3",
+        ): "lung_adenocarcinoma_erbb3_cell_type_attribution",
     }
     shared_max = float(top["shared_x_axis_max_pct"].iloc[0])
     shown_classes = []
@@ -639,7 +645,7 @@ def plot_focal_targets(top: pd.DataFrame, output: Path) -> None:
         handletextpad=0.45,
         labelspacing=0.65,
     )
-    save_figure(fig, output, "common_cell_class_legend")
+    save_figure(fig, output, "focal_target_cell_class_legend")
 
 
 def plot_absolute_relevance(values: pd.DataFrame, output: Path) -> None:
@@ -692,7 +698,7 @@ def plot_absolute_relevance(values: pd.DataFrame, output: Path) -> None:
     ax.set_ylabel("Absolute contextual\nrelevance (%)", fontsize=AXIS_LABEL_SIZE)
     ax.set_xlabel("Models", fontsize=AXIS_LABEL_SIZE)
     clean_axes(ax)
-    save_figure(fig, output, "S17_absolute_contextual_relevance_fraction")
+    save_figure(fig, output, "absolute_contextual_relevance_fraction")
 
 
 def file_slug(value: str) -> str:
@@ -701,7 +707,7 @@ def file_slug(value: str) -> str:
 
 def plot_disease_top_contexts(top: pd.DataFrame, output: Path) -> None:
     shared_max = float(top["shared_x_axis_max_pct"].iloc[0])
-    for index, (task, disease) in enumerate(TASK_ORDER, start=1):
+    for task, disease in TASK_ORDER:
         values = top.loc[top["task"].eq(task)].sort_values("rank")
         y = np.arange(len(values))
         fig, ax = plt.subplots(figsize=WIDE_SINGLE_SIZE, facecolor="white")
@@ -730,7 +736,11 @@ def plot_disease_top_contexts(top: pd.DataFrame, output: Path) -> None:
         ax.tick_params(axis="y", length=0, pad=5)
         ax.tick_params(axis="x", labelsize=TICK_LABEL_SIZE)
         ax.spines["left"].set_visible(False)
-        save_figure(fig, output, f"S{index:02d}_{file_slug(disease)}_top5_cell_type_dots")
+        save_figure(
+            fig,
+            output,
+            f"{file_slug(disease)}_top5_cell_type_attribution",
+        )
 
     shown = set(top["cell_class"])
     classes = [cell_class for cell_class in CELL_CLASSES if cell_class in shown]
@@ -761,7 +771,7 @@ def plot_disease_top_contexts(top: pd.DataFrame, output: Path) -> None:
         handletextpad=0.45,
         labelspacing=0.65,
     )
-    save_figure(fig, output, "S16_common_cell_class_legend")
+    save_figure(fig, output, "disease_top_context_cell_class_legend")
 
 
 def plot_all(source: Path, output: Path) -> None:

@@ -42,7 +42,6 @@ from downstream_tasks.training.cv_utils import (
     get_cv_train_val_indices,
     get_test_indices,
 )
-from exploration.plotting.parkinson_target_plots import plot_all
 
 
 ANALYSIS_DIR = Path(PATHS["output_root"]) / "analysis/parkinson_target_analysis"
@@ -70,7 +69,7 @@ class ModelSpec:
     embedding_run: str
 
 
-# These are the exact downstream checkpoints used for the paper panels.
+# Exact downstream checkpoints used for the analysis.
 MODEL_SPECS = {
     "protscape": ModelSpec(
         checkpoint_dir="protscape",
@@ -1167,7 +1166,9 @@ def main() -> None:
     }
     for filename, table in outputs.items():
         table.to_csv(ANALYSIS_DIR / filename, index=False)
-    plot_all(ANALYSIS_DIR, ANALYSIS_DIR, ANALYSIS_DIR)
+    from exploration.plotting.parkinson_target_analysis_plots import plot_all
+
+    plot_all(ANALYSIS_DIR, ANALYSIS_DIR)
     print(f"Wrote Parkinson analysis CSVs and plots to {ANALYSIS_DIR}")
 
 

@@ -18,16 +18,16 @@ The released processed labels are the canonical paper inputs. `corum_dataset_dir
 
 ## Rebuilding the labels
 
-Raw inputs are configured separately from the processed training tables:
+Released CORUM and therapeutic-target tables can be used directly. To rebuild them, set:
 
 | Config key | Required input |
 |---|---|
 | `corum_raw_json` | Frozen `corum_humanComplexes.json` snapshot from [CORUM](https://mips.helmholtz-muenchen.de/corum/download) |
-| `therapeutic_target_evidence_dir` | Complete Open Targets Platform 24.03 ChEMBL evidence directory as line-delimited `.json` or Parquet files |
-| `therapeutic_target_drugbank_targets` | October 2022 approved-drug target table, `all_approved_oct2022.csv` |
+| `therapeutic_target_evidence_dir` | Open Targets Platform 24.03 ChEMBL evidence directory |
+| `therapeutic_target_drugbank_targets` | Frozen approved-drug target table, `all_approved_oct2022.csv` |
 | `global_ppi` | The same two-column HGNC-symbol interactome used for pretraining |
 
-The DrugBank table must contain `Species`, `Gene Name` and `GenAtlas ID`. It is an access-controlled input that must be obtained under an appropriate [DrugBank licence](https://go.drugbank.com/releases) and supplied locally; this repository does not download it. The Open Targets 24.03 data remain available from the [Open Targets archive](https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/24.03/).
+The frozen DrugBank table used in the study will be included in the data release.
 
 After setting these paths, rebuild both datasets from the repository root:
 
@@ -37,10 +37,6 @@ python -m downstream_tasks.data_processing.therapeutic_target_processing
 ```
 
 By default, the rebuilt labels are written below `<output_root>/downstream_tasks/data/`. Update `corum_dataset_dir` and `therapeutic_target_dataset_dir` to those generated directories before training.
-
-The therapeutic-target rebuild uses the frozen Open Targets 24.03 ChEMBL evidence but queries the current Open Targets API for disease descendants and negative-set exclusions, UniProt and Ensembl for identifier mapping, and EBI OLS only when `--descendants-source efo` is selected. A later rebuild can therefore differ from the released snapshot.
-
-Therapeutic-target positives have phase 3 or later evidence, or completed phase 2 evidence, for the root disease or its descendants. Negatives are approved-human DrugBank targets without a non-literature Open Targets association for the root disease. Both classes are restricted to the global-PPI proteins, and positives are excluded from negatives.
 
 ## Training
 

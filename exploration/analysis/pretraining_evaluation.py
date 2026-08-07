@@ -977,13 +977,15 @@ def main() -> None:
         table.to_csv(path, index=False)
         print(f"Saved {path}", flush=True)
 
-    from exploration.plotting.plot_figure_2 import plot_pretraining as plot_figure_2
-    from exploration.plotting.plot_supplementary_figure_2 import (
-        plot_pretraining as plot_supplementary_figure_2,
+    from exploration.plotting.model_evaluation_plots import (
+        plot_pretraining as plot_model_evaluation,
+    )
+    from exploration.plotting.model_diagnostic_plots import (
+        plot_pretraining as plot_model_diagnostics,
     )
 
-    plot_figure_2(output_dir, output_dir)
-    plot_supplementary_figure_2(output_dir, output_dir)
+    plot_model_evaluation(output_dir, output_dir)
+    plot_model_diagnostics(output_dir, output_dir)
 
 
 if __name__ == "__main__":

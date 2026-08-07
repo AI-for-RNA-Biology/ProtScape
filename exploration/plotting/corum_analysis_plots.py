@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot the standalone CORUM panels for Figure 3."""
+"""Plot CORUM analysis results."""
 
 from __future__ import annotations
 
@@ -20,16 +20,6 @@ import pandas as pd
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-
-# Input and output directories.
-SOURCE_DATA_DIR = Path(
-    "/storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/"
-    "figure_source_data/figure_3"
-)
-FIGURE_OUTPUT_DIR = Path(
-    "/storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/"
-    "figures/figure_3"
-)
 
 CM = 1 / 2.54
 AXIS_LINEWIDTH = 0.6
@@ -774,12 +764,3 @@ def plot_all(source: Path, output: Path) -> None:
             LOSS_MODEL_LABELS,
             include_baselines=False,
         )
-
-
-def main() -> None:
-    plot_all(SOURCE_DATA_DIR, FIGURE_OUTPUT_DIR)
-    print(f"Wrote Figure 3 source plots to {FIGURE_OUTPUT_DIR}")
-
-
-if __name__ == "__main__":
-    main()

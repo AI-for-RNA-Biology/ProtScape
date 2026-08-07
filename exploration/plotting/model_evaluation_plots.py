@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot the standalone Figure 2 panels."""
+"""Plot model evaluation, consensus, and STRING validation results."""
 
 from __future__ import annotations
 
@@ -23,16 +23,6 @@ from matplotlib.patches import Rectangle
 from matplotlib.ticker import LogFormatterMathtext
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
-
-# Input and output directories.
-SOURCE_DATA_DIR = Path(
-    "/storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/"
-    "figure_source_data/figure_2"
-)
-FIGURE_OUTPUT_DIR = Path(
-    "/storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/"
-    "figures/figure_2"
-)
 
 CM = 1 / 2.54
 
@@ -683,7 +673,7 @@ def plot_string_support(score_bands: pd.DataFrame, output: Path) -> None:
 
 
 def plot_pretraining(source: str | Path, output: str | Path) -> None:
-    """Render the original pretraining plots used for Figure 2a-d."""
+    """Render the main pretraining evaluation plots."""
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     panel_a_auprc = read_table(source, "robust_ppi_auprc.csv")
@@ -743,7 +733,7 @@ def plot_pretraining(source: str | Path, output: str | Path) -> None:
 
 
 def plot_consensus(source: str | Path, output: str | Path) -> None:
-    """Render the original heatmap and stability plots used for Figure 2e-f."""
+    """Render the consensus heatmap and stability plots."""
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     positive = read_table(source, "labelled_positive_class_counts.csv")
@@ -771,31 +761,9 @@ def plot_consensus(source: str | Path, output: str | Path) -> None:
 
 
 def plot_string(source: str | Path, output: str | Path) -> None:
-    """Render the original STRING-support plot used for Figure 2g."""
+    """Render the STRING-support plot."""
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     score_bands = read_table(source, "string_score_bands.csv")
     with plt.rc_context(SENSITIVITY_RC):
         plot_string_support(score_bands, output)
-
-
-def plot_all(
-    source: str | Path = SOURCE_DATA_DIR,
-    output: str | Path = FIGURE_OUTPUT_DIR,
-) -> None:
-    """Render every standalone Figure 2 source plot from prepared CSVs."""
-    source, output = Path(source), Path(output)
-    if not source.exists():
-        raise FileNotFoundError(f"Missing figure source data: {source}")
-    plot_pretraining(source, output)
-    plot_consensus(source, output)
-    plot_string(source, output)
-    print(f"Wrote individual Figure 2 plots to {output}")
-
-
-def main() -> None:
-    plot_all()
-
-
-if __name__ == "__main__":
-    main()

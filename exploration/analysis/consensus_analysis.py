@@ -96,7 +96,7 @@ def load_score_sample() -> pd.DataFrame:
 
 
 def build_score_sample_tables() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Build the Supplementary Figure 2c-d sample and its summary."""
+    """Build the deterministic score sample and its summary."""
     sample = load_score_sample()
     sampled = (
         sample.groupby(["edge_label", "consensus_class"], sort=False)
@@ -150,7 +150,7 @@ def build_score_sample_tables() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def build_loss_similarity_table() -> pd.DataFrame:
-    """Load exact population-level loss similarities for Supplementary Fig. 2e."""
+    """Load exact population-level similarities between loss variants."""
     table = read_csv(
         LOSS_SIMILARITY,
         {"group", "comparison", "metric", "value", "edge_contexts"},
@@ -188,7 +188,7 @@ def load_pair_class_counts() -> np.ndarray:
 
 
 def reduce_pair_class_counts() -> tuple[dict[int, np.ndarray], dict[int, dict[str, np.ndarray]]]:
-    """Reduce exhaustive pair counts for Figure 2e-f in one chunked pass."""
+    """Reduce exhaustive pair counts into transition and stability tables."""
     counts = load_pair_class_counts()
     transitions = {
         label_id: np.zeros((len(CLASS_NAMES), len(CLASS_NAMES)), dtype=np.int64)
@@ -324,18 +324,16 @@ def write_table(table: pd.DataFrame, path: Path, **kwargs) -> None:
 
 
 def render_plots() -> None:
-    """Render this analysis through the same functions used by plot-only scripts."""
-    from exploration.plotting.plot_figure_2 import (
-        plot_consensus as plot_figure_2_consensus,
+    """Render the plots from the computed analysis tables."""
+    from exploration.plotting.model_evaluation_plots import (
+        plot_consensus as plot_model_evaluation,
     )
-    from exploration.plotting.plot_supplementary_figure_2 import (
-        plot_consensus as plot_supplementary_figure_2_consensus,
+    from exploration.plotting.model_diagnostic_plots import (
+        plot_consensus as plot_model_diagnostics,
     )
 
-    plot_figure_2_consensus(ANALYSIS_DIR, ANALYSIS_DIR)
-    plot_supplementary_figure_2_consensus(
-        ANALYSIS_DIR, ANALYSIS_DIR
-    )
+    plot_model_evaluation(ANALYSIS_DIR, ANALYSIS_DIR)
+    plot_model_diagnostics(ANALYSIS_DIR, ANALYSIS_DIR)
 
 
 def main() -> None:

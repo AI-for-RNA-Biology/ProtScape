@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Compute bulk-network statistics and standalone plots."""
+"""Compute bulk-network statistics and plots."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ import yaml
 from scipy.sparse import csr_matrix
 from sklearn.manifold import MDS
 
-from exploration.plotting.plot_supplementary_figure_1 import plot_all
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -29,8 +28,8 @@ TABULA_RAW_H5AD = Path(PATHS["tabula_h5ad"]).expanduser()
 HBCA_GENE_METADATA = Path(PATHS["hbca_gene_metadata"]).expanduser()
 ALS_GENE_METADATA = Path(PATHS["als_gene_metadata"]).expanduser()
 
-# Biological annotations used for the labels in panels d and f. The cell-class
-# table is curated metadata for the 207 contexts, not a frozen figure table.
+# Biological annotations used for cell-class and tissue summaries. The
+# cell-class table is curated metadata for the 207 contexts.
 CELL_CLASS_MAPPING = Path(PATHS["celltype_class_mapping"]).expanduser()
 BTO_OBO = Path(PATHS["tissue_ontology_obo"]).expanduser()
 
@@ -128,7 +127,7 @@ def h5ad_feature_count(path):
 
 
 def measured_gene_counts():
-    """Count the raw measured gene identifiers used for panel-a denominators."""
+    """Count the raw measured genes used as gene-retention denominators."""
     tabula = h5ad_feature_count(TABULA_RAW_H5AD)
     hbca = pd.read_csv(HBCA_GENE_METADATA, usecols=["ensembl_id"])[
         "ensembl_id"
@@ -148,7 +147,7 @@ def measured_gene_counts():
 
 
 def prepare_gene_retention():
-    """Build panel a from reliable-gene, selected-gene and PPI LCC counts."""
+    """Summarize reliable genes, selected genes and PPI LCC sizes."""
     measured_by_source = measured_gene_counts()
     rows = []
     for spec in DATASETS:
@@ -226,7 +225,7 @@ def database_label(row):
 
 
 def prepare_ppi_tables(metadata):
-    """Build panels b and c and return the matrix used for panel d."""
+    """Summarize PPI sizes and pairwise overlap."""
     global_nodes, global_edges = read_edges(NETWORKS_BULK / "global_ppi_edgelist.txt")
 
     metadata_by_context = metadata.set_index("edgelist")
@@ -401,7 +400,7 @@ def tissue_plot_group(value):
 
 
 def prepare_mds_table(contexts, edge_counts, edge_jaccard, metadata, tissue_mapping):
-    """Run the paper's deterministic edge-Jaccard metric MDS for panel d."""
+    """Run deterministic metric MDS on edge-Jaccard distances."""
     distance = 1.0 - edge_jaccard
     np.fill_diagonal(distance, 0.0)
     coordinates = MDS(
@@ -449,7 +448,7 @@ def prepare_mds_table(contexts, edge_counts, edge_jaccard, metadata, tissue_mapp
 
 
 def prepare_metagraph_edge_counts():
-    """Count the two metagraph edge types displayed in panel e."""
+    """Count cell-cell and cell-tissue metagraph edges."""
     cell_cell_edges = set()
     context_tissue_edges = set()
     with (NETWORKS_BULK / "mg_edgelist.txt").open() as handle:
@@ -517,6 +516,8 @@ def main():
     for filename, table in tables.items():
         table.to_csv(ANALYSIS_DIR / filename, index=False)
         print(f"[OK] {filename}: {len(table):,} rows")
+
+    from exploration.plotting.data_bulk_statistics_plots import plot_all
 
     plot_all(source=ANALYSIS_DIR, output=ANALYSIS_DIR)
 
