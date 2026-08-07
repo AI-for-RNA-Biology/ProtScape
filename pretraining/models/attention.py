@@ -2,8 +2,6 @@ import torch as th
 from torch.nn import functional as F
 from torch import nn
 
-#%%
-
 class GatedAttention(nn.Module):
     def __init__(self, input_dim, emb_dim):
         super(GatedAttention, self).__init__()
@@ -62,4 +60,3 @@ class GatedAttention(nn.Module):
             x_graphs = th.mm(Att.T, x_nodes)
             
         return Att, x_graphs
-

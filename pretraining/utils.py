@@ -1,22 +1,21 @@
-import os
 import random
 from decimal import Decimal
 import numpy as np
 import pandas as pd
-from collections import Counter
 import torch
 import torch_sparse
-import torch.nn.functional as F
-from torch.nn import Sigmoid
-from torch_geometric.data import Data
-from sklearn.metrics import roc_auc_score, average_precision_score, accuracy_score, f1_score, roc_curve, precision_recall_curve, silhouette_score, calinski_harabasz_score, davies_bouldin_score
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    calinski_harabasz_score,
+    davies_bouldin_score,
+    f1_score,
+    roc_auc_score,
+)
 import omegaconf
 import wandb
 
-from tqdm import tqdm
-
-from torchmetrics import AUROC, AveragePrecision, Accuracy, F1Score
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+from torchmetrics import AUROC, AveragePrecision, Accuracy
 
 
 def set_seed(seed):
@@ -164,12 +163,6 @@ def calc_metrics(mg_pred, mg_data, ppi_preds, ppi_data, version='numpy'):
             
             curr_roc_score, curr_ap_score, curr_acc, curr_f1 = calc_individual_metrics_torch(
                 ppi, ppi_data[celltype]["y"])
-            ### for sanity check
-            #print('torchmetrics: ', curr_roc_score, curr_ap_score, curr_acc, curr_f1)
-            #curr_roc_score_, curr_ap_score_, curr_acc_, curr_f1_ = calc_individual_metrics(
-            #    ppi.cpu().detach().numpy(), ppi_data[celltype]["y"].cpu().numpy())
-            #print('numpy: ', curr_roc_score_, curr_ap_score_, curr_acc_, curr_f1_)
-
         metrics['roc_ppi'].append(curr_roc_score)
         metrics['ap_ppi'].append(curr_ap_score)
         metrics['acc_ppi'].append(curr_acc)
@@ -352,109 +345,6 @@ def get_embeddings(model, ppi_x, mg_x, ppi_metapaths, mg_metapaths, ppi_edge_ind
     return ppi_x, mg_x 
 
 
-def plot_emb(best_ppi_x, best_mg_x, celltype_map, ppi_layers, metagraph, wandb, finetune_labels, plot=False):
-    celltype_map = {v: k for k, v in celltype_map.items()}
-    embed, labels_df, mg_labels = combine_embed(best_ppi_x, best_mg_x, celltype_map, ppi_layers, metagraph, finetune_labels)
-
-    if plot:
-        mapping, embedding = fit_umap(embed, min_dist=0.5)
-        labels_df["x"] = embedding[:, 0]
-        labels_df["y"] = embedding[:, 1]
-        plot_umap(labels_df, wandb, "umap.all")
-        if len(best_mg_x) > 0:
-            mg_labels["x"] = embedding[0:len(celltype_map), 0]
-            mg_labels["y"] = embedding[0:len(celltype_map), 1]
-            plot_umap(mg_labels, wandb, "umap.ccibto")
-        labels_df.pop("x")
-        labels_df.pop("y")
-    return labels_df
-
-
-def combine_embed(ppi_embed, mg_embed, key, ppi_layers, metagraph, finetune_labels):
-    labels_df = dict()
-    mg_labels = dict()
-
-    if len(mg_embed) > 0:
-
-        # Set metagraph labels
-        labels_df["Cell Type"] = ["CCI_" + v if "BTO" not in v else v for k, v in key.items()]
-        mg_labels["Cell Type"] = [v if "BTO" not in v else v for k, v in key.items()]
-        labels_df["Name"] = ["CCI_" + v if "BTO" not in v else v for k, v in key.items()]
-
-        labels_df["Degree"] = [100] * len(metagraph.nodes) # Artificially increase size
-        labels_df["Relative Degree"] = [1] * len(metagraph.nodes)
-        mg_labels["Degree"] = [metagraph.degree[n] for n in metagraph.nodes]
-        
-        pcount_labels = [0] * len(key)
-        combined = [mg_embed]
-
-    else: 
-        labels_df["Cell Type"] = []
-        labels_df["Name"] = []
-        labels_df["Degree"] = []
-        labels_df["Relative Degree"] = []
-        pcount_labels = []
-        combined = []
-
-    # Get per protein counts & node degrees
-    protein_counts = []
-    for cluster, ppi in ppi_layers.items():
-        if cluster in key.values(): protein_counts += list(ppi)
-    protein_counts = Counter(protein_counts)
-    
-    # Get labels for PPI
-    sanity = dict()
-    for celltype, x in ppi_embed.items():
-        labels_df["Cell Type"] += [key[celltype]] * x.size(0)
-        degrees = [ppi_layers[key[celltype]].degree[n] for n in ppi_layers[key[celltype]].nodes]
-        labels_df["Degree"] += degrees
-        labels_df["Relative Degree"] += [round(d / max(degrees), 5) for d in degrees]
-        labels_df["Name"] += list(ppi_layers[key[celltype]].nodes)
-        max_rank = len(ppi_layers[key[celltype]])
-        combined.append(x)
-        for protein in ppi_layers[key[celltype]]:
-            pcount_labels.append(protein_counts[protein])
-        sanity[key[celltype]] = torch.mean(x, 0)
-
-    labels_df["Overlap"] = pcount_labels
-
-    # Concatenate
-    combined = torch.cat(combined)
-
-    # Sanity check
-    combined = torch.cat((combined, torch.stack(list(sanity.values()))))
-    labels_df["Cell Type"] += ["Sanity Check %s" % k for k in sanity]
-    labels_df["Degree"] += [100] * len(sanity)
-    labels_df["Relative Degree"] += [1] * len(sanity)
-    labels_df["Name"] += ["Sanity Check %s" % k for k in sanity]
-    labels_df["Overlap"] += [0] * len(sanity)
-    
-    return combined, labels_df, mg_labels
-
-
-def fit_umap(embed, n_neighbors=15, min_dist=0.1, n_components=2, metric='euclidean', random_state=3):
-    import umap
-
-    mapping = umap.UMAP(n_neighbors=n_neighbors, min_dist=min_dist, n_components=n_components, metric=metric, random_state=random_state).fit(embed)
-    embedding = mapping.transform(embed)
-    print("UMAP reduced:", embedding.shape)
-    return mapping, embedding
-
-
-def plot_umap(labels, wandb, wb_title, color_category="default", finetune_labels=[]):
-    import matplotlib
-    import plotly.express as px
-    from matplotlib import pyplot as plt
-
-    matplotlib.rcParams["pdf.fonttype"] = 42
-    matplotlib.rcParams["ps.fonttype"] = 42
-    hover_keys = list(labels.keys())
-    df = pd.DataFrame(labels)
-    fig = px.scatter(df, x="x", y="y", color="Cell Type", size="Degree", hover_data=hover_keys)
-    wandb.log({wb_title: fig})
-    plt.close()
-
-    
 def calc_cluster_metrics(ppi_x: dict) -> tuple:
     """
     Calculate Calinski-Harabasz score and Davies-Bouldin score of PPI embeddings.
@@ -470,39 +360,6 @@ def calc_cluster_metrics(ppi_x: dict) -> tuple:
         return 0, 0
 
     return calinski_harabasz_score(X, labels), davies_bouldin_score(X, labels)
-
-
-def check_train_log_file(log_path, max_epoch, marg_epoch=5, checked_last_lines=10000):
-    with open(log_path) as f:
-        f = f.readlines()
-    n_lines = len(f)
-    epoch_lines = []
-    for i, line in tqdm(enumerate(f[n_lines - checked_last_lines : n_lines]), desc='process train log lines'):
-        if 'Epoch' in line:
-            epoch_lines.append(line)
-    ep_str = epoch_lines[-1].split("\t")[0]
-    print('ep_str:', ep_str)
-    ep_int = int(ep_str.split(' ')[-1])
-    print('ep_int:', ep_int)
-    if ep_int >= max_epoch - marg_epoch:
-        return True
-    else:
-        return False
-
-
-def _env_str(name: str, default: str) -> str:
-    val = os.environ.get(name, "")
-    return default if val == "" else val
-
-
-def _env_int(name: str, default: int) -> int:
-    val = os.environ.get(name, "")
-    return default if val == "" else int(val)
-
-
-def _env_float(name: str, default: float) -> float:
-    val = os.environ.get(name, "")
-    return default if val == "" else float(val)
 
 
 def _fmt_float(val: float) -> str:

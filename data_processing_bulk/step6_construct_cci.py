@@ -71,20 +71,35 @@ def normalize_graph_nodes(graph: nx.Graph) -> nx.Graph:
     return nx.relabel_nodes(graph, mapping, copy=True)
 
 
-def is_nuclear_compartment_node(node: str) -> bool:
-    """Return True for ALS-style cell nodes with a '_nuc_' compartment token."""
+def is_nuclear_context(node: str) -> bool:
+    """Return True for an ALS nuclear pseudo-bulk context."""
     if not isinstance(node, str):
         return False
     label = normalize_cl_node(node).lower()
     return bool(label.startswith("cl_") and re.search(r"(^|_)nuc($|_)", label))
 
 
-def remove_nuclear_cell_edges(graph: nx.Graph) -> int:
-    """Remove CCI edges where either endpoint is an ALS nuclear compartment."""
+def is_cytoplasmic_context(node: str) -> bool:
+    """Return True for an ALS cytoplasmic pseudo-bulk context."""
+    if not isinstance(node, str):
+        return False
+    label = normalize_cl_node(node).lower()
+    return bool(label.startswith("cl_") and re.search(r"(^|_)cyto($|_)", label))
+
+
+def remove_invalid_compartment_edges(graph: nx.Graph) -> int:
+    """Remove only nuc--nuc and nuc--cyto CCIs."""
     edges_to_remove = [
         (u, v)
         for u, v in graph.edges()
-        if is_nuclear_compartment_node(u) or is_nuclear_compartment_node(v)
+        if (
+            is_nuclear_context(u)
+            and (is_nuclear_context(v) or is_cytoplasmic_context(v))
+        )
+        or (
+            is_nuclear_context(v)
+            and is_cytoplasmic_context(u)
+        )
     ]
     if edges_to_remove:
         graph.remove_edges_from(edges_to_remove)
@@ -241,13 +256,19 @@ def construct_cci(
         logger.info("One p-values file found; recurrence filtering reduces to presence in that file.")
     graph = count_majority(pair_counts, num_runs=len(pvalue_files), threshold=threshold)
     graph = normalize_graph_nodes(graph)
-    removed_nuc = remove_nuclear_cell_edges(graph)
-    if removed_nuc:
-        logger.info("Removed %d CCI edges involving ALS nuclear compartments.", removed_nuc)
+    removed_compartment = remove_invalid_compartment_edges(graph)
+    if removed_compartment:
+        logger.info(
+            "Removed %d nuc--nuc or nuc--cyto CCI edges.",
+            removed_compartment,
+        )
         isolated_nodes = list(nx.isolates(graph))
         if isolated_nodes:
             graph.remove_nodes_from(isolated_nodes)
-            logger.info("Removed %d isolated CCI nodes after nuclear-edge filtering.", len(isolated_nodes))
+            logger.info(
+                "Removed %d isolated CCI nodes after compartment-edge filtering.",
+                len(isolated_nodes),
+            )
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     logger.info("Writing CCI edgelist to %s", output_file)
     nx.write_edgelist(graph, output_file, data=False, delimiter="\t")

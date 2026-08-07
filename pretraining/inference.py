@@ -10,7 +10,9 @@ from tqdm import tqdm
 
 from .checkpoints import load_pinnacle_model, load_protscape_model
 from .data_handler.generate_input import get_metapaths, read_data
+from .models.hierarchical_model import add_virtual_node
 from .train.minibatch_factored_utils import build_cci_edge_index
+from .utils import construct_metapath
 
 
 class _LazyPPIFeatures(dict):
@@ -47,20 +49,44 @@ def encode_proteins(model, ppi_data, device):
 
     with torch.no_grad():
         for cell_id, graph in tqdm(ppi_data.items(), desc="Encoding contexts"):
-            graph = graph.to(device)
+            local = graph.clone().to(device)
+            pooling = model.cell_config["pooling"]
+            uses_virtual_node = (
+                pooling in {"vn", "learnedvn"}
+                or model.protein_config.get("add_virtual_node")
+            )
+            if pooling == "vn" or model.protein_config.get("add_virtual_node"):
+                local = add_virtual_node(
+                    local, model.virtual_node_features, clone=False
+                )
+            elif pooling == "learnedvn":
+                vn_id = model.celltype_to_vn_id[cell_id]
+                local = add_virtual_node(
+                    local, model.virtual_node_features[vn_id], clone=False
+                )
             embedding = model.prot_encoder(
-                {cell_id: graph}, batching=False, return_layer_outputs=False
+                {cell_id: local}, batching=False, return_layer_outputs=False
             )[cell_id]
-            pooled = model.cell_encoder.get_cell_embedding_per_celltype(embedding)
+            pooling_embedding = (
+                embedding[:-1]
+                if uses_virtual_node and pooling not in {"vn", "learnedvn"}
+                else embedding
+            )
+            pooled = model.cell_encoder.get_cell_embedding_per_celltype(
+                pooling_embedding
+            )
+            if uses_virtual_node:
+                embedding = embedding[:-1]
             protein_embeddings[cell_id] = embedding.detach().cpu()
             pooled_cells.append(pooled.detach().cpu())
+            del local, embedding, pooling_embedding
 
     return protein_embeddings, torch.stack(pooled_cells)
 
 
 def encode_pinnacle(model, ppi_data, mg_data, tissue_neighbors, device, seed):
     """Run the complete adapted PINNACLE protein and metagraph forward pass."""
-    _, mg_metapaths = get_metapaths()
+    ppi_metapaths, mg_metapaths = get_metapaths()
     ppi_x = _LazyPPIFeatures(
         ppi_data,
         mg_data.global_protein_features,
@@ -70,12 +96,29 @@ def encode_pinnacle(model, ppi_data, mg_data, tissue_neighbors, device, seed):
         cell_id: {"total_edge_index": graph.edge_index.to(device)}
         for cell_id, graph in ppi_data.items()
     }
-    ppi_metapaths = {
-        cell_id: [edges["total_edge_index"]] for cell_id, edges in ppi_edges.items()
+    ppi_adjacencies = {
+        cell_id: [
+            adjacency.to(device)
+            for adjacency in construct_metapath(
+                ppi_metapaths,
+                graph.edge_index,
+                graph.edge_attr,
+                int(graph.num_nodes),
+            )
+        ]
+        for cell_id, graph in ppi_data.items()
     }
     mg_edge_index = mg_data.edge_index.to(device)
     mg_edges = {"total_edge_index": mg_edge_index}
-    mg_metapaths = [mg_edge_index for _ in mg_metapaths]
+    mg_adjacencies = [
+        adjacency.to(device)
+        for adjacency in construct_metapath(
+            mg_metapaths,
+            mg_data.edge_index,
+            mg_data.edge_attr,
+            int(mg_data.num_nodes),
+        )
+    ]
     tissue_neighbors = {
         key: torch.as_tensor(value, device=device) for key, value in tissue_neighbors.items()
     }
@@ -87,8 +130,8 @@ def encode_pinnacle(model, ppi_data, mg_data, tissue_neighbors, device, seed):
         protein_embeddings, metagraph_embeddings = model(
             ppi_x,
             mg_data.x.to(device),
-            ppi_metapaths,
-            mg_metapaths,
+            ppi_adjacencies,
+            mg_adjacencies,
             ppi_edges,
             mg_edges,
             tissue_neighbors,
@@ -107,6 +150,33 @@ def main():
     with (repo_root / "configs" / "paths.yaml").open("r", encoding="utf-8") as handle:
         paths = yaml.safe_load(handle)
 
+    output_dir = args.output_dir
+    if output_dir is None:
+        output_dir = (
+            Path(paths["output_root"]).expanduser()
+            / "inference"
+            / args.checkpoint.stem
+        )
+    output_dir = output_dir.expanduser()
+    output_names = {
+        "protein_embeddings.pt",
+        "cell_embeddings.pt",
+        "mappings.pkl",
+        "tissue_predictions.pt",
+        "cell_embeddings_before_pool.pt",
+        "metagraph_embeddings.pt",
+    }
+    existing_outputs = [
+        output_dir / filename
+        for filename in output_names
+        if (output_dir / filename).exists()
+    ]
+    if existing_outputs and not args.overwrite:
+        raise FileExistsError(
+            f"Inference output already exists in {output_dir}. "
+            "Use --overwrite to replace it."
+        )
+
     checkpoint = torch.load(
         args.checkpoint, map_location="cpu", mmap=True, weights_only=True
     )
@@ -114,17 +184,22 @@ def main():
     model_type = checkpoint.get("model_type")
     if model_type not in {"protscape", "pinnacle"}:
         raise ValueError("Expected a portable ProtScape or PINNACLE checkpoint.")
-    data_root = Path(paths["data_root"]).expanduser()
+
+    incompatible_outputs = (
+        [output_dir / "metagraph_embeddings.pt"]
+        if model_type == "protscape"
+        else [
+            output_dir / "tissue_predictions.pt",
+            output_dir / "cell_embeddings_before_pool.pt",
+        ]
+    )
+
     networks = Path(paths["networks_bulk"]).expanduser()
     features_mode = config.get("features_mode")
     seed = int(config.get("seed", 0))
     torch.manual_seed(seed)
     if features_mode == "ESM2":
-        feature_path = (
-            data_root
-            / "protein_gene_based_embeddings"
-            / "gene_protein_embeddings_esm2_650M.plk"
-        )
+        feature_path = Path(paths["esm2_embeddings"]).expanduser()
         feature_dim = None
     elif features_mode == "random":
         feature_path = None
@@ -145,6 +220,7 @@ def main():
         count_edge_path=networks / "count_edge_dict.pkl",
         weighted_ppi_loss=config.get("weighted_ppi_loss", False),
         defer_ppi_features=model_type == "pinnacle",
+        verbose=False,
     )
 
     cell_ids = [int(cell_id) for cell_id in checkpoint.get("cell_ids", [])]
@@ -192,6 +268,12 @@ def main():
             if cell_memory is not None:
                 cells = cell_memory(cells)
 
+            # This is the pooled cell representation before CCI refinement.
+            # Historically it was exported under the misleading name
+            # ``cell_embeddings_before_pool.pt`` even though pooling had already
+            # happened.
+            pre_cci_cells = cells.detach().cpu()
+
             if model.use_metagraph:
                 cci_edges = build_cci_edge_index(
                     mg_data, edge_types, cell_ids=cell_ids, device=device
@@ -204,22 +286,11 @@ def main():
     else:
         cells = metagraph_embeddings[cell_ids]
 
-    output_dir = args.output_dir
-    if output_dir is None:
-        output_dir = Path(paths["output_root"]).expanduser() / "inference" / args.checkpoint.stem
-    output_dir = output_dir.expanduser()
-    output_files = [
-        output_dir / "protein_embeddings.pt",
-        output_dir / "cell_embeddings.pt",
-        output_dir / "mappings.pkl",
-    ]
-    if model_type == "protscape":
-        output_files.append(output_dir / "tissue_predictions.pt")
-    else:
-        output_files.append(output_dir / "metagraph_embeddings.pt")
-    if not args.overwrite and any(path.exists() for path in output_files):
-        raise FileExistsError(f"Inference output already exists in {output_dir}. Use --overwrite to replace it.")
     output_dir.mkdir(parents=True, exist_ok=True)
+    if args.overwrite:
+        for path in incompatible_outputs:
+            if path.exists():
+                path.unlink()
 
     common = {
         "cell_ids": cell_ids,
@@ -241,11 +312,26 @@ def main():
             "embeddings": cells,
             "embed_dim": int(cells.shape[1]),
             "n_cells": len(cell_ids),
+            "representation": (
+                "post_cci" if model_type == "protscape" and model.use_metagraph
+                else "final_metagraph_cell_nodes" if model_type == "pinnacle"
+                else "pooled"
+            ),
             **common,
         },
         output_dir / "cell_embeddings.pt",
     )
     if model_type == "protscape":
+        torch.save(
+            {
+                "embeddings": pre_cci_cells,
+                "embed_dim": int(pre_cci_cells.shape[1]),
+                "n_cells": len(cell_ids),
+                "representation": "pooled_before_cci",
+                **common,
+            },
+            output_dir / "cell_embeddings_before_pool.pt",
+        )
         torch.save(
             {
                 "predictions": tissue_predictions,

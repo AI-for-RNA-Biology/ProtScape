@@ -5,7 +5,6 @@ from torch_geometric.data import Batch, Data
 from torch_geometric.loader import GraphSAINTNodeSampler, GraphSAINTEdgeSampler
 import torch.nn.functional as F
 
-from ..utils import construct_metapath
 from ..losses.loss import el_dot, calc_uniformity_loss
 from ..s2gae_utils import (
     batch_edge_mask,
@@ -19,11 +18,11 @@ from tqdm import tqdm
 from time import time
 
 from torchmetrics import F1Score, Accuracy, AUROC, AveragePrecision
-from torch_geometric.utils import scatter, degree
+from torch_geometric.utils import scatter
 
 import wandb
 
-#%% model agnostic functions for batch generation 
+# Model-agnostic batch generation
 
 
 def _prepare_s2gae_decoder_input(decoder, layer_embeddings, raw_embeddings=None):
@@ -221,7 +220,7 @@ def generate_batch(
                 loss_edge_weights = data.ppi_weights
                 
         else:
-            raise 'not implemented exception for mask = ' + mask
+            raise NotImplementedError(f'Unsupported mask: {mask}')
         
         # If PPI task --> build special DataLoader
         if ppi:
@@ -231,15 +230,9 @@ def generate_batch(
                         edge_index = pos_edge_index,
                         edge_attr=edge_type,
                         n_id = torch.arange(data.x.shape[0]),
-                    )
+                )
                 if graph_saint_norm:
-                    ### Graph saint normalization:
-                    # we need to integrate in the data object
-                    # + edge weights : corresponding to Atilde_{u,v} / alpha_{u,v}
-                    # where Atilde is the graph filter computed on the whole train graph
-                    # and alpha_{u,v} = p_{u,v} / p_v, probability that an edge is sampled
-                    # + loss weights : lambda_{u,v} corresponding to |E| * p_{u,v}
-                    # we save beforehand p_{u,v} and p_{v} computed per contexts.
+                    # Add the precomputed GraphSAINT edge and loss weights.
                     assert gsnorm_path is not None
                     if not os.path.exists(gsnorm_path):
                         print('compute gs statistics in :', gsnorm_path)
@@ -740,7 +733,7 @@ def get_cached_mg_edge_data_eval(
         cache[key] = mg_data_cached
     return _move_mg_data_dict(mg_data_cached, device) if device is not None else mg_data_cached
 
-#%% subfunctions for batch generation of pinnacle models
+# PINNACLE batch generation
 
 def pred_batch2dict(
     packed_batch: object,
@@ -821,7 +814,7 @@ def pred_batch2dict(
 
 
 
-#%% subfunctions for batch generation of new hierarchical models
+# Hierarchical-model batch generation
 
 
 def train_batch2dict(
@@ -843,10 +836,6 @@ def train_batch2dict(
     
     :return: A dictionary of edge data from all graphs in one round, :code:`ppi_x_batch`, :code:`ppi_node_ind_batch` and :code:`ppi_metapaths_batch` extracted from batches, and the re-initialized node embeddings :code:`mg_x_init`.
     """
-    # Re-initalize mg_x from mg_x in each batch
-    # ppi_x_init = {key:x.clone().to(device) for key, x in ppi_x.items()}
-    # mg_x_init = mg_x_ori.clone().to(device) if len(mg_x_ori)!=0 else []
-    
     # Unpack batches
     if verbose:
         print('-- call train_batch2dict')
@@ -1051,7 +1040,7 @@ def iterate_train_batch_hierarchical_model(
                 batch_ppi_x_full = batch_ppi_x
         
         else:
-            raise 'model forward not implemented for requested hierarchical_mode'
+            raise NotImplementedError('Model forward is not implemented for this hierarchical mode.')
 
         # Metagraph predictions (uses cell/tissue embeddings only)
         mg_pred = None
@@ -1079,7 +1068,6 @@ def iterate_train_batch_hierarchical_model(
         
         s2gae_loss_val = None
         if s2gae_enabled:
-            ### not supported settings for s2gae
             assert cfg.graph_saint_norm is False, "S2GAE is not compatible with GraphSAINT normalization."
             assert cfg.weighted_ppi_loss is False, "S2GAE is not compatible with weighted PPI loss."
             
@@ -1200,7 +1188,7 @@ def iterate_train_batch_hierarchical_model(
                 mg_loss = F.binary_cross_entropy_with_logits(mg_logits, mg_data_train["y"], reduction='mean')
         else:
             #ppi_loss, mg_loss  = calc_link_pred_loss(mg_pred, mg_data_train, ppi_preds, ppi_data_batch, hparams['loss_type'])
-            raise 'model forward not implemented for requested hierarchical_mode'
+            raise NotImplementedError('Model forward is not implemented for this hierarchical mode.')
 
         del batch_ppi_x
         
@@ -1372,7 +1360,7 @@ def iterate_predict_batch_hierarchical_model(
                         batching=batching)
             
             else:
-                raise 'model forward not implemented for requested hierarchical_mode'
+                raise NotImplementedError('Model forward is not implemented for this hierarchical mode.')
             
             if mg_data_eval is not None:
                 mg_logits = model.predict_cci_edges(

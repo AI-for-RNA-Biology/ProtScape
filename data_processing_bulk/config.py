@@ -10,34 +10,31 @@ PATHS_FILE = Path(__file__).resolve().parents[1] / "configs" / "paths.yaml"
 with PATHS_FILE.open("r", encoding="utf-8") as handle:
     PATHS = yaml.safe_load(handle)
 
-RAW_DATA_ROOT = Path(PATHS["raw_data_root"]).expanduser()
 OUTPUT_ROOT = Path(PATHS["output_root"]).expanduser()
 PROCESSING_ROOT = OUTPUT_ROOT / "data_processing_bulk"
 
 # Keep string paths because the original preprocessing code uses os.path.
-DATA_DIR = str(RAW_DATA_ROOT)
 PINNACLE_BASE = str(PROCESSING_ROOT)
-
-TABULA_BASE = os.path.join(DATA_DIR, "Tabula_Sapiens_v1")
-HBCA_BASE = os.path.join(DATA_DIR, "HBCA_v1")
 
 TABULA_INTERMEDIATE = os.path.join(PINNACLE_BASE, "tabula_pseudobulk")
 HBCA_INTERMEDIATE = os.path.join(PINNACLE_BASE, "hbca_pseudobulk")
 MERGED_INTERMEDIATE = os.path.join(PINNACLE_BASE, "merged_single_cell")
 
 GLOBAL_PPI = str(Path(PATHS["global_ppi"]).expanduser())
+CELLTYPE_CLASS_MAPPING = str(Path(PATHS["celltype_class_mapping"]).expanduser())
 
 
 # ---------------------------------------------------------------------------
 # Dataset-specific resources
 # ---------------------------------------------------------------------------
 
-TABULA_H5AD = os.path.join(TABULA_BASE, "GSM6058681_TabulaSapiens.h5ad")
-TABULA_METADATA = os.path.join(TABULA_BASE, "GSM6058681_TabulaSapiens_metadata.csv")
+TABULA_H5AD = str(Path(PATHS["tabula_h5ad"]).expanduser())
+TABULA_METADATA = str(Path(PATHS["tabula_metadata"]).expanduser())
 
-HBCA_NEURONS_PATH = os.path.join(HBCA_BASE, "HBCA_v1_all_neurons.h5ad")
-HBCA_NONNEURONS_PATH = os.path.join(HBCA_BASE, "HBCA_v1_all_non_neuronal.h5ad")
-HBCA_GENE_METADATA = os.path.join(HBCA_BASE, "gene_metadata.csv")
+HBCA_NEURONS_PATH = str(Path(PATHS["hbca_neurons_h5ad"]).expanduser())
+HBCA_NONNEURONS_PATH = str(Path(PATHS["hbca_nonneurons_h5ad"]).expanduser())
+HBCA_GENE_METADATA = str(Path(PATHS["hbca_gene_metadata"]).expanduser())
+ALS_GENE_METADATA = str(Path(PATHS["als_gene_metadata"]).expanduser())
 
 ALS_MN_KALLISTO = str(PATHS["als_motor_neuron_kallisto"])
 ALS_MN_METADATA = str(PATHS["als_motor_neuron_metadata"])
@@ -85,9 +82,8 @@ CELLPHONEDB_MIN_LR_BY_DATASET = {
 }
 
 # Ontology paths
-ONTOLOGY_DIR = os.path.join(DATA_DIR, "PINNACLE", "ontologies")
-BTO_PATH = os.path.join(ONTOLOGY_DIR, "bto.obo")
-CL_PATH = os.path.join(ONTOLOGY_DIR, "cl-full.obo")
+BTO_PATH = str(Path(PATHS["tissue_ontology_obo"]).expanduser())
+CL_PATH = str(Path(PATHS["cell_ontology_obo"]).expanduser())
 
 
 @dataclass(frozen=True)

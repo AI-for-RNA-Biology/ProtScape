@@ -1,8 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch_geometric.nn import GATv2Conv, GINConv
-from torch_geometric.nn.inits import glorot, zeros
 from .attention import GatedAttention
 from torch_geometric.nn import global_mean_pool
 

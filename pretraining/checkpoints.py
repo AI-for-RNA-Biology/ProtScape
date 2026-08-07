@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from .models.hierarchical_model import hierarchical_model
 from .models.pinnacle_model import Pinnacle
@@ -54,6 +54,52 @@ def model_state_dict(checkpoint):
 
     model = checkpoint["model"]
     return model if isinstance(model, dict) else model.state_dict()
+
+
+def save_portable_checkpoint(
+    path,
+    legacy_path,
+    *,
+    model_type,
+    config,
+    cell_ids,
+    cell_names,
+):
+    """Save the selected legacy model as a portable state-dict checkpoint."""
+    if model_type not in {"protscape", "pinnacle"}:
+        raise ValueError(f"Unsupported model type: {model_type}")
+
+    cell_ids = [int(cell_id) for cell_id in cell_ids]
+    cell_names = [str(cell_name) for cell_name in cell_names]
+    if len(cell_ids) != len(cell_names) or len(cell_ids) != len(set(cell_ids)):
+        raise ValueError("Cell IDs and names must define one unique name per context.")
+
+    checkpoint = load_legacy_checkpoint(legacy_path, map_location="cpu")
+    if isinstance(config, DictConfig):
+        config = OmegaConf.to_container(config, resolve=True)
+
+    portable = {
+        "format_version": 1,
+        "model_type": model_type,
+        "epoch": int(checkpoint["epoch"]),
+        "config": config,
+        "model_state_dict": model_state_dict(checkpoint),
+        "cell_ids": cell_ids,
+        "cell_names": cell_names,
+    }
+    for key in ("score", "score_metric"):
+        if key in checkpoint:
+            portable[key] = checkpoint[key]
+
+    if model_type == "protscape":
+        model = checkpoint["model"]
+        cell_memory = getattr(model.cell_encoder, "cell_memory_layers", None)
+        if cell_memory is not None:
+            portable["cell_memory_step"] = int(cell_memory.step)
+
+    path = Path(path)
+    torch.save(portable, path)
+    print(f"Saved portable checkpoint: {path}")
 
 
 def load_protscape_model(checkpoint, ppi_data, device="cpu"):

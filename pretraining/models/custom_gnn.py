@@ -12,7 +12,7 @@ from torch_geometric.typing import (
     Size
 )
 
-from torch_geometric.utils import scatter, degree
+from torch_geometric.utils import scatter
 from torch import nn
 
 
@@ -108,8 +108,6 @@ class RandomWalk_weighted(MessagePassing):
         return f'{self.__class__.__name__}(nn={self.nn})'
 
 
-#%%
-
 class ACM_RandomWalk_conv(MessagePassing):
     r"""
     Adaptative Channel mixing [A] with filters:
@@ -172,7 +170,7 @@ class ACM_RandomWalk_conv(MessagePassing):
                  nn_mix:torch.nn.Module,
                  T:float = 3.,
                  **kwargs):
-        kwargs.setdefault('aggr', 'add') ### propagate and aggregate 
+        kwargs.setdefault('aggr', 'add')
         super().__init__(**kwargs)
         self.nn_lowpass = nn_lowpass
         self.nn_highpass = nn_highpass
@@ -229,9 +227,6 @@ class ACM_RandomWalk_conv(MessagePassing):
         alpha_cat = torch.concat([alpha_lowpass, alpha_highpass, alpha_fullpass], dim=1)
         alpha_cat = self.softmax(self.nn_mix(alpha_cat / self.T))
                 
-        #out = alpha_cat[:, 0][:, None] * out_lowpass
-        #out = out + alpha_cat[:, 1][:, None] * out_highpass
-        #out = out + alpha_cat[:, 2][:, None] * out_fullpass
         out = alpha_cat[:, 0].view(-1, 1) * out_lowpass
         out = out + alpha_cat[:, 1].view(-1, 1) * out_highpass
         out = out + alpha_cat[:, 2].view(-1, 1) * out_fullpass
@@ -298,7 +293,7 @@ class ACM_RandomWalk_weightedconv(MessagePassing):
                  nn_mix:torch.nn.Module,
                  T:float = 3.,
                  **kwargs):
-        kwargs.setdefault('aggr', 'add') ### propagate and aggregate 
+        kwargs.setdefault('aggr', 'add')
         super().__init__(**kwargs)
         self.nn_lowpass = nn_lowpass
         self.nn_highpass = nn_highpass
@@ -335,7 +330,6 @@ class ACM_RandomWalk_weightedconv(MessagePassing):
             deg = scatter(ones_, edge_index[1], dim=0, dim_size=x.shape[0], reduce='sum')
             deg_inv = 1. / deg
             deg_inv.masked_fill_(deg_inv == float('inf'), 0)
-            # edge_weight = deg_inv_by_edge
             edge_weight = deg_inv[edge_index[0, :]]
             self_weight = torch.ones(x.shape[0], dtype=x.dtype, device=x.device)
             
@@ -367,9 +361,6 @@ class ACM_RandomWalk_weightedconv(MessagePassing):
         alpha_cat = torch.concat([alpha_lowpass, alpha_highpass, alpha_fullpass], dim=1)
         alpha_cat = self.softmax(self.nn_mix(alpha_cat / self.T))
                 
-        #out = alpha_cat[:, 0][:, None] * out_lowpass
-        #out = out + alpha_cat[:, 1][:, None] * out_highpass
-        #out = out + alpha_cat[:, 2][:, None] * out_fullpass
         out = alpha_cat[:, 0].view(-1, 1) * out_lowpass
         out = out + alpha_cat[:, 1].view(-1, 1) * out_highpass
         out = out + alpha_cat[:, 2].view(-1, 1) * out_fullpass

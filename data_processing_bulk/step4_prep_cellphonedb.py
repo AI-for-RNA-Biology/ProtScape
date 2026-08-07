@@ -21,9 +21,9 @@ from .config import (
     ALS_MN_INTERMEDIATE,
     CL_PATH,
     HBCA_CELLPHONEDB_INPUT,
+    HBCA_GENE_METADATA,
     HBCA_INTERMEDIATE,
     MERGED_CELLPHONEDB_INPUT,
-    MERGED_INTERMEDIATE,
     TABULA_CELLPHONEDB_INPUT,
     TABULA_H5AD,
     TABULA_INTERMEDIATE,
@@ -85,7 +85,10 @@ def normalize_tabula_label(value: object) -> str:
 
 
 def _convert_hbca_genes(adata: sc.AnnData) -> sc.AnnData:
-    symbols = convert_ensembl_to_hgnc(pd.Series(adata.var_names))
+    symbols = convert_ensembl_to_hgnc(
+        pd.Series(adata.var_names),
+        metadata_path=HBCA_GENE_METADATA,
+    )
     valid = symbols.notna().to_numpy()
     converted = adata[:, valid].copy()
     converted.var_names = symbols[valid].to_numpy()

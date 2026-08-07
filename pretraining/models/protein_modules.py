@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATv2Conv, GINConv
-from torch_geometric.nn.inits import glorot, zeros
-from torch_scatter import scatter_mean
 from .custom_gnn import ACM_RandomWalk
 
 
@@ -289,7 +287,7 @@ class prot_module(nn.Module):
         # where essentially it coincides with the ppi_edge_index
         # maybe things could be coded more efficiently by factoring every
         # cell-type specific PPI as a batch
-        raise 'to update with handling vn, s2gae and so on'
+        raise NotImplementedError('This path does not yet support virtual nodes or S2GAE.')
         if not batching:
             # Non-batched mode: iterate through cell types
             # Note: VN mode requires batching=True for proper batch tensor

@@ -1,7 +1,6 @@
 # General
 import os
 import numpy as np
-import copy
 import pandas as pd
 import random
 
@@ -15,7 +14,6 @@ import wandb
 from .. import utils
 from . import minibatch_factored_utils as mb_utils
 
-from joblib import Parallel, delayed
 from time import time
 
 
@@ -59,8 +57,6 @@ def get_training_data(
     n_jobs=None,
     evaluation_mode='global',
     root_gsnorm_path=None):
-    # recall that 
-    # edge_attr_dict = {"tissue_tissue": 0, "tissue_cell": 1, "cell_tissue": 2, "cell_cell": 3, "protein_protein": 4}
     # Generate PPI batches for train and validation
     
     # Also notice that batch_size is only used for the PPI data, not for the metagraph

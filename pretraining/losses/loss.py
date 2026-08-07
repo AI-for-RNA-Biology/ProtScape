@@ -57,8 +57,6 @@ def el_dot(embed, edges, relation):
     source = embed[edges[0, :]]
     target = embed[edges[1, :]]
     if len(relation) != 0:
-        #print('Using relation embeddings for edge prediction')
-        #print('relation shape:', relation.shape)
         dots = torch.sum(source * relation * target, dim = 1)
     else:
         dots = torch.sum(source * target, dim = 1)

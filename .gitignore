@@ -9,20 +9,20 @@ venv/
 .ipynb_checkpoints/
 .pytest_cache/
 .ruff_cache/
+.cache/
+wandb/
 
 *.log
 *.out
 *.err
 .DS_Store
 
-# Large inputs are distributed separately from the source repository.
-data/*
-!data/README.md
 *.pt
 *.pth
 *.plk
 *.pkl
 *.h5ad
+*.npy
 *.npz
 *.parquet
 

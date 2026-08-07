@@ -75,3 +75,5 @@ for PDL_PMAX in "${PDL_PMAX_VALUES[@]}"; do
         --lr 0.0001 --weight-decay 0.0001 --batch-size 512 \
         --seed 42 --train-selection-metric auprc "$@"
 done
+
+python -m downstream_tasks.run --task corum --aggregate-only

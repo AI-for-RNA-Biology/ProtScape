@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from ..config import DEFAULT_DATA_ROOT, DEFAULT_GLOBAL_PPI, DEFAULT_OUTPUT_ROOT
+from ..config import DEFAULT_CORUM_RAW_JSON, DEFAULT_GLOBAL_PPI, DEFAULT_OUTPUT_ROOT
 
 ORGANISM_KEEP = {"Human"}
 MIN_MEMBERS = 10
@@ -17,32 +17,17 @@ MAX_OVERLAP_COEF = 0.90   # |A∩B| / min(|A|,|B|)
 MAX_JACCARD = 0.80        # |A∩B| / |A∪B|
 
 
-def default_base_dir():
-    return DEFAULT_DATA_ROOT
-
-
 def default_output_dir():
     return DEFAULT_OUTPUT_ROOT / "data" / "corum_dataset"
-
-
-def resolve_corum_json_path(base_dir):
-    candidates = [
-        base_dir / "corum_dataset" / "corum_humanComplexes.json",
-        base_dir / "downstream_tasks" / "corum_dataset" / "corum_humanComplexes.json",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return candidates[0]
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Build CORUM downstream datasets.")
     parser.add_argument(
-        "--base-dir",
+        "--corum-json",
         type=Path,
-        default=default_base_dir(),
-        help="Base PINNACLE data directory containing corum_dataset/, networks/, downstream_tasks/.",
+        default=DEFAULT_CORUM_RAW_JSON,
+        help="Raw CORUM JSON snapshot. Defaults to corum_raw_json in configs/paths.yaml.",
     )
     parser.add_argument(
         "--output-dir",
@@ -264,8 +249,7 @@ def build_positive_pairs(complexes_df):
 
 def main():
     args = parse_args()
-    base_dir = args.base_dir
-    corum_json_path = resolve_corum_json_path(base_dir)
+    corum_json_path = args.corum_json
     global_ppi_txt_path = args.global_ppi_path or DEFAULT_GLOBAL_PPI
     out_dir = args.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)

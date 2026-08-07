@@ -9,6 +9,7 @@ import numpy as np
 
 from .data_handler.generate_input import read_data
 from .models.hierarchical_model import hierarchical_model
+from .checkpoints import save_portable_checkpoint
 
 from . import utils
 from .train import train_hierarchical_model_factored
@@ -91,14 +92,13 @@ def _normalize_features_mode(raw_value):
     return normalized
 
 
-def _get_ppi_feat_dir(data_dir, features_mode):
+def _get_ppi_feat_dir(paths, features_mode):
     if features_mode == "ESM2":
-        filename = "gene_protein_embeddings_esm2_650M.plk"
+        return str(Path(paths["esm2_embeddings"]).expanduser())
     elif features_mode == "ProstT5":
-        filename = "gene_protein_embeddings_prostt5_1024.plk"
+        return str(Path(paths["prostt5_embeddings"]).expanduser())
     else:
         return None
-    return os.path.join(data_dir, "protein_gene_based_embeddings", filename)
 
 
 def _str2bool(raw):
@@ -141,7 +141,7 @@ def _parse_cli_args():
     parser.add_argument("--eval-only", type=_str2bool, default=False)
     parser.add_argument("--eval-save-prefix", type=str, default=None)
     parser.add_argument("--eval-output-prefix", type=str, default=None)
-    parser.add_argument("--k-negatives", type=int, default=10)
+    parser.add_argument("--k-negatives", type=int, default=1)
     parser.add_argument("--use-metagraph", type=_str2bool, default=True)
     parser.add_argument("--loader", type=str, default="graphsaint")
     parser.add_argument("--split-mode", type=str, default="global", choices=["context", "global"])
@@ -172,25 +172,18 @@ def _parse_cli_args():
     return parser.parse_args()
 
 
-#%% tested hyperparameters 
-
-# python run_hierarchical_model.py ACM_RandomWalk concat 128 0 2 1 attention
-# python run_hierarchical_model.py ACM_RandomWalk concat 128 0 2 1 mean
-# python run_hierarchical_model.py ACM_RandomWalk concat 128 0 2 1 virtual_node
-
-# recall that epochs, dataset_mode, server, batch_size, lr, loader are set later in the code
-# to check before running jobs
+# Configuration
 
 cli_args = _parse_cli_args()
 
-### newly tested hyperparameters which were let fixed for a long time:
-cell_memory = 'average' # 'average'
+# Fixed model setting used in the paper.
+cell_memory = 'average'
 cell_memory_str = '' if cell_memory == 'average' else f'_{cell_memory}cellmemory'
 
 k_negatives = int(cli_args.k_negatives)
 k_negatives_str = '' if k_negatives == 1 else f'_kneg{str(k_negatives)}'
 
-### original GNN hyperparameters tested until now:
+# Model hyperparameters
 gnn_method = str(cli_args.gnn_method)
 list_jumping_knowledge = _parse_csv(cli_args.jumping_knowledge, str)
 assert all(x in ['concat', 'concat_full', 'max', 'lstm', 'sum', 'none'] for x in list_jumping_knowledge)
@@ -207,9 +200,8 @@ print('--add_virtual_node:', add_virtual_node)
 if add_virtual_node:
     assert cell_pooling in ['attention']
 
-# Virtual node: 
-### - enabled when cell_pooling in ['vn','learnedvn'] -> uses vn for message passing and then as cell pooling
-### - or add_virtual_node if attention-based cell pooling -> uses vn only for message passing, then attention as cell pooling
+# Virtual nodes are used for both message passing and pooling with ``vn`` or
+# ``learnedvn``; with attention pooling they are used only for message passing.
 
 input_dim = None
 ppi_feat_dir = None
@@ -255,8 +247,6 @@ if uniformity_enabled and uniformity_t <= 0.0:
     raise ValueError("--uniformity-t must be > 0.")
 if uniformity_enabled and uniformity_dim < 0:
     raise ValueError("--uniformity-dim must be >= 0.")
-# best s2gae params: dm, 512, mr0.5, 2 layers, dr0.0
-
 s2gae_str = (
     f"s2gae_{s2gae_mask_type}"
     f"_mr{utils._fmt_float(s2gae_mask_ratio)}"
@@ -281,7 +271,7 @@ print("Dataset mode:", dataset_mode)
 use_metagraph = bool(cli_args.use_metagraph)
 
 
-#%% Default optimization hyperparameters
+# Optimization hyperparameters
 
 lr = float(cli_args.lr)
 use_scheduler = False
@@ -314,13 +304,12 @@ optim_str = lr_str + batch_size_str + epochs_str + loader_str + weighted_ppi_los
 
 split_mode_str = '' if split_mode == 'context' else f'{split_mode}split_'
 
-#%% Global data variables
+# Data paths
 
 paths_file = Path(__file__).resolve().parents[1] / "configs" / "paths.yaml"
 with paths_file.open("r", encoding="utf-8") as handle:
     project_paths = yaml.safe_load(handle)
 
-DATA_DIR = str(Path(project_paths["data_root"]).expanduser())
 output_root = Path(project_paths["output_root"]).expanduser()
 network_dir = str(Path(project_paths["networks_bulk"]).expanduser())
 global_ppi_edges = os.path.join(network_dir, "global_ppi_edgelist.txt")
@@ -339,10 +328,7 @@ else:
     count_edge_path = None
 
 if features_mode in ["ESM2", "ProstT5"]:
-    ppi_feat_dir = _get_ppi_feat_dir(DATA_DIR, features_mode)
-
-print("Data directory:", DATA_DIR)
-assert os.path.exists(DATA_DIR)
+    ppi_feat_dir = _get_ppi_feat_dir(project_paths, features_mode)
 
 hierarchical_mode = 'CTassignment'
 assert hierarchical_mode in ['CTassignment']
@@ -392,7 +378,7 @@ dict_cfg = { # mostly default settings for general learning
     'ppi_loss': ppi_loss,
     'ppi_phuber_tau': ppi_phuber_tau,
     'add_virtual_node': add_virtual_node,
-    'k_negatives': k_negatives, # number of negatives to sample per positive edge for contrastive learning (default 1, i.e. no negative sampling)
+    'k_negatives': k_negatives, # number of structured negatives sampled per positive edge (default 1)
     'wandb_mode': cli_args.wandb_mode,
     # S2GAE (Self-Supervised Graph Autoencoders) configuration
     # Set 'enabled' to True to use S2GAE training with edge masking
@@ -567,6 +553,33 @@ def main(
     else:
         print('Skipping training as per user request.')
 
+    portable_source = primary_model_path
+    if not os.path.exists(portable_source):
+        portable_source = dict_save_models[primary_metric]["model_path"]
+    if os.path.exists(portable_source):
+        id_to_name = {cell_id: name for name, cell_id in celltype_map.items()}
+        cell_ids = list(ppi_data)
+        portable_config_keys = (
+            "epochs", "loader", "graph_saint_norm", "batch_size", "lr",
+            "use_scheduler", "features_mode", "hierarchical_mode",
+            "reg_centerloss", "reg_CTassignment", "use_metagraph",
+            "dataset_mode", "split_mode", "metagraph_loss_weight",
+            "weighted_ppi_loss", "ppi_loss", "ppi_phuber_tau",
+            "add_virtual_node", "k_negatives", "s2gae_config",
+            "uniformity_config", "protein_config", "cell_config",
+            "tissue_config", "seed",
+        )
+        portable_config = {key: cfg[key] for key in portable_config_keys}
+        portable_config["symmetric_ppi"] = symmetric_ppi
+        save_portable_checkpoint(
+            Path(cfg.save_prefix) / "best_model_state_dict.pt",
+            portable_source,
+            model_type="protscape",
+            config=DictConfig(portable_config),
+            cell_ids=cell_ids,
+            cell_names=[id_to_name[cell_id] for cell_id in cell_ids],
+        )
+
     if run_test:
             
         # Load best model for different metric checkpoints
@@ -587,8 +600,7 @@ def main(
             best_model = model
             best_model.load_state_dict(best_model_dict['model'].state_dict()) # conversion ensuring that the weight loading process remains valid across older-newer model versions
 
-            ### run evaluation on test edges (always recompute to ensure fresh metrics)
-            
+            # Recompute test metrics from the selected checkpoint.
             train_hierarchical_model_factored.test(
                 cfg,
                 best_model,
@@ -605,8 +617,6 @@ def main(
             
         
         
-#%%
-
 if __name__ == "__main__":
     
     # setup data
@@ -759,15 +769,13 @@ if __name__ == "__main__":
         main(
             cfg,
             ppi_data,
-            mg_data, # not used for CTassignment hierarchical mode
-            edge_attr_dict, # not used for CTassignment hierarchical mode
-            celltype_map, # not used for CTassignment hierarchical mode
-            tissue_neighbors, # not used for CTassignment hierarchical mode
+            mg_data,
+            edge_attr_dict,
+            celltype_map,
+            tissue_neighbors,
             CT_map,
             device,
             n_jobs,
             run_train=run_train,
             run_test=run_test,
             checkpointing=checkpointing)
-
-# %%

@@ -9,7 +9,7 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 
-from .config import ALS_ASTRO_INTERMEDIATE, ALS_MN_INTERMEDIATE
+from .config import ALS_ASTRO_INTERMEDIATE, ALS_GENE_METADATA, ALS_MN_INTERMEDIATE
 from .ensembl_to_hgnc_converter import convert_expression_matrix
 
 
@@ -61,7 +61,7 @@ def process_dataset(dataset: str) -> ad.AnnData:
     metadata = pd.read_csv(directory / config["metadata_file"])
 
     logger.info("Mapping %s Ensembl IDs to HGNC symbols", dataset)
-    counts = convert_expression_matrix(counts)
+    counts = convert_expression_matrix(counts, metadata_path=ALS_GENE_METADATA)
     adata = create_anndata(counts, metadata, dataset)
 
     output_path = directory / config["h5ad_file"]

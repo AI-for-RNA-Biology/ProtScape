@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import BatchNorm, LayerNorm, GATv2Conv, GINConv
+from torch_geometric.nn import GATv2Conv, GINConv
 from torch_geometric.data import Batch, Data
 from typing import Optional
 
@@ -534,19 +534,12 @@ class hierarchical_model(nn.Module):
             if self.use_metagraph:
                 cells_x = self.apply_cci(cells_x, list(ppi_x.keys()))
             cells_pred = self.tissue_encoder(cells_x)
-            ### sigmoid included in BCEwithlogitloss so skipped here
-            # cells_pred = F.sigmoid(cells_pred)
+            # BCEWithLogitsLoss applies the sigmoid internally.
             
             if return_layer_outputs:
                 return ppi_x, None, cells_x, cells_pred, layer_outputs_dict
             return ppi_x, None, cells_x, cells_pred
         else:
-            """
-            print('call forward HC:')
-            for i, celltype in enumerate(ppi_x.keys()):
-                print('ppi_x:', ppi_x[celltype].device, 'ppi_edge_index:', ppi_edge_index[celltype]['total_edge_index'].device)
-                break
-            """
             data_list = []
             for i, celltype in enumerate(ppi_x.keys()):
                 vn_id = i
@@ -593,8 +586,7 @@ class hierarchical_model(nn.Module):
                 if self.use_metagraph:
                     cells_x = self.apply_cci(cells_x, list(ppi_x.keys()))
                 cells_pred = self.tissue_encoder(cells_x)
-                ### sigmoid included in BCEwithlogitloss so skipped here
-                # cells_pred = F.sigmoid(cells_pred)
+                # BCEWithLogitsLoss applies the sigmoid internally.
                 
                 if return_layer_outputs:
                     return ppi_x, batch_ppi_x, cells_x, cells_pred, layer_outputs
@@ -658,7 +650,7 @@ class hierarchical_model(nn.Module):
                 ppi_emb_dict = prot_output
                 layer_outputs_dict = None
             
-            ### filter virtual nodes if not needed in the cell pooling step
+            # Remove virtual nodes before pooling when used only for message passing.
             if self.cell_config.get("pooling") in ['mean','attention'] and self.protein_config.get("add_virtual_node"):
                 ppi_emb_dict = self.remove_virtual_nodes(ppi_emb_dict)
                 if return_layer_outputs and layer_outputs_dict is not None:
@@ -677,8 +669,7 @@ class hierarchical_model(nn.Module):
             if self.use_metagraph:
                 cells_x = self.apply_cci(cells_x, list(ppi_dict_local.keys()))
             cells_pred = self.tissue_encoder(cells_x)
-            ### sigmoid included in BCEwithlogitloss so skipped here
-            # cells_pred = F.sigmoid(cells_pred)
+            # BCEWithLogitsLoss applies the sigmoid internally.
 
             # Drop virtual node rows from returned protein embeddings (keep VN only for pooling)
             if self.cell_config.get("pooling") in ['vn','learnedvn'] :
@@ -713,7 +704,7 @@ class hierarchical_model(nn.Module):
 
             if self.cell_config['n_cells'] is None:
                 if self.cell_config.get("pooling") in {"vn", "learnedvn"} or self.protein_config.get("add_virtual_node"):
-                    raise 'not updated for vn mode without n_cells specified'
+                    raise NotImplementedError('Virtual-node mode requires n_cells to be specified.')
                 
                 for i, celltype in enumerate(ppi_dict_local.keys()):
                     start_idx = batch_ppi_x.ptr[i]
@@ -726,13 +717,12 @@ class hierarchical_model(nn.Module):
                 if self.use_metagraph:
                     cells_x = self.apply_cci(cells_x, list(ppi_dict_local.keys()))
                 cells_pred = self.tissue_encoder(cells_x)
-                ### sigmoid included in BCEwithlogitloss so skipped here
-                # cells_pred = F.sigmoid(cells_pred)
+                # BCEWithLogitsLoss applies the sigmoid internally.
                 if return_layer_outputs:
                     return ppi_dict_local, batch_ppi_x, cells_x, cells_pred, layer_outputs
                 return ppi_dict_local, batch_ppi_x, cells_x, cells_pred
             else:
-                ### filter virtual nodes if not needed in the cell pooling step
+                # Remove virtual nodes before pooling when used only for message passing.
                 if self.cell_config.get("pooling") in ['mean','attention'] and self.protein_config.get("add_virtual_node"):
                     emb_ppi_x, batch_ppi_x, layer_outputs = self.remove_virtual_nodes_from_batch(
                         batch_ppi_x, emb_ppi_x, layer_outputs

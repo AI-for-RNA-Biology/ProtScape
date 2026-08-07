@@ -144,9 +144,7 @@ class Pinnacle(nn.Module):
             ppi_x (dict): Updated dictionary of protein-celltype-tissue representations.
             mg_x (torch.Tensor): Updated metagraph representations.
         """
-        ########################################
-        # Complete layer #1
-        ########################################
+        # Layer 1
 
         # Update Protein-Celltype-Tissue
         ppi_x, mg_x = self.conv1_up(
@@ -157,9 +155,7 @@ class Pinnacle(nn.Module):
         ppi_x = self.conv1_down(
             ppi_x, ppi_metapaths, mg_x, self.conv1_up.ppi_attn)
 
-        ########################################
-        # Apply Leaky ReLU, dropout, and normalize
-        ########################################
+        # Apply Leaky ReLU, dropout, and normalization.
         for celltype, x in ppi_x.items():
             ppi_x[celltype] = self.layer_norm1(x)
             ppi_x[celltype] = F.leaky_relu(ppi_x[celltype])
@@ -171,9 +167,7 @@ class Pinnacle(nn.Module):
         mg_x = self.batch_norm1(mg_x)
         mg_x = F.dropout(mg_x, p = self.dropout, training = self.training)
 
-        ########################################
-        # Complete layer #2
-        ########################################
+        # Layer 2
 
         # Update Protein-Celltype-Tissue
         ppi_x, mg_x = self.conv2_up(

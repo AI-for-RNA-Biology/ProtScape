@@ -20,8 +20,15 @@ dependencies:
   - omegaconf=2.3.0
   - pyyaml=6.0
   - matplotlib=3.7
+  - h5py=3.8
+  - pyarrow
   - tqdm
   - joblib
   - requests
+  - pip
   - wandb=0.13.4
   - protobuf=3.20.3
+  - pip:
+      - obonet==0.3.1
+      - igraph==0.11.8
+      - leidenalg==0.10.2

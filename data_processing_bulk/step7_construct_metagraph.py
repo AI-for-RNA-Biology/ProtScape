@@ -400,13 +400,8 @@ def _reset_edgelist_dir(ppi_dir: Path) -> Path:
     return edgelist_dir
 
 
-def _link_or_copy(source: Path, target: Path) -> None:
-    if target.exists() or target.is_symlink():
-        return
-    try:
-        target.symlink_to(source)
-    except OSError:
-        shutil.copy2(source, target)
+def _copy_edgelist(source: Path, target: Path) -> None:
+    shutil.copy2(source, target)
 
 
 def _read_ppi_list(ppi_dir: Path) -> pd.DataFrame:
@@ -443,7 +438,7 @@ def _prepare_als_files() -> DatasetFiles:
 
     for source_dir in source_dirs:
         for source in sorted((source_dir / "ppi_edgelists").glob("*.txt")):
-            _link_or_copy(source, edgelist_dir / source.name)
+            _copy_edgelist(source, edgelist_dir / source.name)
 
     metadata = pd.read_csv(root / "als_combined_metadata.csv")
     if "tissue" not in metadata.columns:
@@ -518,7 +513,7 @@ def _collect_merged_ppi_records(
         if source_filename:
             source = source_edgelists / source_filename
             if source.exists():
-                _link_or_copy(source, output_edgelist_dir / f"{merged_celltype}.txt")
+                _copy_edgelist(source, output_edgelist_dir / f"{merged_celltype}.txt")
             else:
                 logging.warning("Missing PPI edgelist for %s: %s", original, source)
         else:

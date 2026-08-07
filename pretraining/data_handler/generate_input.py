@@ -167,10 +167,17 @@ def read_ppi(
     weighted_ppi_loss=False):
     """
     Read PPI layers from the specified directory.
+
     Args:
         ppi_dir (str): Directory containing PPI layer files.
-        removed_genes (list): list of genes to remove because protein embeddings are missing.
-        [TO COMPLETE]
+        removed_genes (list): Genes without protein embeddings to remove.
+        global_G (nx.Graph): Global interactome used for global edge splits.
+        verbose (bool): Print data-loading diagnostics.
+        dataset_mode (str): Naming convention used by the PPI files.
+        split_mode (str): Split edges independently by context or globally.
+        count_edge_path (str, optional): Cached cross-context edge counts.
+        seed (int): Random seed for global edge splitting.
+        weighted_ppi_loss (bool): Return cross-context PPI edge weights.
         
     Returns:
         orig_ppi_layers (dict): Original PPI layers.
@@ -262,7 +269,6 @@ def read_ppi(
         
         # Relabel PPI nodes
         mapping = {n: idx for idx, n in enumerate(ppi.nodes())}
-        #print('mapping:', mapping)
         ppi_layers[context] = nx.relabel_nodes(ppi, mapping)
         orig_ppi_layers[context] = ppi
         
@@ -286,11 +292,12 @@ def read_ppi(
                 ppi_train[context], ppi_val[context], ppi_test[context], ppi_weights[context] = split_data_global(
                     ppi.edges, edges_to_sets, dict_edge_count=dict_edge_count, verbose=verbose)
             
-    print('orig_ppi_layers:', list(orig_ppi_layers.keys())[:10])
-    print('ppi_layers:', list(ppi_layers.keys())[:10])
-    print('ppi_train:', list(ppi_train.keys())[:10])
-    print('ppi_val:', list(ppi_val.keys())[:10])
-    print('ppi_test:', list(ppi_test.keys())[:10])
+    if verbose:
+        print('orig_ppi_layers:', list(orig_ppi_layers.keys())[:10])
+        print('ppi_layers:', list(ppi_layers.keys())[:10])
+        print('ppi_train:', list(ppi_train.keys())[:10])
+        print('ppi_val:', list(ppi_val.keys())[:10])
+        print('ppi_test:', list(ppi_test.keys())[:10])
     
     return orig_ppi_layers, ppi_layers, ppi_train, ppi_val, ppi_test, ppi_weights
 
@@ -311,9 +318,7 @@ def create_data(G, train_mask, val_mask, test_mask, node_type, edge_type, x, sym
         new_G (Data): PyTorch Geometric Data object."""
     
     if not symmetric:
-        #print('G.edges:', G.edges)
         edge_index = torch.tensor(list(G.edges)).t().contiguous()
-        #print('edge_index:', edge_index.shape)
         y = torch.ones(edge_index.size(1))
         num_classes = len(torch.unique(y))
         node_type = torch.tensor(node_type)
@@ -332,9 +337,7 @@ def create_data(G, train_mask, val_mask, test_mask, node_type, edge_type, x, sym
         sym_edge_index[0, :] = edge_index[1, :]
         sym_edge_index[1, :] = edge_index[0, :]
         edge_index = torch.cat([edge_index, sym_edge_index], dim=1)
-        # edge_index = torch.unique(edge_index, dim=1) # Remove duplicates
-        ### leads to misalignment with masks so we skip it for now
-        ### might have to think to a better processing for symmetric edges
+        # Do not deduplicate here because it would misalign the edge masks.
         if verbose:
             print('(usym) edge_index:', edge_index.shape)
         y = torch.ones(edge_index.size(1))
@@ -435,55 +438,17 @@ def read_data(
     count_edge_path=None,
     weighted_ppi_loss=False,
     defer_ppi_features=False):
-    """
-    Read the global PPI network, PPI layers, and metagraph.
-    
-    Args:
-    G_f (str): Path to the global PPI network edge list file.
-    ppi_dir (str): Directory containing individual cell/tissue-specific PPI layer files.
-    mg_f (str): Path to the metagraph edge list file (e.g., connecting tissues and cell types).
-    feat_mat_dim (int) : feature dimensions for random features.
-    df_genes_esm2 (dataframe) : Dataframe that contains at least 'gene_name' and 'ESM-2-Embeddings' columns
-    get_CT_map (bool): whether to compute the cell to tissues assignments as a one-hot encoded label.
-    ppi_feat_dir (str): ppi_feat_dir for loading pre-trained protein embeddings as node features. Overwrite feat_mat_dim.
-    Core elements are the following:
-    - metagraph: Originally a directed graph made undirected, that connects tissues and cell types.
-        contains how many nodes ? which correspond to ? 
-        
+    """Load the global PPI, context-specific PPIs, and metagraph.
+
+    ``ppi_feat_dir`` may provide pretrained protein features; otherwise random
+    features of size ``feat_mat_dim`` are used. Edge splits can be defined per
+    context or once on the global interactome. When requested, ``CT_map`` stores
+    each cell type's tissue assignments as a one-hot vector.
+
     Returns:
-    
-    ppi_data (dict): Dictionary of PPI data objects for each cell type.
-        Contains only cell types as keys, not tissues.
-        Each PPI data object is a PyTorch Geometric Data object, with the following attributes:
-            - x (Tensor): Node feature matrix. Default is random gaussian vectors of shape (num_nodes, feat_mat_dim).
-            - y (Tensor): Edge labels. // Corresponds to edges to predict.
-            - num_classes (int): Number of classes.
-            - edge_index (Tensor): Edge indices.
-            - node_type (Tensor): Node types. (always 2 for proteins)
-            - edge_attr (Tensor): Edge attributes. (always 4 for PPI edges)
-            - train_mask (Tensor): Boolean mask for training edges.
-            - val_mask (Tensor): Boolean mask for validation edges.
-            - test_mask (Tensor): Boolean mask for test edges.
-            
-    mg_data (Data): Metagraph data object.
-    mg_data is a PyTorch Geometric Data object, with the following attributes:
-        - x (Tensor): Node feature matrix for the metagraph. Default is a zero matrix of shape (num_nodes, feat_mat_dim).
-        - y (Tensor): Edge labels for the metagraph // Corresponds to edges to predict.
-        - num_classes (int): Number of classes in the metagraph.
-        - edge_index (Tensor): Edge indices for the metagraph.
-        - node_type (Tensor): Node types in the metagraph (0 for tissues, 1 for cell types).
-        - edge_attr (Tensor): Edge attributes in the metagraph (0 for tissue-tissue, 1 for tissue-cell, 2 for cell-tissue, 3 for cell-cell).
-        - train_mask (Tensor): not discriminant - all edges are used during train/val/test.
-        - val_mask (Tensor): -
-        - test_mask (Tensor): -
-        
-    edge_attr_dict (dict): Dictionary mapping edge types to integers.
-    mg_mapping (dict):
-        Mapping of metagraph: contains each cell and tissues as keys and map them to an indice.
-    tissue_neighbors (dict): Dictionary mapping tissue nodes to their neighbors.
-    orig_ppi_layers (dict): Original PPI layers.
-    orig_mg (nx.Graph): Original metagraph.
-    CT_map (dict): cell to tissues assignments as a one-hot encoded label, see :compute_CT_map: doc
+        Tuple containing PPI data, metagraph data, edge-type indices, cell-type
+        indices, tissue neighbors, original PPI layers, the original metagraph,
+        and optionally the cell-to-tissue map.
     """
 
     # Read global PPI network
@@ -546,10 +511,8 @@ def read_data(
         for gene in removed_genes:
             G.remove_node(gene)
     
-    ### NB:
-    # ppi_layers contain only cell as keys, not tissues.
-    # orig_ppi_layers[cellkey] maintain gene names for protein assignments.
-    # ppi_layers[cellkey] assign each present gene in the PPI to an index. (independent across different PPIs)
+    # PPI layers are keyed by cell type. The original layers retain gene names;
+    # the relabeled layers use independent integer indices in each context.
     
     # Read metagraph
     metagraph = nx.read_edgelist(mg_f, data=False, delimiter = "\t", create_using=nx.DiGraph)
@@ -584,15 +547,14 @@ def read_data(
 
     ordered_nodes = cell_nodes + metagraph_tissues
     mg_mapping = {n: i for i, n in enumerate(ordered_nodes)}
-    print('mg_mapping:', len(mg_mapping))
+    if verbose:
+        print('mg_mapping:', len(mg_mapping))
     
     assert len(mg_mapping) == len(metagraph.nodes), set(metagraph.nodes).difference(set(list(mg_mapping.keys())))
     
     # Set up Data object
     mg_nodetype = [0 if "BTO" in n else 1 for n in mg_mapping] # Tissue nodes = 0, Cell-type nodes = 1
     mg_edgetype = []
-    
-    #print('metagraph.edges:', metagraph.edges)
     
     for edges in tqdm(metagraph.edges, desc='Creating metagraph edge types'):
         if "BTO" in edges[0] and "BTO" in edges[1]: mg_edgetype.append(0) # tissue-tissue edge
@@ -603,21 +565,7 @@ def read_data(
             print(edges)
             raise NotImplementedError
         
-    """
-    * Iterating over all nodes t in the metagraph, filtering only those that contain "BTO" in their name.
-    * For each such node t, it gets its neighbors n.
-    * Then it looks up mg_mapping[t] and mg_mapping[n] to build the tissue_neighbors dictionary.
-    """
-    
-    ### Shows the neighbors of each tissue node in the metagraph
-    # with some tissues only connected to other tissues
-    # others also connected to multiple cell types
-    #for t in metagraph.to_undirected().nodes:
-    #    if "BTO" in t:
-    #        print(t)
-    #        print(list(metagraph.to_undirected().neighbors(t)))
-    
-
+    # Map every tissue node to its neighboring tissues and cell types.
     tissue_neighbors = {mg_mapping[t]: [mg_mapping[n] for n in metagraph.to_undirected().neighbors(t)] for t in metagraph.to_undirected().nodes if "BTO" in t}
     
     metagraph = nx.relabel_nodes(metagraph, mg_mapping)
@@ -722,8 +670,9 @@ def get_centerloss_labels(celltype_map, ppi_layers, verbose=False):
     """
     center_loss_labels = []
     
-    print('celltype_map:', list(celltype_map.keys())[:50], len(celltype_map.keys()))
-    print('ppi_layers:', list(ppi_layers.keys())[:50], len(ppi_layers.keys()))
+    if verbose:
+        print('celltype_map:', list(celltype_map.keys())[:50], len(celltype_map))
+        print('ppi_layers:', list(ppi_layers.keys())[:50], len(ppi_layers))
     for celltype, ppi in ppi_layers.items():
         center_loss_labels += [celltype_map[celltype]] * len(ppi.nodes)
         
@@ -734,7 +683,7 @@ def get_centerloss_labels(celltype_map, ppi_layers, verbose=False):
     
     if verbose:
         print("Center loss labels (cell_id, number of proteins):", Counter(center_loss_labels))
-        print(f'train_mask : {train_mask.shape} / val_mask : {val_mask.shape} / test_mask : {test_mask.shape}')
+        print(f'train_mask: {len(train_mask)} / val_mask: {len(val_mask)} / test_mask: {len(test_mask)}')
 
     return center_loss_labels, train_mask, val_mask, test_mask
 

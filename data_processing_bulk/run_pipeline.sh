@@ -4,7 +4,7 @@ set -euo pipefail
 
 usage() {
     echo "Usage: bash run_pipeline.sh {hbca|tabula|als|merged|all} [start_step] [end_step]"
-    echo "Steps: 0, 1, 2, 2b, 3, 4, 5, 6, 7, 8, 9"
+    echo "Steps: 0, 1, 2, 2b, 3, 4, 5, 6, 7, 8"
 }
 
 if (( $# > 3 )); then
@@ -28,7 +28,7 @@ case "${DATASET}" in
         ;;
     all)
         default_start=0
-        default_end=9
+        default_end=8
         ;;
     *)
         usage
@@ -51,7 +51,6 @@ stage_rank() {
         6) echo 7 ;;
         7) echo 8 ;;
         8) echo 9 ;;
-        9) echo 10 ;;
         *) return 1 ;;
     esac
 }
@@ -105,7 +104,6 @@ ALS_MN_DIR="${ALS_DIR}/motor_neurons"
 ALS_ASTRO_DIR="${ALS_DIR}/astrocytes"
 MERGED_DIR="${PINNACLE_BASE}/merged_single_cell"
 FINAL_DIR="${PINNACLE_BASE}/networks_bulk"
-EVALUATION_DIR="${PINNACLE_BASE}/evaluation_reports"
 
 if ! command -v conda >/dev/null 2>&1; then
     echo "conda is not available on PATH" >&2
@@ -361,15 +359,10 @@ run_stage() {
                 run_scrna step8_merge_datasets --merged-root "${MERGED_DIR}" --output-dir "${FINAL_DIR}"
             fi
             ;;
-        9)
-            if [[ "${DATASET}" == all ]]; then
-                run_scrna step9_evaluate_outputs --datasets hbca tabula als merged --merged-dir "${FINAL_DIR}" --output-dir "${EVALUATION_DIR}"
-            fi
-            ;;
     esac
 }
 
-STAGES=(0 1 2 2b 3 4 5 6 7 8 9)
+STAGES=(0 1 2 2b 3 4 5 6 7 8)
 echo "Dataset: ${DATASET}"
 echo "Steps: ${START_STEP} through ${END_STEP}"
 echo "scRNA environment: ${SCRNA_ENV}"

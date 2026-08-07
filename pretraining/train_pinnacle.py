@@ -1,5 +1,4 @@
 import os
-import json
 import argparse
 import traceback
 import sys
@@ -11,10 +10,9 @@ import numpy as np
 from tqdm import tqdm
 import yaml
 
-#from parse_args import get_args
-
 from .data_handler.generate_input import read_data, get_metapaths, get_centerloss_labels
 from .models.pinnacle_model import Pinnacle
+from .checkpoints import save_portable_checkpoint
 from .losses.center_loss import CenterLoss
 from .train.train_pinnacle_model import train, test
 from . import utils
@@ -23,7 +21,6 @@ import pickle
 from pathlib import Path
 
 
-from torch_geometric.data import Batch
 from itertools import product
 
 
@@ -80,14 +77,13 @@ def _normalize_features_mode(raw_value):
     return normalized
 
 
-def _get_ppi_feat_dir(data_dir, features_mode):
+def _get_ppi_feat_dir(paths, features_mode):
     if features_mode == "ESM2":
-        filename = "gene_protein_embeddings_esm2_650M.plk"
+        return str(Path(paths["esm2_embeddings"]).expanduser())
     elif features_mode == "ProstT5":
-        filename = "gene_protein_embeddings_prostt5_1024.plk"
+        return str(Path(paths["prostt5_embeddings"]).expanduser())
     else:
         return None
-    return os.path.join(data_dir, "protein_gene_based_embeddings", filename)
 
 
 
@@ -138,14 +134,11 @@ if symmetric_ppi == False:
     print('Warning: Using asymmetric PPI network to replicate PINNACLE experiments - this is not recommended!')
     
     
-#%% Global data variables
-
 # Input and output roots are kept in one editable project config.
 paths_file = Path(__file__).resolve().parents[1] / "configs" / "paths.yaml"
 with paths_file.open("r", encoding="utf-8") as handle:
     project_paths = yaml.safe_load(handle)
 
-DATA_DIR = str(Path(project_paths["data_root"]).expanduser())
 network_dir = str(Path(project_paths["networks_bulk"]).expanduser())
 global_ppi_edges = os.path.join(network_dir, "global_ppi_edgelist.txt")
 ppi_dir = os.path.join(network_dir, "ppi_edgelists")
@@ -167,7 +160,6 @@ plot = False
 device = 'cuda:0'
 
 
-#%% Training configuration
 # shared by all GNN methods
 dict_cfg = {
         'gnn_method': gnn_method, 
@@ -221,8 +213,6 @@ features_mode_dict = {
         "ProstT5": 1024,
 }
 
-#%% Main function
-#%% 
 def main(
     cfg,
     ppi_data,
@@ -358,8 +348,7 @@ def main(
 
         print("Optimization finished!")
 
-        # Save each object separately
-        ### might remove that later on to just load the data independently of the train function to not need to save for testing
+        # Save the train/validation metapaths used by test-only evaluation.
         torch.save(ppi_metapaths_train, os.path.join(cfg.save_prefix, "ppi_metapaths_train.pth"))
         torch.save(mg_metapaths_train, os.path.join(cfg.save_prefix, "mg_metapaths_train.pth"))
         torch.save(ppi_metapaths_val, os.path.join(cfg.save_prefix, "ppi_metapaths_val.pth"))
@@ -367,6 +356,36 @@ def main(
 
     else:
         print('Skipping training as per user request.')
+
+    if os.path.exists(save_best_model):
+        id_to_name = {cell_id: name for name, cell_id in celltype_map.items()}
+        cell_ids = list(ppi_data)
+        portable_config = {
+            "dataset_mode": cfg.dataset_mode,
+            "split_mode": cfg.split_mode,
+            "features_mode": cfg.features_mode,
+            "symmetric_ppi": cfg.symmetric_ppi,
+            "seed": cfg.seed,
+            "epochs": cfg.epochs,
+            "gnn_method": cfg.gnn_method,
+            "input_dim": int(mg_data.x.shape[1]),
+            "hidden": cfg.hidden,
+            "output": cfg.output,
+            "num_ppi_relations": len(ppi_metapaths),
+            "num_mg_relations": len(mg_metapaths),
+            "n_heads": cfg.n_heads,
+            "pc_att_channels": cfg.pc_att_channels,
+            "dropout": cfg.dropout,
+            "shared_ppi_gnn": False,
+        }
+        save_portable_checkpoint(
+            Path(cfg.save_prefix) / "best_model_state_dict.pt",
+            save_best_model,
+            model_type="pinnacle",
+            config=DictConfig(portable_config),
+            cell_ids=cell_ids,
+            cell_names=[id_to_name[cell_id] for cell_id in cell_ids],
+        )
 
     if run_test:
         if not run_train:
@@ -417,11 +436,10 @@ def main(
             split='test')
 
 if __name__ == "__main__":
-   
-    # Just PINNACLE paper exp --------------------------------------------------------------------------------------
+    # Adapted PINNACLE paper experiments.
     dict_cfg['features_mode'] = features_mode
     dict_cfg['protein_feat_dim'] = features_mode_dict[features_mode]
-    dict_cfg['ppi_feat_dir'] = _get_ppi_feat_dir(DATA_DIR, features_mode)
+    dict_cfg['ppi_feat_dir'] = _get_ppi_feat_dir(project_paths, features_mode)
 
     had_failure = False
     for gnn_lambda, gnn_dropout, gnn_output in product(

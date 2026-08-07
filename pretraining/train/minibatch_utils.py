@@ -1,10 +1,8 @@
-import random
 import numpy as np
 import torch
 from torch_geometric.data import Data
-from torch_geometric.loader import NeighborLoader, GraphSAINTRandomWalkSampler, GraphSAINTEdgeSampler
+from torch_geometric.loader import NeighborLoader, GraphSAINTEdgeSampler
 from torch_geometric.utils import structured_negative_sampling
-from torch.nn.functional import nll_loss, relu
 import torch.nn.functional as F
 
 from ..utils import construct_metapath, get_embeddings
@@ -16,9 +14,6 @@ from time import time
 from torchmetrics import F1Score, Accuracy, AUROC, AveragePrecision
 import wandb
 from joblib import Parallel, delayed
-
-
-#%% model agnostic functions for batch generation 
 
 
 def _make_exclusion_edge_index(edge_index):
@@ -125,13 +120,8 @@ def generate_batch(
         local_masked_data_dict = dict()
         # If PPI task --> build special DataLoader
         if ppi:
-            #print('ppi node')
             data = Data(x = data.x, edge_index = total_edge_index, edge_attr = total_edge_type, y = y)
             data.n_id = torch.arange(data.num_nodes)
-            #print('data.x:', data.x.shape)
-            #print('data.edge_index:', data.edge_index.shape)
-            #print('data.edge_attr:', data.edge_attr.shape, torch.unique(data.edge_attr, return_counts=True))
-            #print('data.y:', data.y.shape, torch.unique(data.y, return_counts=True))
             
             # Based on loader type 
             if loader_type == "neighbor":
@@ -144,7 +134,6 @@ def generate_batch(
                     shuffle = True,
                     pin_memory=pin_memory)
             elif loader_type == "graphsaint":
-                #loader = GraphSAINTRandomWalkSampler(data, batch_size = batch_size, walk_length = num_layers)
                 loader = GraphSAINTEdgeSampler(
                     data,
                     batch_size = batch_size,
@@ -153,13 +142,6 @@ def generate_batch(
                     )
             else:
                 raise NotImplementedError
-            # Save loader
-            """
-            print('set loader')
-            for i_, elem in enumerate(loader):
-                print(i_, ' loader elem;', elem.x.shape, elem.edge_index.shape, elem.edge_attr.shape, elem.y.shape)
-            raise 'test'
-            """
             local_loader = loader
             local_masked_data_dict["total_edge_type"] = total_edge_type
             return (
@@ -184,7 +166,6 @@ def generate_batch(
     metapath_adjs_dict = dict()
     x_dict = dict()
     loader_dict = dict()
-    #print('-- call generate batch')
     if n_jobs is None:
         for i, (key, data) in tqdm(enumerate(data_dict.items()), desc="Generating batches", disable=not verbose):
             res = get_samples(key, data)
@@ -196,12 +177,6 @@ def generate_batch(
             if ppi:
                 loader_dict[key] = res[4]
                         
-            """
-            if i== 0:
-                print('x_dict[key]:', x_dict[key].device)
-                for subkey in res[3].keys():
-                    print(f'{subkey} - masked_data_dict[key][subkey]:', masked_data_dict[key][subkey].device)
-            """
     else:
         verbose_joblib = 10 if verbose else 0
         list_res = Parallel(n_jobs=n_jobs, verbose=verbose_joblib)(
@@ -257,7 +232,7 @@ def generate_batch_corrected(
     
     def get_samples(key, data):
         if mask == "train":
-            raise 'train mask corrected sampler not up to date'
+            raise NotImplementedError('The corrected sampler does not support a training mask.')
             pos_edge_index = data.edge_index[:, data.train_mask]
             pos_edge_index_messagepassing = pos_edge_index
             eval_edges = None # all of them are assumed to be seen in the GAE framework
@@ -354,7 +329,6 @@ def generate_batch_corrected(
     metapath_adjs_dict = dict()
     x_dict = dict()
     loader_dict = dict()
-    #print('-- call generate batch')
     if n_jobs is None:
         for i, (key, data) in tqdm(enumerate(data_dict.items()), desc="Generating batches", disable=not verbose):
             res = get_samples(key, data)
@@ -365,12 +339,6 @@ def generate_batch_corrected(
                 masked_data_dict[key][subkey] = res[3][subkey].to(device)
             if ppi:
                 loader_dict[key] = res[4]
-            """
-            if i== 0:
-                print('x_dict[key]:', x_dict[key].device)
-                for subkey in res[3].keys():
-                    print(f'{subkey} - masked_data_dict[key][subkey]:', masked_data_dict[key][subkey].device)
-            """
     else:
         verbose_joblib = 10 if verbose else 0
         list_res = Parallel(n_jobs=n_jobs, verbose=verbose_joblib)(
@@ -428,12 +396,6 @@ def negative_sampler(pos_edge_index, edge_type, edge_attr_dict, exclude_edge_ind
         )
         # Form negative edges
         neg_rel_edge_index = torch.stack((neg_source, neg_rand), dim = 0)
-        """
-        neg_rel_edge_index = pos_rel_edge_index.clone()
-        rand_axis = random.sample([0, 1], 1)[0]
-        rand_index = torch.randperm(pos_rel_edge_index.size(1))
-        neg_rel_edge_index[rand_axis, :] = pos_rel_edge_index[rand_axis, rand_index]
-        """
         # Merge into total negatives
         if neg_edge_index == None: 
             neg_edge_index = neg_rel_edge_index 
@@ -443,8 +405,6 @@ def negative_sampler(pos_edge_index, edge_type, edge_attr_dict, exclude_edge_ind
         neg_edge_type.extend([idx] * mask.sum())
 
     return neg_edge_index, torch.tensor(neg_edge_type, dtype=edge_type.dtype, device=edge_type.device)
-
-#%% subfunctions for batch generation of pinnacle models
 
 def pred_batch2dict(
         packed_batch: object, mg_x_ori: dict, ppi_x_ori: dict, cell_type_order: list, device: str,
@@ -628,9 +588,6 @@ def iterate_train_batch(
         ppi_preds = dict()
         
         for celltype, x in ppi_x.items():
-            # print(f'----- celltype: {celltype}, x.shape: {x.shape}')
-            # print('ppi_data_batch[celltype][total_edge_index]:', ppi_data_batch[celltype]['total_edge_index'].shape)
-
             # 1. Make prediction (assumes el_dot is GPU-compatible)
             ppi_preds[celltype] = el_dot(x, ppi_data_batch[celltype]['total_edge_index'], [])
             
@@ -641,24 +598,17 @@ def iterate_train_batch(
                     if celltype not in ppi_preds_all:
                         ppi_preds_all[celltype] = torch.empty((0, *pred_cpu.shape[1:])) if pred_cpu.ndim > 1 else torch.tensor([])
                     ppi_preds_all[celltype] = torch.cat([ppi_preds_all[celltype], pred_cpu])
-                    # print(f'ppi_preds_all[celltype].shape: {ppi_preds_all[celltype].shape}')
-
                     # 3. Store labels on CPU
                     y_cpu = ppi_data_batch[celltype]['y'].detach().cpu()
                     ppi_data_y[celltype]['y'] = torch.cat([ppi_data_y[celltype]['y'], y_cpu])
-                    # print(f'ppi_data_y[celltype]["y"].shape: {ppi_data_y[celltype]["y"].shape}')
-
                     # 4. Store edge types on CPU
                     edge_type_cpu = ppi_data_batch[celltype]['total_edge_type'].detach().cpu()
                     ppi_data_y[celltype]['total_edge_type'] = torch.cat([
                         ppi_data_y[celltype]['total_edge_type'], edge_type_cpu
                     ])
-                    # print(f'ppi_data_y[celltype]["total_edge_type"].shape: {ppi_data_y[celltype]["total_edge_type"].shape}')
-
                     # 5. Store node embeddings on CPU (ensure index is also on CPU)
                     indices_cpu = ppi_node_ind_batch[celltype].cpu()
                     ppi_x_out[celltype][indices_cpu] = x.detach().cpu()
-                    # print(f'ppi_x_out[celltype][indices_cpu].shape: {ppi_x_out[celltype][indices_cpu].shape}')
 
         if metrics is not None: # compute metrics on ppi graphs per batch
             ppi_batch_preds = torch.cat([pred for pred in ppi_preds.values()], dim=0)
@@ -687,7 +637,6 @@ def iterate_train_batch(
         print("Link Prediction: ", link_loss, "Center Loss: ", cent_loss)
         wandb.log({"Link Prediction Loss": link_loss, "Center Loss": cent_loss})
         combined_loss = link_loss + (cent_loss * hparams["lambda"])
-        # raise 'test'
         combined_loss.backward()
         
         # Update
@@ -791,9 +740,6 @@ def iterate_predict(
         
         # Compute predictions for PPI layers
         for celltype, x in ppi_x.items():
-            print('--- celltype:', celltype)
-            print('x:', x.shape, x.device)
-            print('total_edge_index:', ppi_data_batch[celltype]['total_edge_index'].shape, ppi_data_batch[celltype]['total_edge_index'].device)
             ppi_preds_all[celltype] = el_dot(x.to(device), ppi_data_batch[celltype]['total_edge_index'].to(device), [])
             ppi_data_y[celltype]['y'] = ppi_data_batch[celltype]['y'].detach()
             ppi_data_y[celltype]['total_edge_type'] =  ppi_data_batch[celltype]['total_edge_type'].detach()
@@ -821,9 +767,6 @@ def construct_batch_center_loss_mask(original_mask: list, ppi_node_ind_batch: di
     return train_mask_batch
     
 
-#%% subfunctions for batch generation of new hierarchical models
-
-
 def train_batch2dict(packed_batch: object, mg_x_ori: dict, ppi_metapaths: dict, cell_type_order: list, device: str) -> dict:
     """
     
@@ -839,18 +782,12 @@ def train_batch2dict(packed_batch: object, mg_x_ori: dict, ppi_metapaths: dict, 
     
     :return: A dictionary of edge data from all graphs in one round, :code:`ppi_x_batch`, :code:`ppi_node_ind_batch` and :code:`ppi_metapaths_batch` extracted from batches, and the re-initialized node embeddings :code:`mg_x_init`.
     """
-    # Re-initalize mg_x from mg_x in each batch
-    # ppi_x_init = {key:x.clone().to(device) for key, x in ppi_x.items()}
-    # mg_x_init = mg_x_ori.clone().to(device) if len(mg_x_ori)!=0 else []
-    
     # Unpack batches
     ppi_data_batch = {key:{} for key in cell_type_order}
     ppi_x_batch = {}
     ppi_node_ind_batch = {}
     ppi_metapaths_out = {}
     for ind, batch in enumerate(packed_batch):
-        # ori_map = batch.n_id
-        # batch.total_edge_index = ori_map[batch.edge_index]
         i = cell_type_order[ind]
         ppi_node_ind_batch[i] = batch.n_id.to(device)
         ppi_x_batch[i] = batch.x.to(device)
@@ -904,10 +841,6 @@ def iterate_train_batch_hierarchical_model(
     
     # store global predictions
     if store_global_pred_train:
-        ### changing initial device for global evaluation from cpu to gpu
-        #ppi_preds_all = {}
-        #ppi_data_y = {key:{'y': torch.tensor([]), 'total_edge_type': torch.tensor([])} for key in ppi_x_ori.keys()}
-        #ppi_x_out = {key: torch.zeros((x.shape[0], model.prot_encoder.gnn_output_dim)) for key, x in ppi_x_ori.items()}
         ppi_preds_all = {key:[] for key in ppi_x_ori.keys()}
         ppi_data_y = {key:{'y': [], 'total_edge_type': []} for key in ppi_x_ori.keys()}
         ppi_x_out = {key: torch.zeros((x.shape[0], model.prot_encoder.gnn_output_dim), device=device) for key, x in ppi_x_ori.items()}
@@ -983,7 +916,7 @@ def iterate_train_batch_hierarchical_model(
                     batching=batching)
             
         else:
-            raise 'model forward not implemented for requested hierarchical_mode'
+            raise NotImplementedError('Model forward is not implemented for this hierarchical mode.')
 
         # Metagraph predictions (uses cell/tissue embeddings only)
         mg_pred = None
@@ -1029,13 +962,12 @@ def iterate_train_batch_hierarchical_model(
                 ppi_preds[celltype] = el_dot(x, ppi_data_batch[celltype]['total_edge_index'], [])
                 with torch.no_grad():
                     if store_global_pred_train:
-                        ### versions moved to cpu
                         ppi_preds_all[celltype].append(ppi_preds[celltype].detach())
                         ppi_data_y[celltype]['y'].append(ppi_data_batch[celltype]['y'].detach())
                         ppi_data_y[celltype]['total_edge_type'].append( ppi_data_batch[celltype]['total_edge_type'].detach())
                         ppi_x_out[celltype][ppi_node_ind_batch[celltype]] = x.detach()
                     else:
-                        raise 'store_global_pred_train = False / not batching - not implemented yet'
+                        raise NotImplementedError('Non-batched prediction requires store_global_pred_train=True.')
             del ppi_x
         else:
             # ppi_x -> coincides with emb_ppi_x
@@ -1046,17 +978,16 @@ def iterate_train_batch_hierarchical_model(
                 if store_global_pred_train:
                     start_edge_idx = 0
                     for icelltype, celltype in enumerate(ppi_x_ori.keys()):
-                            ### versions moved to cpu
-                            end_edge_idx = start_edge_idx + ppi_data_batch[celltype]['total_edge_type'].shape[0]
-                            
-                            start_node_idx, end_node_idx = batch_ppi_x.ptr[icelltype], batch_ppi_x.ptr[icelltype + 1] 
-                            
-                            ppi_preds_all[celltype].append(ppi_preds_batch[start_edge_idx : end_edge_idx].detach())
-                            ppi_data_y[celltype]['y'].append(ppi_data_batch[celltype]['y'].detach())
-                            ppi_data_y[celltype]['total_edge_type'].append( ppi_data_batch[celltype]['total_edge_type'].detach())
-                            ppi_x_out[celltype][ppi_node_ind_batch[celltype]] = emb_ppi_x[start_node_idx : end_node_idx].detach()
-                            
-                            start_edge_idx = end_edge_idx
+                        end_edge_idx = start_edge_idx + ppi_data_batch[celltype]['total_edge_type'].shape[0]
+
+                        start_node_idx, end_node_idx = batch_ppi_x.ptr[icelltype], batch_ppi_x.ptr[icelltype + 1]
+
+                        ppi_preds_all[celltype].append(ppi_preds_batch[start_edge_idx : end_edge_idx].detach())
+                        ppi_data_y[celltype]['y'].append(ppi_data_batch[celltype]['y'].detach())
+                        ppi_data_y[celltype]['total_edge_type'].append(ppi_data_batch[celltype]['total_edge_type'].detach())
+                        ppi_x_out[celltype][ppi_node_ind_batch[celltype]] = emb_ppi_x[start_node_idx : end_node_idx].detach()
+
+                        start_edge_idx = end_edge_idx
                 else:
                     for m in metrics.keys():
                         _ = metrics[m](ppi_preds_batch, batch_ppi_x.y.to(dtype=torch.int32))
@@ -1077,13 +1008,11 @@ def iterate_train_batch_hierarchical_model(
             
         else:
             #ppi_loss, mg_loss  = calc_link_pred_loss(mg_pred, mg_data_train, ppi_preds, ppi_data_batch, hparams['loss_type'])
-            raise 'model forward not implemented for requested hierarchical_mode'
+            raise NotImplementedError('Model forward is not implemented for this hierarchical mode.')
 
         del batch_ppi_x
         
         # Compute CTassignment loss
-        #log_cells_pred = torch.log(relu(cells_pred) + 1e-40)
-        #CT_loss = nll_loss(log_cells_pred, cell_labels, reduction='mean') 
         CT_loss = metagraph_loss_nn(cells_pred, cell_labels)
         if verbose:
             print("Link Prediction: ", link_loss, "CT Loss:", CT_loss, "MG Loss:", mg_loss)
@@ -1102,13 +1031,10 @@ def iterate_train_batch_hierarchical_model(
         total_loss += float(combined_loss) * batch_size
         # Note that here for simplicity the total loss rather than only the link prediction BCEloss is weighted by edge batch size. 
         del ppi_preds_batch
-        #print('----- training ---- memory summary')
-        #print(torch.cuda.memory_summary())
         torch.cuda.empty_cache()
     
     if verbose:
         print('epoch time:', time() - start_epoch) 
-    #print('count - number of different packed_batches')
     total_loss = total_loss/total_samples  # Weighted total train loss
     
     with torch.no_grad():
@@ -1158,9 +1084,6 @@ def iterate_predict_batch_hierarchical_model(
     with torch.no_grad():
         for packed_batch in tqdm(zip(*ppi_loader_dict.values()), desc='process eval batch'):
             count += 1
-            #print('eval batch count:', count)
-            #print(torch.cuda.memory_summary())
-            
             # Unpack batches and reinitialize mg_x
             ppi_data_batch, ppi_x, _ = pred_batch2dict(
                 packed_batch, None, ppi_x_ori, list(ppi_loader_dict.keys()), device)
@@ -1180,7 +1103,7 @@ def iterate_predict_batch_hierarchical_model(
                         ppi_edge_index=ppi_data_batch,
                         batching=batching)
             else:
-                raise 'model forward not implemented for requested hierarchical_mode'
+                raise NotImplementedError('Model forward is not implemented for this hierarchical mode.')
 
             if getattr(cfg, "use_metagraph", False) and (mg_data_eval is not None):
                 cell_order = list(ppi_data_batch.keys())

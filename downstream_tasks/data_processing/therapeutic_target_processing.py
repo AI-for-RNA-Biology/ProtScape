@@ -5,8 +5,11 @@ Build therapeutic target downstream datasets (split by disease EFO code).
 This script is embedding-independent:
 - Inputs come from therapeutic target evidence files + global PPI universe.
 - Outputs are per-disease binary CSVs consumed by the downstream training pipeline.
+- Positives use phase >= 3 or completed phase 2 evidence over the disease subtree.
+- Negatives are approved-human DrugBank targets without a non-literature
+  Open Targets association for the root disease query.
 
-Default outputs (under downstream_tasks/therapeutic_target_dataset):
+Generated outputs:
 - therapeutic_target_EFO_0000685.csv
 - therapeutic_target_EFO_0003767.csv
 - therapeutic_target_summary.csv
@@ -32,7 +35,12 @@ except ImportError as exc:
     raise SystemExit("Please install `requests` (pip install requests).") from exc
 
 
-from ..config import DEFAULT_DATA_ROOT, DEFAULT_GLOBAL_PPI, DEFAULT_OUTPUT_ROOT
+from ..config import (
+    DEFAULT_GLOBAL_PPI,
+    DEFAULT_OUTPUT_ROOT,
+    DEFAULT_THERAPEUTIC_TARGET_DRUGBANK_TARGETS,
+    DEFAULT_THERAPEUTIC_TARGET_EVIDENCE_DIR,
+)
 
 DEFAULT_DISEASES = (
     "EFO_0003767",
@@ -54,11 +62,6 @@ DEFAULT_DISEASES = (
 
 OT_URL = "https://api.platform.opentargets.org/api/v4/graphql"
 UNIPROT_IDMAPPING_BASE = "https://rest.uniprot.org/idmapping"
-
-
-def detect_data_root() -> Path:
-    """Return the configured input-data root."""
-    return DEFAULT_DATA_ROOT
 
 
 def detect_output_dir() -> Path:
@@ -105,18 +108,6 @@ def load_druggable_targets(all_drug_targets_path: Path) -> Set[str]:
             if gene and gene != "NAN":
                 targets.add(gene)
     return targets
-
-
-def load_chembl_to_drugbank_map(path: Path) -> Dict[str, str]:
-    """Load ChEMBL -> DrugBank map (for compatibility; not required for labels)."""
-    if not path.exists():
-        return {}
-    df = pd.read_table(path)
-    if df.shape[1] < 2:
-        return {}
-    df = df.iloc[:, :2].copy()
-    df.columns = ["chembl", "db"]
-    return dict(zip(df["chembl"].astype(str), df["db"].astype(str)))
 
 
 def detect_evidence_files(evidence_dir: Path, evidence_format: str) -> Tuple[List[Path], str]:
@@ -587,7 +578,7 @@ def build_dataset_for_disease(
             "n_positive": n_pos,
             "n_negative": n_neg,
             "n_total": int(df_existing.shape[0]),
-            "dataset_csv": str(out_csv),
+            "dataset_csv": out_csv.name,
             "status": "existing",
         }
 
@@ -599,7 +590,7 @@ def build_dataset_for_disease(
         descendants = {disease}
     else:
         raise ValueError(
-            f"Unsupported descendants_source={descendants_source}; valid: efo, none"
+            f"Unsupported descendants_source={descendants_source}; valid: ot, efo, none"
         )
     print(f"[INFO] {disease}: {len(descendants)} disease IDs (with descendants)")
 
@@ -680,7 +671,7 @@ def build_dataset_for_disease(
         "n_ensg_ids": map_stats["n_ensg_ids"],
         "n_ensg_mapped_ot": map_stats["n_ensg_mapped_ot"],
         "n_ensg_mapped_ensembl": map_stats["n_ensg_mapped_ensembl"],
-        "dataset_csv": str(out_csv),
+        "dataset_csv": out_csv.name,
         "status": "rebuilt",
     }
 
@@ -690,16 +681,22 @@ def parse_args() -> argparse.Namespace:
         description="Build therapeutic target downstream datasets (split by EFO disease)."
     )
     parser.add_argument(
-        "--data-root",
+        "--drugbank-targets",
         type=Path,
-        default=None,
-        help="Base data directory (auto-detected if omitted).",
+        default=DEFAULT_THERAPEUTIC_TARGET_DRUGBANK_TARGETS,
+        help=(
+            "Approved-drug target table. Defaults to "
+            "therapeutic_target_drugbank_targets in configs/paths.yaml."
+        ),
     )
     parser.add_argument(
-        "--dataset-dir",
+        "--evidence-dir",
         type=Path,
-        default=None,
-        help="Therapeutic dataset directory containing all_approved_oct2022.csv, src1src2.txt and evidence_data/.",
+        default=DEFAULT_THERAPEUTIC_TARGET_EVIDENCE_DIR,
+        help=(
+            "Open Targets ChEMBL evidence directory. Defaults to "
+            "therapeutic_target_evidence_dir in configs/paths.yaml."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -732,16 +729,10 @@ def parse_args() -> argparse.Namespace:
         help="Evidence file format.",
     )
     parser.add_argument(
-        "--limit-evidence-files",
-        type=int,
-        default=None,
-        help="Optional debug limit on number of evidence files scanned.",
-    )
-    parser.add_argument(
         "--processed-subdir",
         type=str,
         default="processed",
-        help="Subdirectory name under dataset-dir for processed label json files.",
+        help="Subdirectory under the output directory for processed label JSON files.",
     )
     parser.add_argument(
         "--force",
@@ -760,34 +751,29 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    data_root = args.data_root or detect_data_root()
-    dataset_dir = args.dataset_dir or (data_root / "downstream_tasks" / "therapeutic_target_dataset")
     output_dir = args.output_dir or detect_output_dir()
     global_ppi_path = args.global_ppi_path or DEFAULT_GLOBAL_PPI
 
-    all_drug_targets_path = dataset_dir / "all_approved_oct2022.csv"
-    chembl2db_path = dataset_dir / "src1src2.txt"
-    evidence_dir = dataset_dir / "evidence_data"
+    all_drug_targets_path = args.drugbank_targets
+    evidence_dir = args.evidence_dir
     processed_dir = output_dir / args.processed_subdir
 
     print("=" * 80)
     print("Therapeutic Target Dataset Processing")
     print("=" * 80)
-    print(f"Data root:      {data_root}")
-    print(f"Dataset dir:    {dataset_dir}")
-    print(f"Output dir:     {output_dir}")
-    print(f"Global PPI:     {global_ppi_path}")
-    print(f"Diseases:       {args.diseases}")
+    print(f"DrugBank targets: {all_drug_targets_path}")
+    print(f"OT evidence:      {evidence_dir}")
+    print(f"Output dir:       {output_dir}")
+    print(f"Global PPI:       {global_ppi_path}")
+    print(f"Diseases:         {args.diseases}")
     print(f"Evidence format request: {args.evidence_format}")
     print()
 
-    for path in (all_drug_targets_path, chembl2db_path, global_ppi_path, evidence_dir):
+    for path in (all_drug_targets_path, global_ppi_path, evidence_dir):
         if not path.exists():
             raise FileNotFoundError(f"Required input not found: {path}")
 
     evidence_files, evidence_format = detect_evidence_files(evidence_dir, args.evidence_format)
-    if args.limit_evidence_files is not None:
-        evidence_files = evidence_files[: args.limit_evidence_files]
     print(f"Detected evidence format: {evidence_format}")
     print(f"Evidence files used: {len(evidence_files)}")
 
@@ -796,11 +782,6 @@ def main() -> None:
 
     druggable_targets = load_druggable_targets(all_drug_targets_path)
     print(f"Druggable targets (human): {len(druggable_targets)}")
-
-    # Loaded for compatibility/debug parity with old task.
-    chembl_map = load_chembl_to_drugbank_map(chembl2db_path)
-    print(f"ChEMBL->DrugBank map entries: {len(chembl_map)}")
-    print()
 
     summary_rows: List[Dict[str, object]] = []
     for disease in args.diseases:

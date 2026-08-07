@@ -7,7 +7,6 @@ import pickle
 from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
-from time import time
 from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np

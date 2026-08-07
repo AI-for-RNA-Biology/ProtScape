@@ -12,11 +12,22 @@ DEFAULT_DATA_ROOT = Path(PATHS["data_root"]).expanduser()
 DEFAULT_GLOBAL_PPI = Path(PATHS["global_ppi"]).expanduser()
 DEFAULT_INFERENCE_ROOT = Path(PATHS["inference_root"]).expanduser()
 DEFAULT_OUTPUT_ROOT = Path(PATHS["output_root"]).expanduser() / "downstream_tasks"
-
-ESM_EMBED_PATH = "protein_gene_based_embeddings/gene_protein_embeddings_esm2_650M.plk"
-PROSTT5_EMBED_PATH = "protein_gene_based_embeddings/gene_protein_embeddings_prostt5_1024.plk"
-
-CORUM_CSV = "downstream_tasks/corum_dataset/corum_memberships_filtered.csv"
+DEFAULT_ESM_EMBEDDINGS = Path(PATHS["esm2_embeddings"]).expanduser()
+DEFAULT_PROSTT5_EMBEDDINGS = Path(PATHS["prostt5_embeddings"]).expanduser()
+DEFAULT_PINNACLE_PAPER_EMBEDDINGS_DIR = Path(
+    PATHS["pinnacle_paper_embeddings_dir"]
+).expanduser()
+DEFAULT_CORUM_RAW_JSON = Path(PATHS["corum_raw_json"]).expanduser()
+DEFAULT_CORUM_DATASET_DIR = Path(PATHS["corum_dataset_dir"]).expanduser()
+DEFAULT_THERAPEUTIC_TARGET_DRUGBANK_TARGETS = Path(
+    PATHS["therapeutic_target_drugbank_targets"]
+).expanduser()
+DEFAULT_THERAPEUTIC_TARGET_EVIDENCE_DIR = Path(
+    PATHS["therapeutic_target_evidence_dir"]
+).expanduser()
+DEFAULT_THERAPEUTIC_TARGET_DATASET_DIR = Path(
+    PATHS["therapeutic_target_dataset_dir"]
+).expanduser()
 PAPER_THERAPEUTIC_IDS = (
     "EFO_0003767",
     "EFO_0000685",
@@ -88,9 +99,8 @@ class Config:
     def get_inference_path(self) -> Path:
         return self.inference_root / self.inference_model
 
-def get_therapeutic_tasks(data_root: Path) -> Dict[str, TaskConfig]:
+def get_therapeutic_tasks(dataset_dir: Path) -> Dict[str, TaskConfig]:
     """Return the therapeutic-target tasks reported in the paper."""
-    dataset_dir = data_root / "downstream_tasks" / "therapeutic_target_dataset"
     return {
         f"therapeutic_target_{disease_id.lower()}": TaskConfig(
             label_csv=dataset_dir / f"therapeutic_target_{disease_id}.csv",
@@ -120,24 +130,29 @@ def load_config(
     inference_root = DEFAULT_INFERENCE_ROOT
     output_root = DEFAULT_OUTPUT_ROOT
 
-    sequence_relpath = ESM_EMBED_PATH if embedding_source == "esm" else PROSTT5_EMBED_PATH
-    pinnacle_paper_dir = data_root.parent / "pinnacle_embeds"
-
     embeddings = EmbeddingPaths(
-        esm=data_root / sequence_relpath,
-        pinnacle_paper_protein=pinnacle_paper_dir / "pinnacle_protein_embed.pth",
-        pinnacle_paper_cell=pinnacle_paper_dir / "pinnacle_mg_embed.pth",
-        pinnacle_paper_labels=pinnacle_paper_dir / "pinnacle_protein_labels_dict.txt",
-        pinnacle_paper_cell_labels=pinnacle_paper_dir / "pinnacle_mg_labels_dict.txt",
+        esm=(
+            DEFAULT_ESM_EMBEDDINGS
+            if embedding_source == "esm"
+            else DEFAULT_PROSTT5_EMBEDDINGS
+        ),
+        pinnacle_paper_protein=DEFAULT_PINNACLE_PAPER_EMBEDDINGS_DIR
+        / "pinnacle_protein_embed.pth",
+        pinnacle_paper_cell=DEFAULT_PINNACLE_PAPER_EMBEDDINGS_DIR
+        / "pinnacle_mg_embed.pth",
+        pinnacle_paper_labels=DEFAULT_PINNACLE_PAPER_EMBEDDINGS_DIR
+        / "pinnacle_protein_labels_dict.txt",
+        pinnacle_paper_cell_labels=DEFAULT_PINNACLE_PAPER_EMBEDDINGS_DIR
+        / "pinnacle_mg_labels_dict.txt",
     )
 
     tasks = {
         "corum": TaskConfig(
-            label_csv=data_root / CORUM_CSV,
+            label_csv=DEFAULT_CORUM_DATASET_DIR / "corum_memberships_filtered.csv",
             name="CORUM Complex Prediction",
         ),
     }
-    tasks.update(get_therapeutic_tasks(data_root))
+    tasks.update(get_therapeutic_tasks(DEFAULT_THERAPEUTIC_TARGET_DATASET_DIR))
 
     return Config(
         data_root=data_root,
@@ -151,55 +166,20 @@ def load_config(
     )
 
 
-def get_hc_embedding_paths(inference_path: Path) -> Dict[str, Path]:
-    # Canonical exports are the representations used by the historical
-    # downstream runs. Additional diagnostic exports (for example the
-    # pre-CCI cell tensor) must not replace them based on directory order.
-    canonical_protein = inference_path / "protein_embeddings.pt"
-    canonical_cell = inference_path / "cell_embeddings.pt"
-    protein_embed = canonical_protein if canonical_protein.exists() else None
-    cell_embed = canonical_cell if canonical_cell.exists() else None
-    protein_labels = None
-    cell_labels = None
-
-    for f in sorted(inference_path.iterdir()):
-        name = f.name.lower()
-        if (
-            protein_embed is None
-            and "protein" in name
-            and "embed" in name
-            and f.suffix in (".pth", ".pt")
-        ):
-            protein_embed = f
-        elif (
-            cell_embed is None
-            and "cell" in name
-            and "embed" in name
-            and f.suffix in (".pth", ".pt")
-        ):
-            cell_embed = f
-        elif "protein" in name and "labels" in name and f.suffix == ".txt":
-            protein_labels = f
-        elif "cell" in name and "labels" in name and f.suffix == ".txt":
-            cell_labels = f
-
-    if protein_embed is None:
-        for ext in ("*.pth", "*.pt"):
-            candidates = list(inference_path.glob(f"*protein*{ext[1:]}"))
-            if candidates:
-                protein_embed = candidates[0]
-                break
-
-    if cell_embed is None:
-        for ext in ("*.pth", "*.pt"):
-            candidates = list(inference_path.glob(f"*cell*{ext[1:]}"))
-            if candidates:
-                cell_embed = candidates[0]
-                break
+def get_hc_embedding_paths(inference_path: Path) -> Dict[str, Optional[Path]]:
+    """Return the canonical contextual protein and cell embedding exports."""
+    protein_embed = inference_path / "protein_embeddings.pt"
+    cell_embed = inference_path / "cell_embeddings.pt"
+    missing = [path for path in (protein_embed, cell_embed) if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(
+            "Missing canonical inference embedding export(s): "
+            + ", ".join(str(path) for path in missing)
+        )
 
     return {
         "protein_embed": protein_embed,
         "cell_embed": cell_embed,
-        "protein_labels": protein_labels,
-        "cell_labels": cell_labels,
+        "protein_labels": None,
+        "cell_labels": None,
     }

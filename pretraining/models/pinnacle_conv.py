@@ -182,23 +182,16 @@ class PCTConv(nn.Module):
         
         # Calculate node-level attention representations
         out = [node_conv(x, edgetype) for edgetype in edgetypes if edgetype.shape[1] > 0]
-        #print('out ', [a.shape for a in out])
         out = torch.stack(out, dim=1).to(x.device)
-        #print('stacked out:', out.shape)
         # Apply non-linearity
         out = F.leaky_relu(out)
 
         # Aggregate node-level representation using semantic level attention     
-        #print('parameters of W, b, q: ', self.W.shape, self.b.shape, self.q.shape) 
-        #print('out.unsqueeze(-1) ', out.unsqueeze(-1).shape)  
         w = torch.sum(self.W * out.unsqueeze(-1), dim=-2) + self.b
         w = torch.tanh(w)
-        #print('w ', w.shape)
         beta = torch.sum(self.q * w, dim=-1)
         beta = torch.softmax(beta, dim=1)
-        #print('beta ', beta.shape)
         z = torch.sum(out * beta.unsqueeze(-1), dim=1)
-        #print('z ', z.shape)
         
         return z
 
@@ -232,10 +225,8 @@ class PCTConv(nn.Module):
         init_cci : bool, optional
             Whether to initialize CCI embeddings. The default is False."""
         
-        #print('tissue_neighbors:', tissue_neighbors)
         if init_cci:
             mg_x_list = []
-            # print('init_cci is True')
             
         else: # Project metagraph embeddings to the same dimension as PPI
             # Apply shared GATv2Conv to metagraph embeddings independently for each cell type
@@ -243,7 +234,6 @@ class PCTConv(nn.Module):
             mg_x = self._per_data_forward(mg_x, mg_metapaths, self.mg_conv_in)
         
         for celltype, x in ppi_x.items(): # Iterate through cell-type specific PPI layers
-            #print('celltype:', celltype)
             if len(ppi_metapaths[celltype]) == 0:
                 ppi_x[celltype] = []
             else:
@@ -268,10 +258,7 @@ class PCTConv(nn.Module):
                 mg_x[celltype, :] += torch.sum(ppi_x[celltype] * self.ppi_attn[celltype].unsqueeze(-1), dim=0)
 
         if init_cci: # Concatenate initialized metagraph embeddings
-            #print('init_cci is True, concatenating metagraph embeddings')
             mg_x = torch.stack(mg_x_list)
-            #print('mg_x shape:', mg_x.shape)
-            #print('tissue_neighbors:', len(tissue_neighbors))
             bto = torch.zeros(
                 len(tissue_neighbors),
                 mg_x.shape[1],
@@ -279,13 +266,10 @@ class PCTConv(nn.Module):
                 dtype=mg_x.dtype,
             )
             mg_x = torch.cat((mg_x, torch.normal(bto, std=1)))
-            #print('finale mg_x shape:', mg_x.shape)
         
-        #print('updating tissue embeddings')
         # Update tissue embeddings
         # This is done by averaging the embeddings of neighboring tissues
         # for as many round than set in self.tissue_update - hence there are doing non-parametric graph convolutions here
-        #print('self.tissue_update:', self.tissue_update) 
         for i in range(self.tissue_update): # Initialize tissue embeddings in a more meaningful way
             for t in sorted(tissue_neighbors):
                 assert len(tissue_neighbors[t]) != 0

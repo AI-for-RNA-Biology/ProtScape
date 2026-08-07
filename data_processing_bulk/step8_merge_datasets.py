@@ -22,13 +22,15 @@ from .config import (
     ALS_ASTRO_INTERMEDIATE,
     ALS_BULK_DIR,
     ALS_MN_INTERMEDIATE,
+    CELLTYPE_CLASS_MAPPING,
     GLOBAL_PPI,
+    HBCA_GENE_METADATA,
     HBCA_INTERMEDIATE,
     MERGED_INTERMEDIATE,
     PINNACLE_BASE,
     TABULA_INTERMEDIATE,
 )
-from .ensembl_to_hgnc_converter import fetch_symbols_from_gprofiler
+from .ensembl_to_hgnc_converter import load_symbol_mapping
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -204,12 +206,38 @@ def normalize_node_label(label: str) -> str:
     return label
 
 
-def is_nuclear_compartment_node(node: str) -> bool:
-    """Return True for ALS-style cell nodes with a '_nuc_' compartment token."""
+def is_nuclear_context(node: str) -> bool:
+    """Return True for an ALS nuclear pseudo-bulk context."""
     if not isinstance(node, str):
         return False
     label = normalize_cl_label(node).lower()
     return bool(label.startswith("cl_") and re.search(r"(^|_)nuc($|_)", label))
+
+
+def is_cytoplasmic_context(node: str) -> bool:
+    """Return True for an ALS cytoplasmic pseudo-bulk context."""
+    if not isinstance(node, str):
+        return False
+    label = normalize_cl_label(node).lower()
+    return bool(label.startswith("cl_") and re.search(r"(^|_)cyto($|_)", label))
+
+
+def remove_invalid_compartment_edges(graph: nx.Graph) -> int:
+    """Remove only nuc--nuc and nuc--cyto cell-cell edges."""
+    edges_to_remove = [
+        (u, v)
+        for u, v in graph.edges()
+        if (
+            is_nuclear_context(u)
+            and (is_nuclear_context(v) or is_cytoplasmic_context(v))
+        )
+        or (
+            is_nuclear_context(v)
+            and is_cytoplasmic_context(u)
+        )
+    ]
+    graph.remove_edges_from(edges_to_remove)
+    return len(edges_to_remove)
 
 
 def normalize_graph_labels(graph: nx.Graph) -> nx.Graph:
@@ -610,13 +638,19 @@ def merge_cci_networks(
         else:
             logger.warning(f"  CCI file not found: {cci_file}")
 
-    removed_nuc = remove_nuclear_cell_edges(g_merged)
-    if removed_nuc:
-        logger.info("Removed %d merged CCI edges involving ALS nuclear compartments", removed_nuc)
+    removed_compartment = remove_invalid_compartment_edges(g_merged)
+    if removed_compartment:
+        logger.info(
+            "Removed %d merged nuc--nuc or nuc--cyto CCI edges",
+            removed_compartment,
+        )
         isolated_nodes = list(nx.isolates(g_merged))
         if isolated_nodes:
             g_merged.remove_nodes_from(isolated_nodes)
-            logger.info("Removed %d isolated CCI nodes after nuclear-edge filtering", len(isolated_nodes))
+            logger.info(
+                "Removed %d isolated CCI nodes after compartment-edge filtering",
+                len(isolated_nodes),
+            )
 
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     nx.write_edgelist(g_merged, output_file, data=False, delimiter="\t")
@@ -685,26 +719,6 @@ def check_celltype_tissue_coverage(mg_graph: nx.Graph, ppi_dir: str) -> Dict[str
                        stats["missing_tissue_edges"],
                        ", ".join(stats["missing_tissue_edges_examples"]))
     return stats
-
-
-def remove_nuclear_cell_edges(graph: nx.Graph) -> int:
-    """
-    Remove cell-cell edges where either endpoint is an ALS nuclear compartment.
-
-    Mirrors the cleaning done in the notebook utility.
-    """
-    def is_tissue(node: str) -> bool:
-        return isinstance(node, str) and node.startswith("BTO")
-
-    edges_to_remove = [
-        (u, v)
-        for u, v in graph.edges()
-        if not is_tissue(u) and not is_tissue(v)
-        and (is_nuclear_compartment_node(u) or is_nuclear_compartment_node(v))
-    ]
-    if edges_to_remove:
-        graph.remove_edges_from(edges_to_remove)
-    return len(edges_to_remove)
 
 
 def summarize_cci_vs_metagraph(cci_graph: nx.Graph, mg_graph: nx.Graph) -> Dict[str, object]:
@@ -825,9 +839,12 @@ def merge_metagraphs(
                 logger.info(f"Removing {len(edges_to_remove)} edges from metagraph (cell types without PPI)")
                 g_merged.remove_edges_from(edges_to_remove)
 
-    removed_nuc = remove_nuclear_cell_edges(g_merged)
-    if removed_nuc:
-        logger.info(f"Removed {removed_nuc} cell-cell edges containing 'nuc'")
+    removed_compartment = remove_invalid_compartment_edges(g_merged)
+    if removed_compartment:
+        logger.info(
+            "Removed %d nuc--nuc or nuc--cyto cell-cell edges",
+            removed_compartment,
+        )
 
     isolated_nodes = list(nx.isolates(g_merged))
     if isolated_nodes:
@@ -917,13 +934,9 @@ def merge_reliable_genes_multi(
                 lookup[token] = symbol
                 lookup[token.upper()] = symbol
         if ensembl_map:
-            try:
-                gp_mapping = fetch_symbols_from_gprofiler(list(set(ensembl_map.values())))
-            except Exception as exc:  # pragma: no cover - external service errors
-                logger.warning("Failed to query g:Profiler for gene symbols: %s", exc)
-                gp_mapping = {}
+            frozen_mapping = load_symbol_mapping(HBCA_GENE_METADATA)
             for original, cleaned in ensembl_map.items():
-                symbol = gp_mapping.get(cleaned) or gp_mapping.get(original)
+                symbol = frozen_mapping.get(cleaned) or frozen_mapping.get(original)
                 final_symbol = symbol.upper() if isinstance(symbol, str) and symbol else cleaned
                 lookup[original] = final_symbol
                 lookup[original.upper()] = final_symbol
@@ -1103,6 +1116,7 @@ def main() -> None:
     _require_inputs(
         [
             Path(GLOBAL_PPI),
+            Path(CELLTYPE_CLASS_MAPPING),
             *(Path(path) for path in gene_files),
             hbca / "ppi" / "ppi_edgelists",
             tabula / "ppi" / "ppi_edgelists",
@@ -1142,6 +1156,7 @@ def main() -> None:
 
     output_global_ppi = output / "global_ppi_edgelist.txt"
     shutil.copy(GLOBAL_PPI, output_global_ppi)
+    shutil.copy(CELLTYPE_CLASS_MAPPING, output / "celltype_class_mapping.csv")
     write_count_edge_dict(output_global_ppi, output, output / "count_edge_dict.pkl")
     ppi_summary = summarize_ppi_dir(str(output))
     mg_summary = summarize_metagraph(mg_graph)

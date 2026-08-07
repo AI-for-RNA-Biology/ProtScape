@@ -1,12 +1,43 @@
-"""Map Ensembl gene identifiers to HGNC symbols with g:Profiler."""
+"""Map Ensembl gene identifiers to HGNC symbols."""
+
+from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Dict, Iterable
 
 import pandas as pd
 
 
 logger = logging.getLogger(__name__)
+
+
+def load_symbol_mapping(metadata_path: str | Path) -> Dict[str, str]:
+    """Load a frozen Ensembl-to-HGNC table used by the paper build."""
+    path = Path(metadata_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Missing frozen gene mapping: {path}")
+
+    metadata = pd.read_csv(path)
+    id_column = next(
+        (name for name in ("gene_identifier", "gene_id", "ensembl_id") if name in metadata),
+        None,
+    )
+    symbol_column = next(
+        (name for name in ("gene_symbol", "symbol", "gene_name", "feature_name") if name in metadata),
+        None,
+    )
+    if id_column is None or symbol_column is None:
+        raise ValueError(f"Gene mapping must contain Ensembl ID and gene-symbol columns: {path}")
+
+    rows = metadata[[id_column, symbol_column]].dropna().drop_duplicates(id_column)
+    mapping = {}
+    for gene_id, symbol in rows.itertuples(index=False):
+        gene_id = str(gene_id)
+        symbol = str(symbol).upper()
+        mapping[gene_id] = symbol
+        mapping[gene_id.split(".", 1)[0]] = symbol
+    return mapping
 
 
 def fetch_symbols_from_gprofiler(gene_ids: Iterable[str]) -> Dict[str, str]:
@@ -61,18 +92,34 @@ def fetch_symbols_from_gprofiler(gene_ids: Iterable[str]) -> Dict[str, str]:
     return mapping
 
 
-def convert_ensembl_to_hgnc(ensembl_ids: pd.Series) -> pd.Series:
+def convert_ensembl_to_hgnc(
+    ensembl_ids: pd.Series,
+    metadata_path: str | Path | None = None,
+) -> pd.Series:
     """Map a Series of Ensembl identifiers to HGNC symbols."""
-    mapping = fetch_symbols_from_gprofiler(ensembl_ids.tolist())
-    symbols = ensembl_ids.map(mapping)
+    mapping = (
+        load_symbol_mapping(metadata_path)
+        if metadata_path is not None
+        else fetch_symbols_from_gprofiler(ensembl_ids.tolist())
+    )
+    symbols = ensembl_ids.map(
+        lambda gene_id: mapping.get(str(gene_id))
+        or mapping.get(str(gene_id).split(".", 1)[0])
+    )
     converted = int(symbols.notna().sum())
     logger.info("Mapped %d/%d Ensembl IDs to HGNC symbols", converted, len(ensembl_ids))
     return symbols
 
 
-def convert_expression_matrix(expression: pd.DataFrame) -> pd.DataFrame:
+def convert_expression_matrix(
+    expression: pd.DataFrame,
+    metadata_path: str | Path | None = None,
+) -> pd.DataFrame:
     """Replace an Ensembl-indexed expression matrix with unique HGNC rows."""
-    symbols = convert_ensembl_to_hgnc(pd.Series(expression.index))
+    symbols = convert_ensembl_to_hgnc(
+        pd.Series(expression.index),
+        metadata_path=metadata_path,
+    )
     converted = expression.copy()
     converted.index = symbols
     converted = converted.loc[converted.index.notna()]

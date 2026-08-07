@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 import numpy as np
 import pandas as pd
 
@@ -156,7 +156,7 @@ def save_histories_csv(
     output_path: Path,
 ):
     """
-    Save training histories to CSV (atomic write for parallel safety).
+    Save training histories to CSV.
 
     Args:
         histories: List of TrainingHistory objects
@@ -169,10 +169,7 @@ def save_histories_csv(
     combined = pd.concat(dfs, ignore_index=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Atomic write
-    tmp_path = output_path.with_suffix(".csv.tmp")
-    combined.to_csv(tmp_path, index=False)
-    tmp_path.rename(output_path)
+    combined.to_csv(output_path, index=False)
 
 
 def save_all_histories(

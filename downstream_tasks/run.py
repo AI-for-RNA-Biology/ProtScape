@@ -8,13 +8,13 @@ from typing import List, Optional, Set, Tuple
 import numpy as np
 import torch
 
-from .config import get_hc_embedding_paths, load_config
+from .config import DEFAULT_OUTPUT_ROOT, get_hc_embedding_paths, load_config
 from .data.loaders import EmbeddingLoader, load_pinnacle_paper_gene_universe
 from .data.task_loaders import get_task_loader
 from .models.registry import MODEL_VARIANTS, parse_model_argument
 from .training.cv_utils import SplitPlan, build_cv_splits
 from .training.trainer import Trainer
-from .utils.io_utils import save_aggregated_results, save_results_csv, setup_output_dirs
+from .utils.io_utils import save_results_csv, save_task_results, setup_output_dirs
 
 
 CANONICAL_PDL_IMPLEMENTATION = "canonical"
@@ -49,6 +49,25 @@ def _build_hp_suffix(variant, config) -> str:
     parts.append(f"sel{config.train_selection_metric}")
     parts.append("cw1" if config.use_class_weights else "cw0")
     return "_".join(parts)
+
+
+def _add_prediction_labels(
+    predictions_path: Path,
+    genes: List[str],
+    class_names: List[str],
+) -> None:
+    """Store the held-out gene and class order alongside the prediction arrays."""
+    if not predictions_path.exists():
+        return
+
+    with np.load(predictions_path, allow_pickle=False) as saved:
+        arrays = {key: saved[key] for key in saved.files}
+
+    test_idx = arrays["test_idx"].astype(np.int64)
+    arrays["test_genes"] = np.asarray([genes[index] for index in test_idx], dtype=str)
+    arrays["class_names"] = np.asarray(class_names, dtype=str)
+
+    np.savez_compressed(predictions_path, **arrays)
 
 
 def parse_args():
@@ -94,14 +113,18 @@ def parse_args():
     parser.add_argument("--train-selection-metric", type=str, default="auprc", choices=["auprc", "f1"])
     parser.add_argument("--no-class-weight", action="store_true")
     parser.add_argument("--list-models", action="store_true")
-    parser.add_argument("--aggregate-only", action="store_true")
+    parser.add_argument(
+        "--aggregate-only",
+        action="store_true",
+        help="Rebuild <task>/full_results.csv from completed run-level results.",
+    )
     args = parser.parse_args()
     if args.list_models:
         return args
 
-    required = ["inference_model", "task"]
+    required = ["task"]
     if not args.aggregate_only:
-        required.append("model")
+        required.extend(["inference_model", "model"])
     missing = [f"--{name.replace('_', '-')}" for name in required if not getattr(args, name)]
     if missing:
         parser.error(f"required arguments: {', '.join(missing)}")
@@ -163,6 +186,14 @@ def main():
         list_models()
         return 0
 
+    if args.aggregate_only:
+        agg_path = save_task_results(DEFAULT_OUTPUT_ROOT, args.task)
+        if agg_path is None:
+            print("[WARN] No results found to aggregate")
+            return 1
+        print(f"[OK] Task results saved to: {agg_path}")
+        return 0
+
     embedding_inference_model = args.embedding_inference_model or args.inference_model
     config = load_config(
         inference_model=embedding_inference_model,
@@ -174,14 +205,6 @@ def main():
         print(f"[ERROR] Unknown task: {args.task}")
         print(f"[INFO] Available tasks: {available}")
         return 1
-
-    if args.aggregate_only:
-        agg_path = save_aggregated_results(config.output_root, args.task, args.inference_model)
-        if agg_path is None:
-            print("[WARN] No results found to aggregate")
-            return 1
-        print(f"[OK] Aggregated results saved to: {agg_path}")
-        return 0
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -266,7 +289,7 @@ def main():
         return 1
 
     task_loader = get_task_loader(args.task, task_csv)
-    genes, Y, _ = task_loader.load()
+    genes, Y, class_names = task_loader.load()
 
     embedding_loader = EmbeddingLoader(
         esm_path=config.embeddings.esm,
@@ -343,6 +366,12 @@ def main():
             strict_gene_universe=True,
         )
 
+        _add_prediction_labels(
+            output_dir / "test_predictions.npz",
+            shared_genes,
+            class_names,
+        )
+
         result["task"] = args.task
         result["task_csv"] = task_csv.name
         result["model_key"] = model_key
@@ -395,6 +424,14 @@ def main():
         result["classifier_type"] = variant.classifier_type.value
         result["use_class_weights"] = bool(config.use_class_weights)
         result["train_selection_metric"] = config.train_selection_metric
+        result["seed"] = int(config.seed)
+        result["n_folds"] = int(config.n_folds)
+        result["n_cv_folds"] = int(config.n_folds - 1)
+        result["test_fold"] = 0
+        result["split_protocol"] = "fold_0_test_remaining_folds_rotate_validation"
+        result["batch_size"] = int(config.batch_size)
+        result["epochs"] = int(config.epochs)
+        result["patience"] = int(config.patience)
 
         save_results_csv(result, output_dir)
         print(f"[OK] Finished {variant.name} -> {output_dir}")
