@@ -36,10 +36,10 @@ HBCA_NONNEURONS_PATH = str(Path(PATHS["hbca_nonneurons_h5ad"]).expanduser())
 HBCA_GENE_METADATA = str(Path(PATHS["hbca_gene_metadata"]).expanduser())
 ALS_GENE_METADATA = str(Path(PATHS["als_gene_metadata"]).expanduser())
 
-ALS_MN_KALLISTO = str(PATHS["als_motor_neuron_kallisto"])
-ALS_MN_METADATA = str(PATHS["als_motor_neuron_metadata"])
-ALS_ASTRO_KALLISTO = str(PATHS["als_astrocyte_kallisto"])
-ALS_ASTRO_METADATA = str(PATHS["als_astrocyte_metadata"])
+ALS_MN_COUNTS = str(Path(PATHS["als_motor_neuron_counts"]).expanduser())
+ALS_MN_METADATA = str(Path(PATHS["als_motor_neuron_metadata"]).expanduser())
+ALS_ASTRO_COUNTS = str(Path(PATHS["als_astrocyte_counts"]).expanduser())
+ALS_ASTRO_METADATA = str(Path(PATHS["als_astrocyte_metadata"]).expanduser())
 
 ALS_INTERMEDIATE = os.path.join(PINNACLE_BASE, "als_bulk")
 ALS_BULK_DIR = ALS_INTERMEDIATE  # Alias for consistency
@@ -112,13 +112,6 @@ DATASET_DEFAULTS = {
         min_donor_count=1,
     ),
 }
-
-# Cell Ontology mappings for ALS datasets
-ALS_CELL_TYPE_MAPPINGS = {
-    "motor_neuron": "CL:0000100",
-    "astrocyte": "CL:0000127",
-}
-
 
 def resolve_params(dataset: str, **overrides) -> PseudobulkParams:
     """Return dataset defaults with any non-null command-line overrides."""

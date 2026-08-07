@@ -30,10 +30,10 @@ cell_ontology_obo: /storage/research/dbmr_luisierlab/database/PINNACLE/ontologie
 tissue_ontology_obo: /storage/research/dbmr_luisierlab/database/PINNACLE/ontologies/bto.obo
 celltype_class_mapping: /storage/research/dbmr_luisierlab/database/PINNACLE/data/networks_bulk/celltype_class_mapping.csv
 
-als_motor_neuron_kallisto: /storage/research/dbmr_luisierlab/temp/zmxu/ALS_Compartmentalization/3UTR_Quant/data/hg38_kallisto/output
-als_motor_neuron_metadata: /storage/research/dbmr_luisierlab/group/genomics/zmxu/ALS_Compartmentalization/data/Metadata/SraRunTable.txt
-als_astrocyte_kallisto: /storage/research/dbmr_luisierlab/group/genomics/zmxu/Astrocytes_PRJNA672040/3UTR_Quant/data/BAM/kallisto/output
-als_astrocyte_metadata: /storage/research/dbmr_luisierlab/group/genomics/zmxu/Astrocytes_PRJNA672040/3UTR_Quant/data/Metadata/SraRunTable.txt
+als_motor_neuron_counts: /storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/input_data/als_motor_neuron_counts.csv
+als_motor_neuron_metadata: /storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/input_data/als_motor_neuron_metadata.csv
+als_astrocyte_counts: /storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/input_data/als_astrocyte_counts.csv
+als_astrocyte_metadata: /storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/input_data/als_astrocyte_metadata.csv
 
 cellphonedb_database: /storage/homefs/at25c279/.cpdb/releases/v3.0.0/cellphone.db
 

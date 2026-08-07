@@ -23,11 +23,11 @@ Released CORUM and therapeutic-target tables can be used directly. To rebuild th
 | Config key | Required input |
 |---|---|
 | `corum_raw_json` | Frozen `corum_humanComplexes.json` snapshot from [CORUM](https://mips.helmholtz-muenchen.de/corum/download) |
-| `therapeutic_target_evidence_dir` | Open Targets Platform 24.03 ChEMBL evidence directory |
-| `therapeutic_target_drugbank_targets` | Frozen approved-drug target table, `all_approved_oct2022.csv` |
+| `therapeutic_target_evidence_dir` | [Open Targets Platform 24.03 ChEMBL evidence](https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/24.03/output/etl/json/evidence/sourceId=chembl/) |
+| `therapeutic_target_drugbank_targets` | Frozen approved-drug target table, `all_approved_oct2022.csv`, obtained under the [DrugBank academic agreement](https://go.drugbank.com/academic_research) |
 | `global_ppi` | The same two-column HGNC-symbol interactome used for pretraining |
 
-The frozen DrugBank table used in the study will be included in the data release.
+The companion release contains the frozen source and processed benchmark tables. Public redistribution of the DrugBank-derived source table must follow the applicable DrugBank agreement.
 
 After setting these paths, rebuild both datasets from the repository root:
 
@@ -67,3 +67,5 @@ bash scripts/run_downstream_tt.sh protscape_main
 The scripts evaluate the sequence-only linear baselines, contextual linear models, ABMIL models across dropout values 0, 0.2, 0.4 and 0.6, and ABMIL-PDL models across `pmax` values 0.2--0.7. Model selection uses validation AUPRC.
 
 All outputs are written below `<output_root>/downstream_tasks/`. Each run contains the five fold checkpoints, held-out predictions, training histories and summary metrics. Task-level summaries are generated automatically after each sweep.
+
+The companion release also provides the selected retraining parameters for every CORUM and therapeutic-target model in `metadata/corum_selected_hyperparameters.csv` and `metadata/therapeutic_targets_selected_hyperparameters.csv`.

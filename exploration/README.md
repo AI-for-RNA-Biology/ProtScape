@@ -1,30 +1,43 @@
 # Analyses and plots
 
-Each analysis module performs the computation and then calls its dedicated plotting module. `run_analysis.sh` runs the complete workflow.
+Run commands from the repository root with paths set in `configs/paths.yaml`:
 
-## Requirements
+```bash
+conda activate protscape
+```
 
-Use the main `protscape` environment. Pretraining evaluation and Parkinson analysis require CUDA; CUDA is recommended for the other model analyses, and exhaustive consensus inference is very slow on CPU. Arial must be installed for plot rendering.
+Pretraining evaluation and Parkinson analysis require CUDA. Arial is required for plot rendering.
 
-## Run the analyses
+The STRING analyses use the four human STRING v12 files configured by `string_protein_info`, `string_links_detailed`, `string_protein_aliases` and `string_enrichment_terms`. Download `9606.protein.info.v12.0.txt.gz`, `9606.protein.links.detailed.v12.0.txt.gz`, `9606.protein.aliases.v12.0.txt.gz` and `9606.protein.enrichment.terms.v12.0.txt.gz` from the official [STRING v12 download page](https://version-12-0.string-db.org/cgi/download). Cite the [STRING v12 paper](https://academic.oup.com/nar/article/51/D1/D638/6825349).
 
-From the repository root:
+## Run everything
 
 ```bash
 bash scripts/run_analysis.sh
 ```
 
-The bulk-network statistics step requires the complete `<output_root>/data_processing_bulk/` tree, including its intermediate gene-selection tables. The remaining analyses use the datasets, embeddings and checkpoints configured in `configs/paths.yaml`. `downstream_checkpoint_root` must point to the released analysis checkpoint bundle; raw sweep outputs are not rearranged automatically.
+## Run individual analyses
 
-This runs:
+Run these in order when rebuilding all outputs:
 
-- bulk-network statistics;
-- pretraining and pooling evaluation;
-- loss-consensus and STRING analyses;
-- CORUM evaluation;
-- therapeutic-target evaluation and LRP;
-- Parkinson disease target discovery, Leiden clustering and enrichment.
+```bash
+# Bulk-network statistics
+python -m exploration.analysis.data_bulk_statistics
 
-Analysis outputs and their plots are written below `<output_root>/analysis/`.
+# Pretraining and pooling evaluation
+python -m exploration.analysis.pretraining_evaluation
 
-The exhaustive consensus scoring is isolated in `loss_consensus_inference.py`; plotting never recomputes model predictions, correlations or enrichment analyses. Plots are saved separately rather than assembled into multi-panel figures. Matplotlib uses Arial with PDF and PostScript font type 42.
+# Loss consensus and STRING analyses
+python -m exploration.analysis.consensus_analysis
+
+# CORUM evaluation
+python -m exploration.analysis.corum_analysis
+
+# Therapeutic-target evaluation and LRP
+python -m exploration.analysis.therapeutic_target_analysis
+
+# Parkinson target discovery, Leiden clustering and enrichment
+python -m exploration.analysis.parkinson_target_analysis
+```
+
+The bulk-network step requires the complete `<output_root>/data_processing_bulk/` directory. The remaining steps use the checkpoints and datasets configured in `configs/paths.yaml`. Outputs are written below `<output_root>/analysis/`.
