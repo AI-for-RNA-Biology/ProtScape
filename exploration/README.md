@@ -14,7 +14,7 @@ From the repository root:
 bash scripts/run_analysis.sh
 ```
 
-The bulk-network statistics step requires the complete `<output_root>/data_processing_bulk/` tree, including its intermediate gene-selection tables. The remaining analyses use the datasets, embeddings and checkpoints configured in `configs/paths.yaml`. `downstream_checkpoint_root` must point to the released paper-analysis checkpoint bundle; raw sweep outputs are not rearranged automatically.
+The bulk-network statistics step requires the complete `<output_root>/data_processing_bulk/` tree, including its intermediate gene-selection tables. The remaining analyses use the datasets, embeddings and checkpoints configured in `configs/paths.yaml`. `downstream_checkpoint_root` must point to the released analysis checkpoint bundle; raw sweep outputs are not rearranged automatically.
 
 This runs:
 

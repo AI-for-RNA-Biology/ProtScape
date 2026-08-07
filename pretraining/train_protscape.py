@@ -13,7 +13,7 @@ from .checkpoints import save_portable_checkpoint
 
 from . import utils
 from .train import train_hierarchical_model_factored
-from .train import minibatch_factored_utils as mb_utils
+from .train import factored_batching as batch_utils
 
 from omegaconf import DictConfig
 import pickle 
@@ -176,7 +176,7 @@ def _parse_cli_args():
 
 cli_args = _parse_cli_args()
 
-# Fixed model setting used in the paper.
+# Fixed cell-memory setting.
 cell_memory = 'average'
 cell_memory_str = '' if cell_memory == 'average' else f'_{cell_memory}cellmemory'
 
@@ -496,7 +496,7 @@ def main(
                 if cci_splits is not None:
                     cci_edge_index = cci_splits.get("train", None)
                 if cci_edge_index is None:
-                    cci_edge_index = mb_utils.build_cci_edge_index(
+                    cci_edge_index = batch_utils.build_cci_edge_index(
                         mg_data, edge_attr_dict, cell_ids
                     )
                 if cci_edge_index is not None:
@@ -648,7 +648,7 @@ if __name__ == "__main__":
 
     if use_metagraph:
         cell_ids = list(ppi_data.keys())
-        mb_utils.get_cci_edge_splits(
+        batch_utils.get_cci_edge_splits(
             mg_data,
             edge_attr_dict,
             cell_ids=cell_ids,

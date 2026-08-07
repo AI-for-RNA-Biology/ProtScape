@@ -218,7 +218,7 @@ run_cellphonedb() {
         )
 
         # ALS profiles are already condition-level bulk samples; the single-cell
-        # branches retain the CellPhoneDB subsampling used in the paper pipeline.
+        # branches retain the historical CellPhoneDB subsampling.
         if [[ "${dataset}" != als ]]; then
             command+=(--subsampling --subsampling-log false)
             if [[ -n "${CELLPHONEDB_SUBSAMPLING_NUM_CELLS:-}" ]]; then

@@ -90,7 +90,7 @@ CL_PATH = str(Path(PATHS["cell_ontology_obo"]).expanduser())
 class PseudobulkParams:
     min_cells_per_sample: int = 25
     log_offset: float = 1.0
-    gmm_quantile: float = 0.99  # Quantile used for the frozen paper networks_bulk build.
+    gmm_quantile: float = 0.99  # Quantile used for the frozen networks_bulk build.
     min_donor_fraction: float = 0.5
     min_donor_count: int = 1
 

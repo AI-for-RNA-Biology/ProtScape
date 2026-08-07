@@ -69,7 +69,7 @@ def load_esm_embeddings(path: Path) -> Dict[str, np.ndarray]:
 def load_pinnacle_paper_labels(
     labels_path: str,
 ) -> Tuple[Dict[int, str], Dict[str, List[str]], Tuple[Tuple[int, int, str], ...]]:
-    """Parse original PINNACLE paper labels stored as a Python-literal text dict."""
+    """Parse original PINNACLE labels stored as a Python-literal text dict."""
     labels = ast.literal_eval(Path(labels_path).read_text())
     cell_types = [str(x) for x in labels["Cell Type"]]
     names = [str(x) for x in labels["Name"]]
@@ -99,7 +99,7 @@ def load_pinnacle_paper_labels(
 
 
 def load_pinnacle_paper_gene_universe(labels_path: Path) -> Set[str]:
-    """Return the original PINNACLE paper protein universe."""
+    """Return the original PINNACLE protein universe."""
     _, celltype_to_proteins, _ = load_pinnacle_paper_labels(str(labels_path))
     return {
         protein
@@ -110,9 +110,9 @@ def load_pinnacle_paper_gene_universe(labels_path: Path) -> Set[str]:
 
 def load_pinnacle_paper_protein_embeddings(embed_path: Path, labels_path: Path) -> Dict:
     """
-    Adapt original PINNACLE paper embeddings to the HC embedding schema.
+    Adapt original PINNACLE embeddings to the HC embedding schema.
 
-    The paper files store embeddings as {cell_idx: tensor} and labels as a
+    The original files store embeddings as {cell_idx: tensor} and labels as a
     flattened text dictionary. Downstream loaders expect protein_names by cell.
     """
     raw_embed = torch.load(embed_path, map_location="cpu", weights_only=True)
@@ -591,8 +591,8 @@ class EmbeddingLoader:
             esm_path: Path to ESM embeddings pickle
             hc_protein_path: Path to HC protein embeddings (optional)
             hc_cell_path: Path to HC cell embeddings (optional)
-            hc_protein_labels_path: Optional original PINNACLE paper labels
-            hc_cell_labels_path: Optional original PINNACLE paper labels for cell embeddings
+            hc_protein_labels_path: Optional original PINNACLE labels
+            hc_cell_labels_path: Optional original PINNACLE labels for cell embeddings
         """
         self.esm_path = esm_path
         self.hc_protein_path = hc_protein_path

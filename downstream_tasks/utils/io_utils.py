@@ -122,7 +122,7 @@ def aggregate_task_results(output_root: Path, task: str) -> pd.DataFrame:
 
 
 def save_task_results(output_root: Path, task: str) -> Optional[Path]:
-    """Write the task-level sweep recap consumed by the paper plots."""
+    """Write the task-level sweep summary used by the analysis plots."""
     df = aggregate_task_results(output_root, task)
     if df.empty:
         return None

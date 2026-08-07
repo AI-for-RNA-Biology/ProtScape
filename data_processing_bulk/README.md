@@ -70,4 +70,4 @@ Before CellPhoneDB, each single-cell type is capped at 100 cells with seed 7. Ce
 
 For compartment-resolved ALS contexts, only nucleus--nucleus and nucleus--cytoplasm CCI edges are removed. Cytoplasm--cytoplasm, cytoplasm--whole-cell, nucleus--whole-cell and whole-cell--whole-cell edges are retained. Autocrine CCI self-loops are also retained.
 
-The released paper checkpoints use the historical metagraph containing 5,658 cell--cell, 696 cell--tissue and 109 tissue--tissue edges. A fresh corrected rebuild contains 6,767 cell--cell, 696 cell--tissue and 109 tissue--tissue edges. Use the historical graph bundle with the released checkpoints to reproduce their inference outputs; use the rebuilt graph to train models on the corrected dataset.
+The released checkpoints use the historical metagraph containing 5,658 cell--cell, 696 cell--tissue and 109 tissue--tissue edges. A fresh corrected rebuild contains 6,767 cell--cell, 696 cell--tissue and 109 tissue--tissue edges. Use the historical graph bundle with the released checkpoints to reproduce their inference outputs; use the rebuilt graph to train models on the corrected dataset.

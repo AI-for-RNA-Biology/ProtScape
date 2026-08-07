@@ -8,7 +8,7 @@ LOG_SPACE_MAX = np.power(10, LOG_E) - 1.0
 
 
 class PDropout(nn.Module):
-    """Progressive dropout layer (from PDL paper)"""
+    """Progressive dropout layer (PDL)."""
 
     def __init__(self, p: float = 0.0, importance_mode: str = "mean"):
         super().__init__()

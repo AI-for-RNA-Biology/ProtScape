@@ -55,7 +55,7 @@ python -m pretraining.inference /path/to/best_model_state_dict.pt
 bash scripts/run_downstream_corum.sh best_model_state_dict
 bash scripts/run_downstream_tt.sh best_model_state_dict
 
-# Recompute analyses and their plots from the released paper checkpoints
+# Recompute analyses and their plots from the released checkpoints
 bash scripts/run_analysis.sh
 ```
 

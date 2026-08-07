@@ -1,4 +1,4 @@
-"""Label loaders for the two downstream tasks reported in the paper."""
+"""Label loaders for the two downstream tasks."""
 
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -108,4 +108,4 @@ def get_task_loader(task: str, label_csv: Path) -> BaseTaskLoader:
         return CORUMLoader(label_csv)
     if task.startswith("therapeutic_target_"):
         return TherapeuticTargetLoader(label_csv)
-    raise ValueError(f"Unknown paper task: {task}")
+    raise ValueError(f"Unknown downstream task: {task}")

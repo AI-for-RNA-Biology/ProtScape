@@ -12,7 +12,7 @@ Set these paths in `configs/paths.yaml`:
 
 The graph bundle and checkpoint must belong to the same dataset snapshot.
 
-Paper checkpoints require the exact protein-embedding artifact distributed with the release; do not substitute another embedding model based only on the historical filename.
+Released checkpoints require the matching protein-embedding artifact; do not substitute another embedding model based only on the historical filename.
 
 ## Training
 
@@ -44,6 +44,6 @@ tissue_predictions.pt
 mappings.pkl
 ```
 
-`cell_embeddings.pt` contains the final post-CCI cell representations used by new downstream runs. The historical filename `cell_embeddings_before_pool.pt` is retained because existing paper analyses use it for selected runs; it contains the pooled cell representation before CCI refinement.
+`cell_embeddings.pt` contains the final post-CCI cell representations used by new downstream runs. The historical filename `cell_embeddings_before_pool.pt` is retained for compatibility with existing analyses; it contains the pooled cell representation before CCI refinement.
 
 Adapted PINNACLE inference exports protein, cell and full-metagraph embeddings with their mappings. Inference reconstructs each metagraph relation from its corresponding edge type.

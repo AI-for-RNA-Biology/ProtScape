@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 def load_symbol_mapping(metadata_path: str | Path) -> Dict[str, str]:
-    """Load a frozen Ensembl-to-HGNC table used by the paper build."""
+    """Load a frozen Ensembl-to-HGNC mapping table."""
     path = Path(metadata_path)
     if not path.exists():
         raise FileNotFoundError(f"Missing frozen gene mapping: {path}")

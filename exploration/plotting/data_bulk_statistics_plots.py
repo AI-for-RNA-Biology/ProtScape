@@ -62,7 +62,7 @@ CELL_CLASS_COLORS = {
 
 
 def style_axes(ax, grid_axis=None, labelsize=8.5):
-    """Original ``paper_style.style_axes`` used by the source scripts."""
+    """Apply the network-statistics axis style."""
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["left"].set_color(BLACK)

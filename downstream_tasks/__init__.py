@@ -1,2 +1,2 @@
-"""Downstream prediction tasks used in the ProtScape paper."""
+"""ProtScape downstream prediction tasks."""
 # Supports protein localization, CORUM, and Reactome tasks

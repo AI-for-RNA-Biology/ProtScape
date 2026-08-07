@@ -28,7 +28,7 @@ DEFAULT_THERAPEUTIC_TARGET_EVIDENCE_DIR = Path(
 DEFAULT_THERAPEUTIC_TARGET_DATASET_DIR = Path(
     PATHS["therapeutic_target_dataset_dir"]
 ).expanduser()
-PAPER_THERAPEUTIC_IDS = (
+THERAPEUTIC_TARGET_IDS = (
     "EFO_0003767",
     "EFO_0000685",
     "EFO_0000305",
@@ -100,13 +100,13 @@ class Config:
         return self.inference_root / self.inference_model
 
 def get_therapeutic_tasks(dataset_dir: Path) -> Dict[str, TaskConfig]:
-    """Return the therapeutic-target tasks reported in the paper."""
+    """Return the configured therapeutic-target tasks."""
     return {
         f"therapeutic_target_{disease_id.lower()}": TaskConfig(
             label_csv=dataset_dir / f"therapeutic_target_{disease_id}.csv",
             name=f"Therapeutic Target Prediction ({disease_id})",
         )
-        for disease_id in PAPER_THERAPEUTIC_IDS
+        for disease_id in THERAPEUTIC_TARGET_IDS
     }
 
 

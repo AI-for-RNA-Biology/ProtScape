@@ -12,7 +12,8 @@ import wandb
 
 # Own code
 from .. import utils
-from . import minibatch_factored_utils as mb_utils
+from . import factored_batching as batch_utils
+from . import factored_training as training_utils
 
 from time import time
 
@@ -64,20 +65,20 @@ def get_training_data(
     # to handle large scale graphs
     
     # for train - evaluation mode is always 'local' to operate on all contexts simultaneously
-    ppi_train_loader_dict = mb_utils.generate_batch(
+    ppi_train_loader_dict = batch_utils.generate_batch(
         ppi_data, edge_attr_dict, "train", cfg.batch_size, device, ppi=True,
         loader_type=cfg.loader, n_jobs=n_jobs, evaluation_mode='local',
         graph_saint_norm= cfg.graph_saint_norm, root_gsnorm_path=root_gsnorm_path,
         weighted_ppi_loss=cfg.weighted_ppi_loss)
     
-    ppi_val_loader_dict = mb_utils.generate_batch(
+    ppi_val_loader_dict = batch_utils.generate_batch(
         ppi_data, edge_attr_dict, "val", cfg.batch_size, device, ppi=True,
         loader_type=cfg.loader, n_jobs=n_jobs, evaluation_mode=evaluation_mode,
         graph_saint_norm=False, weighted_ppi_loss=cfg.weighted_ppi_loss)
     
     # Generate metagraph batches for train and validation when requested
     if getattr(cfg, "use_metagraph", False):
-        # Metagraph batches are built on-the-fly for CCI-only edges in minibatch_factored_utils.
+        # Metagraph batches are built on-the-fly from CCI edges.
         pass
        
     return ppi_train_loader_dict, ppi_val_loader_dict
@@ -139,7 +140,7 @@ def train(
     # Run batch training
     start_train = time()
     
-    loss, train_metrics = mb_utils.iterate_train_batch_hierarchical_model(
+    loss, train_metrics = training_utils.iterate_train_batch_hierarchical_model(
         cfg=cfg,
         ppi_train_loader_dict=ppi_train_loader_dict,
         CT_map=CT_map,
@@ -207,7 +208,7 @@ def train(
     with torch.no_grad():
         if evaluation_mode == 'local':
             # evaluation per subgraphs sampled with {train, val} edges
-            mg_pred_val, mg_data_val_y, ppi_preds_all, ppi_labels_all = mb_utils.iterate_predict_batch_hierarchical_model(
+            mg_pred_val, mg_data_val_y, ppi_preds_all, ppi_labels_all = training_utils.iterate_predict_batch_hierarchical_model(
                 cfg=cfg,
                 ppi_loader_dict=ppi_val_loader_dict,
                 CT_map=CT_map,
@@ -219,7 +220,7 @@ def train(
                 split="val")  # Using train metapaths.
         elif evaluation_mode == 'global':
             # evaluation on the full val graph
-            mg_pred_val, mg_data_val_y, ppi_preds_all, ppi_labels_all = mb_utils.iterate_predict_hierarchical_model(
+            mg_pred_val, mg_data_val_y, ppi_preds_all, ppi_labels_all = training_utils.iterate_predict_hierarchical_model(
                 cfg=cfg,
                 ppi_loader_dict=ppi_val_loader_dict,
                 CT_map=CT_map,
@@ -344,7 +345,7 @@ def test(
     model.to(device)
     model.eval()
     # Generate PPI batches
-    ppi_test_loader_dict = mb_utils.generate_batch(
+    ppi_test_loader_dict = batch_utils.generate_batch(
         ppi_data, edge_attr_dict, split,
         cfg.batch_size, device, ppi=True,
         loader_type=cfg.loader, n_jobs=n_jobs,
@@ -355,7 +356,7 @@ def test(
     mg_data_test = None
     if getattr(cfg, "use_metagraph", False):
     
-        _, mg_data_test, _, mg_x = mb_utils.generate_batch(
+        _, mg_data_test, _, mg_x = batch_utils.generate_batch(
             {0: mg_data}, mg_metapaths, edge_attr_dict, split,
             cfg.batch_size, device, ppi=False, loader_type=cfg.loader, n_jobs=n_jobs)
         mg_data_test = mg_data_test[0]
@@ -364,7 +365,7 @@ def test(
     mg_pred_test, mg_data_test_y = None, None
     with torch.no_grad():
         if evaluation_mode == 'local':
-            mg_pred_test, mg_data_test_y, ppi_preds_all, ppi_labels_all = mb_utils.iterate_predict_batch_hierarchical_model(
+            mg_pred_test, mg_data_test_y, ppi_preds_all, ppi_labels_all = training_utils.iterate_predict_batch_hierarchical_model(
             cfg=cfg,
             ppi_loader_dict=ppi_test_loader_dict,
             CT_map=CT_map,
@@ -376,7 +377,7 @@ def test(
             split=split,
             ) 
         elif evaluation_mode == 'global':
-            mg_pred_test, mg_data_test_y, ppi_preds_all, ppi_labels_all = mb_utils.iterate_predict_hierarchical_model(
+            mg_pred_test, mg_data_test_y, ppi_preds_all, ppi_labels_all = training_utils.iterate_predict_hierarchical_model(
             cfg=cfg,
             ppi_loader_dict=ppi_test_loader_dict,
             CT_map=CT_map,

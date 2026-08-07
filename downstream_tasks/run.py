@@ -83,7 +83,7 @@ def parse_args():
     )
     parser.add_argument(
         "--task",
-        help="corum or one of the 15 therapeutic_target_<disease_id> paper tasks.",
+        help="corum or one of the 15 therapeutic_target_<disease_id> tasks.",
     )
     parser.add_argument(
         "--task-csv",
@@ -99,7 +99,7 @@ def parse_args():
         choices=["bulk", "legacy"],
         help=(
             "bulk: current task ∩ sequence ∩ HC universe; legacy: additionally "
-            "restrict to the original PINNACLE paper gene set."
+            "restrict to the original PINNACLE gene set."
         ),
     )
     parser.add_argument("--force", action="store_true")
@@ -246,7 +246,7 @@ def main():
             required_paths.append(config.embeddings.pinnacle_paper_cell_labels)
         missing_paths = [p for p in required_paths if not p.exists()]
         if missing_paths:
-            print("[ERROR] Missing PINNACLE paper embedding files:")
+            print("[ERROR] Missing PINNACLE embedding files:")
             for path in missing_paths:
                 print(f"  {path}")
             return 1
@@ -303,7 +303,7 @@ def main():
     if config.dataset_mode == "legacy":
         if not config.embeddings.pinnacle_paper_labels.exists():
             print(
-                "[ERROR] PINNACLE paper labels not found: "
+                "[ERROR] PINNACLE labels not found: "
                 f"{config.embeddings.pinnacle_paper_labels}"
             )
             return 1

@@ -1,4 +1,4 @@
-"""Checkpoint loading helpers for the paper models."""
+"""Checkpoint loading helpers."""
 
 import importlib
 import sys
@@ -12,7 +12,7 @@ from .models.pinnacle_model import Pinnacle
 
 
 # The original checkpoints stored complete Python model objects under these
-# module names. The aliases let trusted paper checkpoints load after the code
+# module names. The aliases let trusted historical checkpoints load after the code
 # was moved into the ``pretraining`` package.
 _LEGACY_MODULES = {
     "models": "pretraining.models",
@@ -28,7 +28,7 @@ _LEGACY_MODULES = {
 
 
 def load_legacy_checkpoint(path, map_location="cpu", mmap=False):
-    """Load one of the trusted, full-object checkpoints produced for the paper."""
+    """Load a trusted full-object checkpoint."""
     previous_modules = {name: sys.modules.get(name) for name in _LEGACY_MODULES}
     try:
         for old_name, new_name in _LEGACY_MODULES.items():

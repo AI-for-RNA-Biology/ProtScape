@@ -1,4 +1,4 @@
-"""Register Arial before rendering manuscript plots."""
+"""Register Arial before rendering plots."""
 
 from pathlib import Path
 
@@ -15,4 +15,4 @@ def register_arial() -> None:
     try:
         font_manager.findfont("Arial", fallback_to_default=False)
     except ValueError as exc:
-        raise RuntimeError("Arial must be installed to render the paper plots.") from exc
+        raise RuntimeError("Arial must be installed to render the plots.") from exc

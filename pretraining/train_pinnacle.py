@@ -436,7 +436,7 @@ def main(
             split='test')
 
 if __name__ == "__main__":
-    # Adapted PINNACLE paper experiments.
+    # Adapted PINNACLE configurations.
     dict_cfg['features_mode'] = features_mode
     dict_cfg['protein_feat_dim'] = features_mode_dict[features_mode]
     dict_cfg['ppi_feat_dir'] = _get_ppi_feat_dir(project_paths, features_mode)
@@ -526,7 +526,7 @@ if __name__ == "__main__":
                     with open(config_file, 'wb') as f:
                         pickle.dump(dict_cfg, f)
 
-                # Get experiment using best parameters [based on PINNACLE paper(code)]
+                # Use the best parameters from the PINNACLE implementation.
                 utils.set_seed(seed)
                 # setup wandb tracker
                 utils.setup_wandb(cfg, experiment_name)

@@ -1,4 +1,4 @@
-"""Generate paper-model protein and cell embeddings from a portable checkpoint."""
+"""Generate protein and cell embeddings from a portable checkpoint."""
 
 import argparse
 import pickle
@@ -11,7 +11,7 @@ from tqdm import tqdm
 from .checkpoints import load_pinnacle_model, load_protscape_model
 from .data_handler.generate_input import get_metapaths, read_data
 from .models.hierarchical_model import add_virtual_node
-from .train.minibatch_factored_utils import build_cci_edge_index
+from .train.factored_batching import build_cci_edge_index
 from .utils import construct_metapath
 
 

@@ -7,7 +7,7 @@ import os
 from itertools import combinations
 from pathlib import Path
 
-# Keep the held-out OLS calculation reproducible and avoid excessive BLAS
+# Keep the held-out OLS calculation deterministic and avoid excessive BLAS
 # threading on shared machines. These must be set before importing NumPy.
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -315,10 +315,10 @@ def write_table(table: pd.DataFrame, path: Path) -> None:
 
 def render_plots() -> None:
     """Render the plots from the computed analysis tables."""
-    from exploration.plotting.model_evaluation_plots import (
+    from exploration.plotting.string_support_plots import (
         plot_string as plot_model_evaluation,
     )
-    from exploration.plotting.model_diagnostic_plots import (
+    from exploration.plotting.string_correlation_plots import (
         plot_string as plot_model_diagnostics,
     )
 
@@ -338,7 +338,7 @@ def write_results() -> None:
 
 
 def main() -> None:
-    # Keep a single self-contained command for the scientific analysis.
+    # Run inference before reducing the STRING statistics.
     from exploration.analysis.consensus_analysis import main as run_analysis
 
     run_analysis()

@@ -216,7 +216,7 @@ def prepare_inputs(
     output_dir: Path,
     max_cells_per_type: int | None,
 ) -> tuple[Path, Path]:
-    """Filter, reproducibly cap, and serialize one dataset for CellPhoneDB."""
+    """Filter, deterministically cap, and serialize one dataset for CellPhoneDB."""
     if groupby not in adata.obs:
         raise KeyError(f"Cell-type column '{groupby}' is absent")
     adata = _filter_to_ppi_cell_types(adata, dataset, groupby, output_dir)

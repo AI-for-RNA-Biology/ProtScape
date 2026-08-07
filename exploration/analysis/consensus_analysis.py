@@ -325,10 +325,10 @@ def write_table(table: pd.DataFrame, path: Path, **kwargs) -> None:
 
 def render_plots() -> None:
     """Render the plots from the computed analysis tables."""
-    from exploration.plotting.model_evaluation_plots import (
+    from exploration.plotting.consensus_evaluation_plots import (
         plot_consensus as plot_model_evaluation,
     )
-    from exploration.plotting.model_diagnostic_plots import (
+    from exploration.plotting.consensus_diagnostic_plots import (
         plot_consensus as plot_model_diagnostics,
     )
 
@@ -365,8 +365,7 @@ def main() -> None:
     )
     render_plots()
 
-    # STRING validation uses the predictions made above; it is part of this
-    # same exhaustive scientific analysis, not a separate precomputed prerequisite.
+    # Reuse the predictions above for STRING validation.
     from exploration.analysis.string_validation import write_results as write_string_results
 
     write_string_results()

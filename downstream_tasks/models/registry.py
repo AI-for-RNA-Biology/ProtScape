@@ -1,4 +1,4 @@
-"""Downstream model variants reported in the paper."""
+"""Available downstream model variants."""
 
 from dataclasses import dataclass
 from enum import Enum

@@ -639,7 +639,7 @@ def build_dataset_for_disease(
             f"minimum required is {min_proteins_per_label}."
         )
 
-    # Save processed labels for reproducibility.
+    # Write the processed label tables.
     write_json(pos_json, {"GLOBAL": sorted(positive)})
     write_json(neg_json, {"GLOBAL": sorted(negative)})
     write_json(raw_json, sorted(positive_raw))
@@ -714,7 +714,7 @@ def parse_args() -> argparse.Namespace:
         "--diseases",
         nargs="+",
         default=list(DEFAULT_DISEASES),
-        help="Disease IDs to build (default: the 15 paper disease areas).",
+        help="Disease IDs to build (default: all 15 configured disease areas).",
     )
     parser.add_argument(
         "--descendants-source",

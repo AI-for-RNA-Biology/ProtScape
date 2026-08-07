@@ -31,7 +31,7 @@ class MultilabelStratifiedSampler(Sampler[int]):
             batch_size: Number of samples per batch
             n_clusters: Number of label clusters (default 10)
             shuffle: Whether to shuffle within clusters each epoch
-            seed: Random seed for reproducibility
+            seed: Random seed for deterministic splitting
             cluster_labels: Optional precomputed cluster ids for each sample
         """
         self.batch_size = batch_size
