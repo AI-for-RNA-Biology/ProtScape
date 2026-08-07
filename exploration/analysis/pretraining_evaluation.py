@@ -41,6 +41,7 @@ def load_checkpoint(path: Path) -> dict:
 
 def main() -> None:
     paths = load_paths()
+    checkpoint_root = Path(paths["checkpoint_root"])
     output_dir = Path(paths["output_root"]) / "analysis" / "pretraining_evaluation"
     output_dir.mkdir(parents=True, exist_ok=True)
     if not torch.cuda.is_available():
@@ -57,7 +58,9 @@ def main() -> None:
     contextwise = []
 
     # All ProtScape variants use the same ESM2 input data.
-    first_checkpoint = load_checkpoint(Path(paths[MODELS["gae_att"]["checkpoint"]]))
+    first_checkpoint = load_checkpoint(
+        checkpoint_root / MODELS["gae_att"]["checkpoint"]
+    )
     factored_data, id_to_name = load_dataset(first_checkpoint, paths, defer_features=False)
     for model_key in [
         "gae_att",
@@ -75,7 +78,7 @@ def main() -> None:
         checkpoint = (
             first_checkpoint
             if model_key == "gae_att"
-            else load_checkpoint(Path(paths[MODELS[model_key]["checkpoint"]]))
+            else load_checkpoint(checkpoint_root / MODELS[model_key]["checkpoint"])
         )
         cell_ids = [int(cell_id) for cell_id in checkpoint["cell_ids"]]
         model_data = (
@@ -106,7 +109,7 @@ def main() -> None:
     # Adapted PINNACLE random inputs are generated with the checkpoint seed.
     for model_key in ["pinnacle_random", "pinnacle_esm2_acm", "pinnacle_esm2"]:
         print(f"\nEvaluating {MODELS[model_key]['name']}", flush=True)
-        checkpoint = load_checkpoint(Path(paths[MODELS[model_key]["checkpoint"]]))
+        checkpoint = load_checkpoint(checkpoint_root / MODELS[model_key]["checkpoint"])
         data, id_to_name = load_dataset(checkpoint, paths, defer_features=True)
         model = load_pinnacle_model(checkpoint, data[0], device="cpu")
         parameters[model_key] = sum(parameter.numel() for parameter in model.parameters())

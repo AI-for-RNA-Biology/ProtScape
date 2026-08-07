@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from downstream_tasks.config import PATHS
+from downstream_tasks.run_selected import find_selected_run
 from exploration.analysis.therapeutic_target.benchmark import (
     PDL_READOUT,
     TASKS,
@@ -16,7 +17,6 @@ from exploration.analysis.therapeutic_target.benchmark import (
 from exploration.analysis.therapeutic_target.checkpoint_lrp import generate_lrp
 
 
-CHECKPOINT_ROOT = Path(PATHS["downstream_checkpoint_root"]) / "therapeutic_targets"
 CELL_METADATA_PATH = Path(PATHS["celltype_class_mapping"])
 ANALYSIS_DIR = Path(PATHS["output_root"]) / "analysis/therapeutic_target_analysis"
 
@@ -75,7 +75,12 @@ def lrp_path(inference_key: str, task: str) -> Path:
 def generate_checkpoint_lrp() -> None:
     for _, (inference_key, readout_key) in LRP_MODELS.items():
         for task, _, _ in TASKS:
-            run_dir = CHECKPOINT_ROOT / task / f"{inference_key}__{readout_key}"
+            _, run_dir = find_selected_run(
+                "therapeutic_targets",
+                task=task,
+                inference_key=inference_key,
+                readout_key=readout_key,
+            )
             generate_lrp(
                 run_dir,
                 lrp_path(inference_key, task),

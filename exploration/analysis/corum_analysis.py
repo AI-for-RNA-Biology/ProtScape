@@ -32,10 +32,10 @@ from exploration.analysis.corum_model_evaluation import (
     performance_rows,
     per_complex_rows,
     run_spec,
+    selected_run,
 )
 
 
-CHECKPOINT_ROOT = Path(PATHS["downstream_checkpoint_root"]) / "corum"
 ANALYSIS_DIR = Path(PATHS["output_root"]) / "analysis/corum_analysis"
 
 
@@ -51,12 +51,12 @@ def main() -> None:
     lrp_parts = []
 
     # Aggregate ESM2 baseline.
-    checkpoint_dir = CHECKPOINT_ROOT / "aggregate/lr_esm/lr_esm"
-    split_file = checkpoint_dir / "split_indices.npz"
+    run_dir = selected_run("aggregate", "lr_esm", "lr_esm")
+    split_file = run_dir / "split_indices.npz"
     data = load_run_data(run_spec("aggregate", "lr_esm", "lr_esm"), split_file)
     result = evaluate(
         data,
-        checkpoint_dir,
+        run_dir / "models",
         split_file,
         "lr_esm",
     )
@@ -68,15 +68,16 @@ def main() -> None:
     # Contextual models: aggregate performance, per-complex performance and xMIL.
     for model_key in MAIN_CONTEXT_MODEL_ORDER:
         print(f"CORUM analysis: {MODEL_LABELS[model_key]}", flush=True)
-        per_complex_split = (
-            CHECKPOINT_ROOT / "per_complex" / model_key / "split_indices.npz"
+        per_complex_dir = selected_run(
+            "per_complex", model_key, "abmil8_pdl_id2_dropout"
         )
+        per_complex_split = per_complex_dir / "split_indices.npz"
         per_complex_spec = run_spec(
             "per_complex", model_key, "abmil8_pdl_id2_dropout"
         )
         data = load_run_data(per_complex_spec, per_complex_split)
         for readout in CONTEXT_READOUTS:
-            checkpoint_dir = CHECKPOINT_ROOT / "aggregate" / model_key / readout
+            run_dir = selected_run("aggregate", model_key, readout)
             aggregate_spec = run_spec("aggregate", model_key, readout)
             if (
                 aggregate_spec["cell_embedding_file"]
@@ -86,12 +87,12 @@ def main() -> None:
             else:
                 readout_data = load_run_data(
                     aggregate_spec,
-                    checkpoint_dir / "split_indices.npz",
+                    run_dir / "split_indices.npz",
                 )
             result = evaluate(
                 readout_data,
-                checkpoint_dir,
-                checkpoint_dir / "split_indices.npz",
+                run_dir / "models",
+                run_dir / "split_indices.npz",
                 readout,
             )
             rows = performance_rows(model_key, readout, result)
@@ -104,7 +105,7 @@ def main() -> None:
 
         result = evaluate(
             data,
-            CHECKPOINT_ROOT / "per_complex" / model_key,
+            per_complex_dir / "models",
             per_complex_split,
             "abmil8_pdl_id2_dropout",
         )
@@ -119,16 +120,17 @@ def main() -> None:
             xmil_lrp_values(
                 model_key,
                 data,
-                CHECKPOINT_ROOT / "per_complex" / model_key,
+                per_complex_dir / "models",
                 per_complex_split,
             )
         )
 
         if model_key == "s2gae_bce_uni":
+            baseline_dir = selected_run("per_complex", "lr_esm", "lr_esm")
             result = evaluate(
                 data,
-                CHECKPOINT_ROOT / "per_complex/lr_esm",
-                CHECKPOINT_ROOT / "per_complex/lr_esm/split_indices.npz",
+                baseline_dir / "models",
+                baseline_dir / "split_indices.npz",
                 "lr_esm",
             )
             per_complex_parts.append(
@@ -139,10 +141,10 @@ def main() -> None:
 
     # pHuber and L1 were trained with the pooled pre-CCI cell export.
     for model_key in ("s2gae_phuber_uni", "s2gae_l1_uni"):
-        split_file = CHECKPOINT_ROOT / "aggregate" / model_key / "split_indices.npz"
         data_by_embedding = {}
         for readout in LOSS_READOUTS[model_key]:
-            checkpoint_dir = CHECKPOINT_ROOT / "aggregate" / model_key / readout
+            run_dir = selected_run("aggregate", model_key, readout)
+            split_file = run_dir / "split_indices.npz"
             aggregate_spec = run_spec("aggregate", model_key, readout)
             embedding_file = aggregate_spec["cell_embedding_file"]
             if embedding_file not in data_by_embedding:
@@ -152,8 +154,8 @@ def main() -> None:
             data = data_by_embedding[embedding_file]
             result = evaluate(
                 data,
-                checkpoint_dir,
-                checkpoint_dir / "split_indices.npz",
+                run_dir / "models",
+                split_file,
                 readout,
             )
             loss_rows.extend(performance_rows(model_key, readout, result))
@@ -161,22 +163,23 @@ def main() -> None:
         gc.collect()
 
     # ProstT5 sequence baseline (aggregate and split-fixed per-complex results).
-    checkpoint_dir = CHECKPOINT_ROOT / "aggregate/lr_prostt5/lr_prostt5"
-    split_file = checkpoint_dir / "split_indices.npz"
+    run_dir = selected_run("aggregate", "lr_prostt5", "lr_prostt5")
+    split_file = run_dir / "split_indices.npz"
     data = load_run_data(
         run_spec("aggregate", "lr_prostt5", "lr_prostt5"), split_file
     )
     result = evaluate(
         data,
-        checkpoint_dir,
+        run_dir / "models",
         split_file,
         "lr_prostt5",
     )
     main_rows.extend(performance_rows("lr_prostt5", "lr_prostt5", result))
+    per_complex_dir = selected_run("per_complex", "lr_prostt5", "lr_prostt5")
     result = evaluate(
         data,
-        CHECKPOINT_ROOT / "per_complex/lr_prostt5",
-        CHECKPOINT_ROOT / "per_complex/lr_prostt5/split_indices.npz",
+        per_complex_dir / "models",
+        per_complex_dir / "split_indices.npz",
         "lr_prostt5",
     )
     per_complex_parts.append(

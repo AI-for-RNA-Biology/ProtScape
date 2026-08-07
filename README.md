@@ -31,7 +31,7 @@ conda env create -f environment_cellphonedb.yml
 
 ## Data and configuration
 
-Set input and output paths in [`configs/paths.yaml`](configs/paths.yaml). Large datasets, checkpoints and generated outputs are stored outside the repository. The graph bundle and checkpoint used for inference must come from the same dataset snapshot.
+Set input and output paths in [`configs/paths.yaml`](configs/paths.yaml). Large datasets, checkpoints and generated outputs are stored outside the repository.
 
 Requirements for rebuilding the networks are documented in [`data_processing_bulk/README.md`](data_processing_bulk/README.md). Links to the processed datasets and released checkpoints will be added here when the accompanying archive is public.
 
@@ -51,11 +51,11 @@ bash scripts/run_pretraining.sh
 # Generate embeddings from a released checkpoint
 python -m pretraining.inference /path/to/best_model_state_dict.pt
 
-# Set inference_root to <output_root>/inference, then train downstream models
-bash scripts/run_downstream_corum.sh best_model_state_dict
-bash scripts/run_downstream_tt.sh best_model_state_dict
+# Train the validation-selected downstream configurations
+python -m downstream_tasks.run_selected corum
+python -m downstream_tasks.run_selected therapeutic_targets
 
-# Recompute analyses and their plots from the released checkpoints
+# Recompute analyses and their plots
 bash scripts/run_analysis.sh
 ```
 

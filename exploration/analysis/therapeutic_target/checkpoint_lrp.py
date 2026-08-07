@@ -20,6 +20,7 @@ from downstream_tasks.models.abmil import ABMIL_LateFusion
 from downstream_tasks.models.linear import LinearProbe
 from downstream_tasks.models.registry import MODEL_VARIANTS, ModelType
 from downstream_tasks.run import _build_shared_split
+from downstream_tasks.run_selected import load_selected_runs, selected_run_dir
 from downstream_tasks.training.cv_utils import get_cv_train_val_indices, get_test_indices
 from downstream_tasks.training.metrics import compute_all_metrics
 from downstream_tasks.training.trainer import Trainer
@@ -188,15 +189,17 @@ def evaluate_folds(run_dir: Path, row: pd.Series, trainer: Trainer, features, la
     return results
 
 
-def recompute_performance(checkpoint_root: Path) -> pd.DataFrame:
+def recompute_performance() -> pd.DataFrame:
     configs = []
-    for path in sorted(checkpoint_root.glob("*/*/model_config.csv")):
-        row = read_config(path.parent)
-        row["run_dir"] = str(path.parent)
+    for selected in load_selected_runs("therapeutic_targets"):
+        run_dir = selected_run_dir(selected)
+        row = dict(selected)
+        row.update(read_config(run_dir).to_dict())
+        row["run_dir"] = str(run_dir)
         configs.append(row)
     configs = pd.DataFrame(configs)
     output = []
-    group_columns = ["inference_name", "embedding_source"]
+    group_columns = ["embedding_inference_name", "embedding_source"]
     for (inference_name, embedding_source), group in configs.groupby(group_columns, sort=False):
         config = load_config(str(inference_name), str(embedding_source), "bulk")
         loader = load_embeddings(config)

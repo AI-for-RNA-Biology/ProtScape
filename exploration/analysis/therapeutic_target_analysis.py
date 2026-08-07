@@ -15,7 +15,6 @@ from exploration.analysis.therapeutic_target.checkpoint_lrp import (
 )
 from exploration.analysis.therapeutic_target.context_attribution import (
     ANALYSIS_DIR,
-    CHECKPOINT_ROOT,
     LRP_MODELS,
     absolute_contextual_relevance,
     disease_top_contexts,
@@ -42,7 +41,7 @@ def main() -> None:
         ]
     ).to_csv(ANALYSIS_DIR / "lrp_model_readouts.csv", index=False)
 
-    performance = recompute_performance(CHECKPOINT_ROOT)
+    performance = recompute_performance()
     performance.to_csv(ANALYSIS_DIR / "held_out_performance.csv", index=False)
     mean_performance(performance).to_csv(
         ANALYSIS_DIR / "mean_performance.csv", index=False

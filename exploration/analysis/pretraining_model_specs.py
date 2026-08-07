@@ -32,7 +32,7 @@ TABLE2_MODEL_ORDER = [
 
 MODELS = {
     "pinnacle_random": {
-        "checkpoint": "pinnacle_random_checkpoint",
+        "checkpoint": "pinnacle_random_gat_state_dict.pt",
         "name": "PINNACLE random fixed drop02",
         "short_name": "PINNACLE random",
         "kind": "pinnacle",
@@ -41,7 +41,7 @@ MODELS = {
         "uniformity": None,
     },
     "pinnacle_esm2_acm": {
-        "checkpoint": "pinnacle_esm2_acm_checkpoint",
+        "checkpoint": "pinnacle_esm2_acm_randomwalk_state_dict.pt",
         "name": "PINNACLE ESM2 ACM H64 drop02",
         "short_name": "PINNACLE ESM ACM",
         "kind": "pinnacle",
@@ -50,7 +50,7 @@ MODELS = {
         "uniformity": None,
     },
     "pinnacle_esm2": {
-        "checkpoint": "pinnacle_esm2_gat_checkpoint",
+        "checkpoint": "pinnacle_esm2_gat_state_dict.pt",
         "name": "PINNACLE ESM2 fixed drop02",
         "short_name": "PINNACLE ESM2",
         "kind": "pinnacle",
@@ -59,7 +59,7 @@ MODELS = {
         "uniformity": None,
     },
     "gae_att": {
-        "checkpoint": "protscape_gae_checkpoint",
+        "checkpoint": "protscape_gae_state_dict.pt",
         "name": "GAE att fixed do06",
         "short_name": "GAE att",
         "kind": "protscape",
@@ -69,7 +69,7 @@ MODELS = {
         "uniformity": False,
     },
     "gae_att_uni": {
-        "checkpoint": "protscape_gae_uniformity_checkpoint",
+        "checkpoint": "protscape_gae_uniformity_state_dict.pt",
         "name": "GAE att fixed do06 uni5e-5",
         "short_name": "GAE att + uniformity",
         "kind": "protscape",
@@ -79,7 +79,7 @@ MODELS = {
         "uniformity": True,
     },
     "gae_vn": {
-        "checkpoint": "protscape_gae_virtual_node_checkpoint",
+        "checkpoint": "protscape_gae_virtual_node_state_dict.pt",
         "name": "GAE VN fixed do04",
         "short_name": "GAE VN",
         "kind": "protscape",
@@ -89,7 +89,7 @@ MODELS = {
         "uniformity": False,
     },
     "gae_vn_uni": {
-        "checkpoint": "protscape_gae_virtual_node_uniformity_checkpoint",
+        "checkpoint": "protscape_gae_virtual_node_uniformity_state_dict.pt",
         "name": "GAE VN fixed do04 uni5e-5",
         "short_name": "GAE VN + uniformity",
         "kind": "protscape",
@@ -99,7 +99,7 @@ MODELS = {
         "uniformity": True,
     },
     "gae_learnedvn": {
-        "checkpoint": "protscape_gae_learned_virtual_node_checkpoint",
+        "checkpoint": "protscape_gae_learned_virtual_node_state_dict.pt",
         "name": "GAE learnedVN fixed do06",
         "short_name": "GAE LVN",
         "kind": "protscape",
@@ -109,7 +109,7 @@ MODELS = {
         "uniformity": False,
     },
     "gae_learnedvn_uni": {
-        "checkpoint": "protscape_gae_learned_virtual_node_uniformity_checkpoint",
+        "checkpoint": "protscape_gae_learned_virtual_node_uniformity_state_dict.pt",
         "name": "GAE learnedVN fixed do06 uni5e-5",
         "short_name": "GAE LVN + uniformity",
         "kind": "protscape",
@@ -119,7 +119,7 @@ MODELS = {
         "uniformity": True,
     },
     "s2gae_att_k1_no_uni": {
-        "checkpoint": "protscape_no_uniformity_checkpoint",
+        "checkpoint": "protscape_no_uniformity_state_dict.pt",
         "name": "S2GAE att k=1 fixed do04",
         "short_name": "S2GAE k=1",
         "kind": "protscape",
@@ -129,7 +129,7 @@ MODELS = {
         "uniformity": False,
     },
     "s2gae_att_k1_uni": {
-        "checkpoint": "protscape_bce_checkpoint",
+        "checkpoint": "protscape_main_state_dict.pt",
         "name": "S2GAE att k=1 fixed do04 uni5e-5",
         "short_name": "S2GAE k=1 uni",
         "kind": "protscape",
@@ -139,14 +139,14 @@ MODELS = {
         "uniformity": True,
     },
     "s2gae_att_k1_phuber": {
-        "checkpoint": "protscape_phuber_checkpoint",
+        "checkpoint": "protscape_phuber_state_dict.pt",
         "name": "S2GAE att k=1 fixed do04 pHuber uni",
         "short_name": "S2GAE pHuber",
         "kind": "protscape",
         "k_values": K_NEGATIVES,
     },
     "s2gae_att_k1_l1_do00": {
-        "checkpoint": "protscape_l1_checkpoint",
+        "checkpoint": "protscape_l1_state_dict.pt",
         "name": "S2GAE att k=1 fixed do00 L1 uni",
         "short_name": "S2GAE L1",
         "kind": "protscape",

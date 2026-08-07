@@ -16,10 +16,10 @@ from pretraining.train.factored_training import _prepare_s2gae_decoder_input
 
 
 LOSSES = ("BCE", "pHuber", "L1")
-CHECKPOINT_KEYS = {
-    "BCE": "protscape_bce_checkpoint",
-    "pHuber": "protscape_phuber_checkpoint",
-    "L1": "protscape_l1_checkpoint",
+CHECKPOINT_FILES = {
+    "BCE": "protscape_main_state_dict.pt",
+    "pHuber": "protscape_phuber_state_dict.pt",
+    "L1": "protscape_l1_state_dict.pt",
 }
 LABEL_NAMES = {1: "Labelled positive", 0: "Labelled negative"}
 CLASS_NAMES = (
@@ -52,14 +52,15 @@ def pair_ids(src: np.ndarray, dst: np.ndarray, n_genes: int) -> np.ndarray:
 
 def load_models_and_data(device: torch.device):
     paths = PATHS
+    checkpoint_root = Path(paths["checkpoint_root"]).expanduser()
     checkpoints = {
         loss: torch.load(
-            require_file(Path(paths[key]).expanduser()),
+            require_file(checkpoint_root / filename),
             map_location="cpu",
             mmap=True,
             weights_only=True,
         )
-        for loss, key in CHECKPOINT_KEYS.items()
+        for loss, filename in CHECKPOINT_FILES.items()
     }
     reference = checkpoints["BCE"]
     config = reference["config"]
@@ -95,7 +96,7 @@ def load_models_and_data(device: torch.device):
         model = load_protscape_model(checkpoint, ppi_data, device=device)
         model.use_metagraph = False
         models[loss] = model
-        checkpoint_path = Path(paths[CHECKPOINT_KEYS[loss]]).expanduser()
+        checkpoint_path = checkpoint_root / CHECKPOINT_FILES[loss]
         checkpoint_rows.append(
             {
                 "loss": loss,

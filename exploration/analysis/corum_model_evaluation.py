@@ -20,6 +20,10 @@ from downstream_tasks.data.task_loaders import get_task_loader
 from downstream_tasks.models.abmil import ABMIL_ContextOnly, ABMIL_LateFusion
 from downstream_tasks.models.linear import LinearProbe
 from downstream_tasks.models.registry import MODEL_VARIANTS, ModelType
+from downstream_tasks.run_selected import (
+    find_selected_run,
+    load_selected_runs,
+)
 from downstream_tasks.training.metrics import compute_all_metrics, summarize_cv_metrics
 
 
@@ -29,43 +33,6 @@ CORUM_MEMBERSHIPS = (
     Path(PATHS["corum_dataset_dir"]) / "corum_memberships_filtered.csv"
 )
 
-
-PINNACLE_RANDOM = (
-    "PINNACLE_model_globalsplit_random_symmetric_PPI-True_"
-    "GATv2_H64_lambda001_drop02_out32__ep150_bulk"
-)
-PINNACLE_ESM = (
-    "PINNACLE_model_globalsplit_ESM2_symmetric_PPI-True_"
-    "GATv2_H64_lambda001_drop02_out32__ep150_bulk"
-)
-PINNACLE_ACM = (
-    "PINNACLE_model_globalsplit_ESM2_symmetric_PPI-True_"
-    "ACM_RandomWalk_H64_lambda001_drop02_out64__ep150_bulk"
-)
-GAE_BCE = "gae_att_fixed_do06_ep300"
-S2GAE_BCE = "s2gae_att_k1_fixed_do04_uni5e6"
-S2GAE_PHUBER = (
-    "HCCTassignmentglobalsplit_ESM2symmetricPPI_attention128_s2gae_dm_mr05_"
-    "dc512_dl2_do00_MG_bulk__lr001_ep300_phubertau100_ACM_RandomWalkconcat_"
-    "H512L3_dropout04_regCTassignment1_unil000005_unit20_unid0"
-)
-S2GAE_L1 = (
-    "HCCTassignmentglobalsplit_ESM2symmetricPPI_attention128_s2gae_dm_mr05_"
-    "dc512_dl2_do00_MG_bulk__lr001_ep300_l1_ACM_RandomWalkconcat_H512L3_"
-    "regCTassignment1_unil000005_unit20_unid0"
-)
-
-INFERENCE_NAMES = {
-    "lr_esm": PINNACLE_ESM,
-    "lr_prostt5": S2GAE_BCE,
-    "pinnacle_random": PINNACLE_RANDOM,
-    "pinnacle_esm": PINNACLE_ESM,
-    "pinnacle_acm": PINNACLE_ACM,
-    "gae_bce": GAE_BCE,
-    "s2gae_bce_uni": S2GAE_BCE,
-    "s2gae_phuber_uni": S2GAE_PHUBER,
-    "s2gae_l1_uni": S2GAE_L1,
-}
 
 MAIN_CONTEXT_MODEL_ORDER = [
     "pinnacle_random",
@@ -135,72 +102,33 @@ MODEL_LABELS = {
 }
 
 
-def build_run_specs() -> dict[tuple[str, str, str], dict[str, str]]:
-    """Define the embedding export used by every released checkpoint group."""
-    specs = {}
-
-    def add(
-        scope: str,
-        model_key: str,
-        readout: str,
-        representation: str = "canonical_contextualized",
-    ) -> None:
-        filenames = {
-            "canonical_contextualized": "cell_embeddings.pt",
-            "pooled_before_cci": "cell_embeddings_before_pool.pt",
-            "not_used_sequence_only": "",
-        }
-        key = (scope, model_key, readout)
-        specs[key] = {
-            "scope": scope,
-            "inference_key": model_key,
-            "inference_name": INFERENCE_NAMES[model_key],
-            "inference_label": MODEL_LABELS[model_key],
-            "readout_key": readout,
-            "embedding_source": "prostt5" if model_key == "lr_prostt5" else "esm",
-            "cell_embedding_file": filenames[representation],
-            "cell_representation": representation,
-        }
-
-    add("aggregate", "lr_esm", "lr_esm", "not_used_sequence_only")
-    add("aggregate", "lr_prostt5", "lr_prostt5", "not_used_sequence_only")
-    for model_key in MAIN_CONTEXT_MODEL_ORDER:
-        for readout in CONTEXT_READOUTS:
-            representation = (
-                "pooled_before_cci"
-                if model_key == "s2gae_bce_uni"
-                and readout == "abmil8_pdl_hc_cell"
-                else "canonical_contextualized"
-            )
-            add("aggregate", model_key, readout, representation)
-    for model_key in ("s2gae_phuber_uni", "s2gae_l1_uni"):
-        for readout in LOSS_READOUTS[model_key]:
-            add("aggregate", model_key, readout, "pooled_before_cci")
-    for model_key in MAIN_MODEL_ORDER:
-        readout = (
-            model_key
-            if model_key in {"lr_esm", "lr_prostt5"}
-            else "abmil8_pdl_id2_dropout"
-        )
-        representation = (
-            "not_used_sequence_only"
-            if model_key in {"lr_esm", "lr_prostt5"}
-            else "canonical_contextualized"
-        )
-        add("per_complex", model_key, readout, representation)
-    return specs
-
-
-RUN_SPECS = build_run_specs()
-
-
 def run_spec(scope: str, model_key: str, readout: str) -> dict[str, str]:
-    try:
-        return RUN_SPECS[(scope, model_key, readout)]
-    except KeyError as error:
-        raise KeyError(
-            f"No CORUM run specification for {scope}/{model_key}/{readout}"
-        ) from error
+    row, _ = find_selected_run(
+        "corum",
+        scope=scope,
+        inference_key=model_key,
+        readout_key=readout,
+    )
+    return {
+        "scope": scope,
+        "inference_key": model_key,
+        "inference_name": row["embedding_inference_name"],
+        "inference_label": row["inference_label"],
+        "readout_key": readout,
+        "embedding_source": row["embedding_source"],
+        "cell_embedding_file": row["cell_embedding_file"],
+        "cell_representation": row["cell_representation"],
+    }
+
+
+def selected_run(scope: str, model_key: str, readout: str) -> Path:
+    _, run_dir = find_selected_run(
+        "corum",
+        scope=scope,
+        inference_key=model_key,
+        readout_key=readout,
+    )
+    return run_dir
 
 
 def checkpoint_cell_representations() -> pd.DataFrame:
@@ -213,7 +141,7 @@ def checkpoint_cell_representations() -> pd.DataFrame:
         "cell_embedding_file",
         "cell_representation",
     ]
-    return pd.DataFrame(RUN_SPECS.values())[columns]
+    return pd.DataFrame(load_selected_runs("corum"))[columns]
 
 
 def load_data(

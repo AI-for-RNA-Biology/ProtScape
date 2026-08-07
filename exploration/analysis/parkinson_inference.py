@@ -14,7 +14,6 @@ from downstream_tasks.config import (
     DEFAULT_ESM_EMBEDDINGS,
     DEFAULT_INFERENCE_ROOT,
     DEFAULT_THERAPEUTIC_TARGET_DATASET_DIR,
-    PATHS,
     get_hc_embedding_paths,
 )
 from downstream_tasks.data.datasets import collate_abmil
@@ -22,6 +21,7 @@ from downstream_tasks.data.loaders import EmbeddingLoader
 from downstream_tasks.data.task_loaders import get_task_loader
 from downstream_tasks.models.abmil import ABMIL_LateFusion
 from downstream_tasks.models.registry import MODEL_VARIANTS
+from downstream_tasks.run_selected import find_selected_run
 from downstream_tasks.training.cv_utils import (
     build_cv_splits,
     get_cv_train_val_indices,
@@ -29,7 +29,6 @@ from downstream_tasks.training.cv_utils import (
 )
 
 
-CHECKPOINT_ROOT = Path(PATHS["downstream_checkpoint_root"]) / "parkinson"
 TASK_CSV = (
     DEFAULT_THERAPEUTIC_TARGET_DATASET_DIR
     / "therapeutic_target_MONDO_0005180.csv"
@@ -45,21 +44,18 @@ SEED = 42
 
 @dataclass(frozen=True)
 class ModelSpec:
-    checkpoint_dir: str
-    embedding_run: str
+    inference_key: str
+    readout_key: str
 
 
 MODEL_SPECS = {
     "protscape": ModelSpec(
-        checkpoint_dir="protscape",
-        embedding_run="s2gae_att_k1_fixed_do04_uni5e6_paper_20260510",
+        inference_key="s2gae_att_k1_fixed_do04_uni",
+        readout_key="abmil8_pdl_id2_dropout",
     ),
     "pinnacle": ModelSpec(
-        checkpoint_dir="pinnacle",
-        embedding_run=(
-            "PINNACLE_model_globalsplit_random_symmetric_PPI-True_"
-            "GATv2_H64_lambda001_drop02_out32__ep150_bulk"
-        ),
+        inference_key="pinnacle_random_fixed",
+        readout_key="abmil8_pdl_id2_dropout",
     ),
 }
 MODEL_LABELS = {"protscape": "ProtScape", "pinnacle": "Pinnacle"}
@@ -138,16 +134,15 @@ def build_model(
     ).to(device)
 
 
-def load_inference_data(spec: ModelSpec) -> InferenceData:
+def load_inference_data(selected: dict[str, str]) -> InferenceData:
     task_genes, labels, _ = get_task_loader(TASK, require_file(TASK_CSV)).load()
     task_genes = [gene.upper() for gene in task_genes]
     if len(task_genes) != len(set(task_genes)):
         raise RuntimeError("The Parkinson benchmark contains duplicate proteins")
 
     embedding_paths = get_hc_embedding_paths(
-        require_file(
-            DEFAULT_INFERENCE_ROOT / spec.embedding_run / "protein_embeddings.pt"
-        ).parent
+        DEFAULT_INFERENCE_ROOT / selected["embedding_inference_name"],
+        cell_embedding_file=selected["cell_embedding_file"],
     )
     loader = EmbeddingLoader(
         require_file(ESM_PATH),
@@ -280,10 +275,15 @@ def run_global_inference() -> tuple[pd.DataFrame, pd.DataFrame]:
     score_tables = []
     shared_membership = None
     for model_name, spec in MODEL_SPECS.items():
-        run_dir = CHECKPOINT_ROOT / spec.checkpoint_dir
+        selected, run_dir = find_selected_run(
+            "therapeutic_targets",
+            task=TASK,
+            inference_key=spec.inference_key,
+            readout_key=spec.readout_key,
+        )
         config = pd.read_csv(require_file(run_dir / "model_config.csv")).iloc[0]
-        data = load_inference_data(spec)
-        fold_scores = score_ensemble(data, config, run_dir, device)
+        data = load_inference_data(selected)
+        fold_scores = score_ensemble(data, config, run_dir / "models", device)
         membership = cohort_membership(data)
         if shared_membership is None:
             shared_membership = membership

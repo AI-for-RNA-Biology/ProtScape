@@ -8,6 +8,8 @@ conda activate protscape
 
 Pretraining evaluation and Parkinson analysis require CUDA. Arial is required for plot rendering.
 
+Run the selected CORUM and therapeutic-target training commands in `downstream_tasks/README.md` before recomputing their analyses.
+
 The STRING analyses use the four human STRING v12 files configured by `string_protein_info`, `string_links_detailed`, `string_protein_aliases` and `string_enrichment_terms`. Download `9606.protein.info.v12.0.txt.gz`, `9606.protein.links.detailed.v12.0.txt.gz`, `9606.protein.aliases.v12.0.txt.gz` and `9606.protein.enrichment.terms.v12.0.txt.gz` from the official [STRING v12 download page](https://version-12-0.string-db.org/cgi/download).
 
 ## Run everything
@@ -40,4 +42,4 @@ python -m exploration.analysis.therapeutic_target_analysis
 python -m exploration.analysis.parkinson_target_analysis
 ```
 
-The bulk-network step requires the complete `<output_root>/data_processing_bulk/` directory. The remaining steps use the checkpoints and datasets configured in `configs/paths.yaml`. Outputs are written below `<output_root>/analysis/`.
+The bulk-network step requires the complete `<output_root>/data_processing_bulk/` directory. Pretraining analyses use `checkpoint_root`; downstream analyses use the selected runs below `<output_root>/downstream_tasks/`. Outputs are written below `<output_root>/analysis/`.
