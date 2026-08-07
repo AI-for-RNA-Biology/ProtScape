@@ -5,6 +5,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
+python -m pretraining.generate_esm2_embeddings
+
 # Main ProtScape configuration.
 python -m pretraining.train_protscape \
     ACM_RandomWalk concat 512 0.4 3 1 attention ESM2 0 1 512 2 0 \

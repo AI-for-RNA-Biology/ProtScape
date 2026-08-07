@@ -37,6 +37,7 @@ als_astrocyte_metadata: /storage/research/dbmr_luisierlab/temp/athomas/outputs_p
 
 cellphonedb_database: /storage/homefs/at25c279/.cpdb/releases/v3.0.0/cellphone.db
 
+protein_sequences: /storage/research/dbmr_luisierlab/temp/athomas/ProtScape_release/data/sequence_embeddings/protein_sequences.csv.gz
 esm2_embeddings: /storage/research/dbmr_luisierlab/database/PINNACLE/data/protein_gene_based_embeddings/gene_protein_embeddings_esm2_650M.plk
 prostt5_embeddings: /storage/research/dbmr_luisierlab/database/PINNACLE/data/protein_gene_based_embeddings/gene_protein_embeddings_prostt5_1024.plk
 pinnacle_paper_embeddings_dir: /storage/research/dbmr_luisierlab/database/PINNACLE/pinnacle_embeds

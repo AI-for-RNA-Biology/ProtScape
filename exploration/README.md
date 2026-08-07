@@ -8,7 +8,7 @@ conda activate protscape
 
 Pretraining evaluation and Parkinson analysis require CUDA. Arial is required for plot rendering.
 
-The STRING analyses use the four human STRING v12 files configured by `string_protein_info`, `string_links_detailed`, `string_protein_aliases` and `string_enrichment_terms`. Download `9606.protein.info.v12.0.txt.gz`, `9606.protein.links.detailed.v12.0.txt.gz`, `9606.protein.aliases.v12.0.txt.gz` and `9606.protein.enrichment.terms.v12.0.txt.gz` from the official [STRING v12 download page](https://version-12-0.string-db.org/cgi/download). Cite the [STRING v12 paper](https://academic.oup.com/nar/article/51/D1/D638/6825349).
+The STRING analyses use the four human STRING v12 files configured by `string_protein_info`, `string_links_detailed`, `string_protein_aliases` and `string_enrichment_terms`. Download `9606.protein.info.v12.0.txt.gz`, `9606.protein.links.detailed.v12.0.txt.gz`, `9606.protein.aliases.v12.0.txt.gz` and `9606.protein.enrichment.terms.v12.0.txt.gz` from the official [STRING v12 download page](https://version-12-0.string-db.org/cgi/download).
 
 ## Run everything
 

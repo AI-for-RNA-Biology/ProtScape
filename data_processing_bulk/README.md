@@ -29,11 +29,11 @@ This pipeline builds the context-specific protein interaction networks, cell-cel
 
 ## Dataset downloads
 
-The processed Tabula Sapiens v1 matrix and metadata are available from [GEO accession GSM6058681](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM6058681) and accompany the [Tabula Sapiens atlas](https://doi.org/10.1126/science.abl4896).
+The processed Tabula Sapiens v1 matrix and metadata are available from [GEO accession GSM6058681](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM6058681).
 
-The neuronal and non-neuronal Human Brain Cell Atlas v1.0 objects are available from the [Human Cell Atlas data portal](https://data.humancellatlas.org/hca-bio-networks/nervous-system/atlases/brain-v1-0) and accompany [Siletti et al.](https://doi.org/10.1126/science.add7046).
+The neuronal and non-neuronal Human Brain Cell Atlas v1.0 objects are available from the [Human Cell Atlas data portal](https://data.humancellatlas.org/hca-bio-networks/nervous-system/atlases/brain-v1-0).
 
-The release already contains the ALS count matrices and context metadata consumed by Step 0. They were derived from the public motor-neuron dataset [GSE152983](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE152983) ([Tyzack et al.](https://doi.org/10.1093/brain/awab078)) and astrocyte dataset [GSE160133](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE160133) ([Ziff et al.](https://doi.org/10.1093/nar/gkab115)). The GEO pages provide the raw sequencing files.
+The release already contains the ALS count matrices and context metadata consumed by Step 0. The corresponding raw sequencing data are available from [GSE152983](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE152983) for motor neurons and [GSE160133](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE160133) for astrocytes.
 
 The CellPhoneDB 3.0.0 database is available from the [CellPhoneDB releases](https://github.com/ventolab/CellphoneDB/releases).
 
