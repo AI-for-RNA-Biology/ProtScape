@@ -31,24 +31,35 @@ def validate_embeddings(path):
             )
 
 
-def embed_sequence(sequence, model, batch_converter, device):
-    chunks = [
-        sequence[start : start + CHUNK_SIZE]
-        for start in range(0, len(sequence), CHUNK_SIZE)
-    ]
-    vectors = []
+def bos_embedding(sequence, model, batch_converter, device):
     with torch.no_grad():
-        for chunk in chunks:
-            _, _, tokens = batch_converter([("protein", chunk)])
-            output = model(
-                tokens.to(device),
-                repr_layers=[MODEL_LAYER],
-                return_contacts=False,
-            )
-            vectors.append(
-                output["representations"][MODEL_LAYER][0, 0].float().cpu().numpy()
-            )
-    embedding = np.mean(vectors, axis=0).astype(np.float32)
+        _, _, tokens = batch_converter([("protein", sequence)])
+        output = model(
+            tokens.to(device),
+            repr_layers=[MODEL_LAYER],
+            return_contacts=False,
+        )
+    return output["representations"][MODEL_LAYER][0, 0].float().cpu().numpy()
+
+
+def embed_sequence(sequence, model, batch_converter, device):
+    try:
+        embedding = bos_embedding(sequence, model, batch_converter, device)
+    except RuntimeError as error:
+        if device.type != "cuda" or "out of memory" not in str(error).lower():
+            raise
+        torch.cuda.empty_cache()
+        chunks = [
+            sequence[start : start + CHUNK_SIZE]
+            for start in range(0, len(sequence), CHUNK_SIZE)
+        ]
+        vectors = [
+            bos_embedding(chunk, model, batch_converter, device)
+            for chunk in chunks
+        ]
+        embedding = np.mean(vectors, axis=0)
+
+    embedding = np.asarray(embedding, dtype=np.float32)
     if embedding.shape != (EMBEDDING_DIM,):
         raise RuntimeError(
             f"{MODEL_NAME} returned shape {embedding.shape}; "
@@ -84,6 +95,9 @@ def main():
     sequences["fasta_seq"] = sequences["fasta_seq"].astype(str).str.strip().str.upper()
     if sequences["fasta_seq"].eq("").any():
         raise ValueError("Protein sequence table contains empty sequences")
+    sequences["seq_length"] = sequences["fasta_seq"].str.len()
+    if not sequences["seq_length"].is_monotonic_increasing:
+        sequences = sequences.sort_values("seq_length").reset_index(drop=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Loading {MODEL_NAME} on {device}")

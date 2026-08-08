@@ -14,10 +14,10 @@ This pipeline builds the context-specific protein interaction networks, cell-cel
 | `hbca_nonneurons_h5ad` | HBCA non-neuronal count matrix |
 | `hbca_gene_metadata` | Frozen HBCA Ensembl-to-HGNC mapping |
 | `als_gene_metadata` | Frozen ALS Ensembl-to-HGNC mapping |
-| `als_motor_neuron_counts` | Released motor-neuron count matrix |
-| `als_motor_neuron_metadata` | Released motor-neuron context metadata |
-| `als_astrocyte_counts` | Released astrocyte count matrix |
-| `als_astrocyte_metadata` | Released astrocyte context metadata |
+| `als_motor_neuron_counts` | Motor-neuron count matrix consumed by Step 0 |
+| `als_motor_neuron_metadata` | Motor-neuron context metadata consumed by Step 0 |
+| `als_astrocyte_counts` | Astrocyte count matrix consumed by Step 0 |
+| `als_astrocyte_metadata` | Astrocyte context metadata consumed by Step 0 |
 | `cell_ontology_obo` | Cell Ontology OBO file |
 | `tissue_ontology_obo` | BRENDA Tissue Ontology OBO file |
 | `celltype_class_mapping` | Broad cell-class annotations |
@@ -33,7 +33,7 @@ The processed Tabula Sapiens v1 matrix and metadata are available from [GEO acce
 
 The neuronal and non-neuronal Human Brain Cell Atlas v1.0 objects are available from the [Human Cell Atlas data portal](https://data.humancellatlas.org/hca-bio-networks/nervous-system/atlases/brain-v1-0).
 
-The release already contains the ALS count matrices and context metadata consumed by Step 0. The corresponding raw sequencing data are available from [GSE152983](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE152983) for motor neurons and [GSE160133](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE160133) for astrocytes.
+The ALS inputs are the count matrices and context metadata consumed directly by Step 0. The corresponding processed and raw sequencing data are available from [GSE152983](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE152983) for motor neurons and [GSE160133](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE160133) for astrocytes.
 
 The CellPhoneDB 3.0.0 database is available from the [CellPhoneDB releases](https://github.com/ventolab/CellphoneDB/releases).
 

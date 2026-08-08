@@ -141,6 +141,9 @@ def main():
     if missing:
         raise KeyError(f"Protein sequence table is missing columns: {sorted(missing)}")
 
+    sequences["seq_length"] = sequences["fasta_seq"].astype(str).str.len()
+    if not sequences["seq_length"].is_monotonic_increasing:
+        sequences = sequences.sort_values("seq_length").reset_index(drop=True)
     ppi_genes = load_ppi_genes(global_ppi_path)
     sequences = sequences[
         sequences["gene_name"].astype(str).isin(ppi_genes)

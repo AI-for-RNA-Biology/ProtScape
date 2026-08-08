@@ -38,6 +38,49 @@ MODULE_AXIS_LABEL_SIZE = 8.5
 MODULE_TICK_LABEL_SIZE = 8.0
 MODULE_TITLE_SIZE = 9.5
 
+CLINICAL_STAGE_ORDER = [
+    "NO_LINKED_CLINICAL_STAGE",
+    "UNKNOWN",
+    "PRECLINICAL",
+    "IND",
+    "EARLY_PHASE_1",
+    "PHASE_1",
+    "PHASE_1_2",
+    "PHASE_2",
+    "PHASE_2_3",
+    "PHASE_3",
+    "PHASE_4",
+    "APPROVAL",
+]
+CLINICAL_STAGE_LABELS = {
+    "NO_LINKED_CLINICAL_STAGE": "No linked clinical stage",
+    "UNKNOWN": "Unknown",
+    "PRECLINICAL": "Preclinical",
+    "IND": "IND",
+    "EARLY_PHASE_1": "Early phase 1",
+    "PHASE_1": "Phase 1",
+    "PHASE_1_2": "Phase 1/2",
+    "PHASE_2": "Phase 2",
+    "PHASE_2_3": "Phase 2/3",
+    "PHASE_3": "Phase 3",
+    "PHASE_4": "Phase 4",
+    "APPROVAL": "Approved",
+}
+CLINICAL_STAGE_COLORS = {
+    "NO_LINKED_CLINICAL_STAGE": "#D9D9D9",
+    "UNKNOWN": "#737373",
+    "PRECLINICAL": "#440154",
+    "IND": "#482878",
+    "EARLY_PHASE_1": "#3E4989",
+    "PHASE_1": "#31688E",
+    "PHASE_1_2": "#26828E",
+    "PHASE_2": "#1F9E89",
+    "PHASE_2_3": "#35B779",
+    "PHASE_3": "#6DCD59",
+    "PHASE_4": "#B4DE2C",
+    "APPROVAL": "#FDE725",
+}
+
 MODULE_COLORS = {
     1: "#4477AA",
     2: "#66CCEE",
@@ -239,6 +282,98 @@ def plot_external_support(source: Path, output: Path) -> None:
     ax.tick_params(axis="y", length=0)
     fig.subplots_adjust(left=0.22, right=0.97, bottom=0.18, top=0.90)
     save_figure(fig, output, "parkinson_candidate_external_support")
+
+
+def plot_candidate_clinical_stages(source: Path, output: Path) -> None:
+    """Plot target-level clinical stages among Parkinson-supported candidates."""
+    summary = pd.read_csv(
+        source / "parkinson_candidate_clinical_stage_summary.csv"
+    )
+    unknown = set(summary["clinical_stage"]) - set(CLINICAL_STAGE_ORDER)
+    if unknown:
+        raise ValueError(
+            "Unrecognized clinical stages in plot data: "
+            + ", ".join(sorted(unknown))
+        )
+
+    model_specs = [
+        ("protscape", "ProtScape"),
+        ("pinnacle", "Pinnacle"),
+    ]
+    present_stages = [
+        stage
+        for stage in CLINICAL_STAGE_ORDER
+        if summary.loc[
+            summary["clinical_stage"].eq(stage), "candidate_count"
+        ].sum()
+        > 0
+    ]
+
+    fig = plt.figure(figsize=figure_size(18.0, 7.5))
+    grid = fig.add_gridspec(1, 3, width_ratios=[1, 1, 0.9], wspace=0.18)
+    for column, (model, model_label) in enumerate(model_specs):
+        ax = fig.add_subplot(grid[0, column])
+        rows = summary[summary["model"].eq(model)].set_index(
+            "clinical_stage"
+        )
+        if rows.empty:
+            raise ValueError(f"Missing clinical-stage summary for {model}")
+        counts = np.array(
+            [
+                int(rows.loc[stage, "candidate_count"])
+                if stage in rows.index
+                else 0
+                for stage in present_stages
+            ]
+        )
+        total = int(rows["ot_supported_candidates"].iloc[0])
+        if counts.sum() != total:
+            raise ValueError(
+                f"Clinical-stage counts do not sum to the {model} cohort"
+            )
+        wedges, _, percentage_labels = ax.pie(
+            counts,
+            colors=[CLINICAL_STAGE_COLORS[stage] for stage in present_stages],
+            startangle=90,
+            counterclock=False,
+            autopct=lambda value: f"{value:.0f}%" if value >= 5 else "",
+            pctdistance=0.68,
+            wedgeprops={"edgecolor": "white", "linewidth": 0.8},
+            textprops={"fontsize": TICK_LABEL_SIZE, "weight": "bold"},
+        )
+        for wedge, label in zip(wedges, percentage_labels):
+            red, green, blue, _ = wedge.get_facecolor()
+            luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+            label.set_color("#222222" if luminance > 0.58 else "white")
+        ax.set_title(
+            f"{model_label}\n(n={total})",
+            fontsize=PANEL_TITLE_SIZE,
+            pad=5,
+        )
+        ax.set_aspect("equal")
+
+    legend_ax = fig.add_subplot(grid[0, 2])
+    handles = [
+        Patch(
+            facecolor=CLINICAL_STAGE_COLORS[stage],
+            edgecolor="white",
+            label=CLINICAL_STAGE_LABELS[stage],
+        )
+        for stage in present_stages
+    ]
+    legend_ax.legend(
+        handles=handles,
+        title="Maximum Parkinson clinical stage",
+        loc="center left",
+        fontsize=TICK_LABEL_SIZE,
+        title_fontsize=PANEL_TITLE_SIZE,
+        frameon=False,
+        handlelength=1.2,
+        handleheight=1.0,
+    )
+    legend_ax.set_axis_off()
+    fig.subplots_adjust(left=0.02, right=0.98, bottom=0.04, top=0.92)
+    save_figure(fig, output, "parkinson_candidate_clinical_stages")
 
 
 def plot_synaptic_completion(source: Path, output: Path) -> None:
@@ -572,6 +707,7 @@ def plot_all(source: Path, output: Path) -> None:
     with matplotlib.rc_context(PLOT_RC):
         plot_candidate_recovery(source, output)
         plot_external_support(source, output)
+        plot_candidate_clinical_stages(source, output)
         plot_synaptic_completion(source, output)
         plot_leiden_network(source, output)
         plot_leiden_legend(output)

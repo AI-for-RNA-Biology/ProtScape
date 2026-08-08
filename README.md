@@ -33,7 +33,12 @@ conda env create -f environment_cellphonedb.yml
 
 Set input and output paths in [`configs/paths.yaml`](configs/paths.yaml). Large datasets, checkpoints and generated outputs are stored outside the repository.
 
-Requirements for rebuilding the networks are documented in [`data_processing_bulk/README.md`](data_processing_bulk/README.md). Links to the processed datasets and released checkpoints will be added here when the accompanying archive is public.
+Requirements for rebuilding the networks are documented in [`data_processing_bulk/README.md`](data_processing_bulk/README.md). Links to the processed datasets and released checkpoints will be added here when the accompanying archive is public. After downloading the archive, extract its graph bundle with:
+
+```bash
+unzip /path/to/ProtScape_release/data/networks_bulk.zip \
+    -d /path/to/ProtScape_release/data
+```
 
 ## Usage
 
@@ -48,8 +53,9 @@ bash data_processing_bulk/run_pipeline.sh all
 conda activate protscape
 bash scripts/run_pretraining.sh
 
-# Generate embeddings from a released checkpoint
-python -m pretraining.inference /path/to/best_model_state_dict.pt
+# Generate embeddings from the released main checkpoint
+python -m pretraining.inference \
+    /path/to/ProtScape_release/models/pretraining/protscape_main_state_dict.pt
 
 # Train the validation-selected downstream configurations
 python -m downstream_tasks.run_selected corum
