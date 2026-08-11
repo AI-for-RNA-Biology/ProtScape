@@ -39,3 +39,10 @@ string_links_detailed: /storage/research/dbmr_luisierlab/temp/athomas/.cache/str
 string_protein_aliases: /storage/research/dbmr_luisierlab/temp/athomas/outputs/reference_cache/string_v12_human/9606.protein.aliases.v12.0.txt.gz
 string_enrichment_terms: /storage/research/dbmr_luisierlab/temp/athomas/outputs/reference_cache/string_v12_human/9606.protein.enrichment.terms.v12.0.txt.gz
 parkinson_external_support: /storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/input_data/parkinson_external_support.csv
+
+# ALS_rewiring analysis (exploration/analysis/ALS_rewiring) - PPI-module
+als_rewiring_data_root: /storage/research/dbmr_luisierlab/projects/RNA_interactome
+als_rewiring_go_terms_csv: /storage/research/dbmr_luisierlab/group/genomics/annotation/GO/human/human_GO_terms.csv
+als_rewiring_cyto_gene_expression_csv: /storage/research/dbmr_luisierlab/projects/ALS_Comp/MN_diff/results/genes_preprocessing/df_genes_filtered_normalized.csv
+als_rewiring_raw_matrix_csv: /storage/research/dbmr_luisierlab/temp/athomas/outputs/exploration/ALS_motor_neuron_ppi_stringdb_s2gae_matrix.csv
+als_rewiring_neighborhood_edges_csv: /storage/research/dbmr_luisierlab/temp/athomas/outputs/exploration/ALS_merging_analysis/ALS2CL_bulk_union_neighborhood/ALS2CL_neighborhood_edges.csv

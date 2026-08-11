@@ -40,6 +40,9 @@ python -m exploration.analysis.therapeutic_target_analysis
 
 # Parkinson target discovery, Leiden clustering and enrichment
 python -m exploration.analysis.parkinson_target_analysis
+
+# ALS motor-neuron PPI-module rewiring (CTRL vs. VCP, D22 vs. D35)
+python -m exploration.analysis.ALS_rewiring_analysis
 ```
 
 The bulk-network step requires the complete `<output_root>/data_processing_bulk/` directory. Pretraining analyses use `checkpoint_root`; downstream analyses use the selected runs below `<output_root>/downstream_tasks/`. Outputs are written below `<output_root>/analysis/`.

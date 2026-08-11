@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+## Generates config.py's D35_CSV (stage 01's input) from the full, pre-subsetting
+## S2GAE/STRING matrix (`als_rewiring_raw_matrix_csv` in configs/paths.yaml).
+##
+## Subsets a large CSV to:
+##   - day 35 only (cyto & nuc), for all two genotypes (CTRL, VCP)
+##     - drops d0/d3/d7/d14/d22 entirely, keeping just the 4 d35 score cols
+##   - keeps a row only if, for EACH of the two genotypes independently,
+##     AT LEAST ONE of its two d35 values (cyto OR nuc) is non-NaN:
+##       CTRL:  (cyto_d35 present OR nuc_d35 present)   AND
+##       VCP: (cyto_d35 present OR nuc_d35 present)
+##     i.e. cyto/nuc are combined with OR *within* a genotype, but both
+##     genotypes (CTRL + VCP) are combined with AND *between* them -
+##     every genotype must have at least one of its two compartments present.
+## Streams line-by-line with awk -> constant memory, no matter the file size.
+##
+## Idempotent: if output_csv already exists, does nothing (exit 0) rather than
+## re-streaming the ~GB-scale source file - safe to run unconditionally at
+## the start of every pipeline invocation (see ALS_rewiring_analysis.py's
+## stage list). Delete output_csv yourself to force regeneration.
+##
+## Usage (from anywhere):
+##   bash 0_subset_d35.sh
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+PATHS_YAML="${REPO_ROOT}/configs/paths.yaml"
+
+get_path() {
+    python3 -c "import yaml; print(yaml.safe_load(open('${PATHS_YAML}'))['$1'])"
+}
+
+# Paths come from configs/paths.yaml, not hardcoded here, so this always
+# matches what config.py itself reads (als_rewiring_raw_matrix_csv,
+# als_rewiring_data_root -> D35_CSV).
+input_csv="$(get_path als_rewiring_raw_matrix_csv)"
+output_csv="$(get_path als_rewiring_data_root)/subset_d35_pergenotype_presentp.csv"
+
+if [ -f "$output_csv" ]; then
+    echo "Already exists, skipping: $output_csv"
+    exit 0
+fi
+
+awk -F',' '
+function is_missing(v) {
+    return (v == "" || v == "NA" || v == "NaN" || v == "nan")
+}
+
+BEGIN { OFS="," }
+NR==1 {
+    for (i=1;i<=NF;i++) col[$i]=i
+
+    # metadata columns kept as-is, in this order
+    n_meta = split("protA protB present_in_ppi stringdb_physical_score stringdb_combined_score", meta, " ")
+
+    # day-35 columns kept in the OUTPUT, all two genotypes, in this order
+    n_out = split("s2gae_score_CTRL_cyto_d35 s2gae_score_CTRL_nuc_d35 s2gae_score_VCP_cyto_d35 s2gae_score_VCP_nuc_d35", out_cols, " ")
+
+    # genotype groups for the presence check (cyto/nuc = OR within a group,
+    # the two groups themselves = AND)
+    n_ctrl  = split("s2gae_score_CTRL_cyto_d35 s2gae_score_CTRL_nuc_d35",   ctrl_cols,  " ")
+    n_vcp = split("s2gae_score_VCP_cyto_d35 s2gae_score_VCP_nuc_d35", vcp_cols, " ")
+
+
+    # NOTE: use numeric for-loops (1..n), never "for (k in arr)" here -
+    # awk does not guarantee insertion order for "for...in", which silently
+    # scrambled column order in an earlier version of this script.
+    for (k=1;k<=n_meta;k++) {
+        name = meta[k]
+        if (!(name in col)) { print "Missing expected column: " name > "/dev/stderr"; exit 1 }
+        meta_idx[k] = col[name]
+    }
+    for (k=1;k<=n_out;k++) {
+        name = out_cols[k]
+        if (!(name in col)) { print "Missing expected column: " name > "/dev/stderr"; exit 1 }
+        out_idx[k] = col[name]
+    }
+    for (k=1;k<=n_ctrl;k++)  { if (!(ctrl_cols[k]  in col)) { print "Missing expected column: " ctrl_cols[k]  > "/dev/stderr"; exit 1 }; ctrl_idx[k]  = col[ctrl_cols[k]] }
+    for (k=1;k<=n_vcp;k++) { if (!(vcp_cols[k] in col)) { print "Missing expected column: " vcp_cols[k] > "/dev/stderr"; exit 1 }; vcp_idx[k] = col[vcp_cols[k]] }
+
+    # print header for the reduced output
+    hdr = meta[1]
+    for (k=2;k<=n_meta;k++) hdr = hdr OFS meta[k]
+    for (k=1;k<=n_out;k++) hdr = hdr OFS out_cols[k]
+    print hdr
+    next
+}
+{
+    ctrl_present = 0
+    for (k=1;k<=n_ctrl;k++)  { if (!is_missing($(ctrl_idx[k])))  { ctrl_present = 1;  break } }
+
+    vcp_present = 0
+    for (k=1;k<=n_vcp;k++) { if (!is_missing($(vcp_idx[k]))) { vcp_present = 1; break } }
+
+    keep = (ctrl_present && vcp_present)
+
+    if (keep) {
+        line = $(meta_idx[1])
+        for (k=2;k<=n_meta;k++) line = line OFS $(meta_idx[k])
+        for (k=1;k<=n_out;k++) line = line OFS $(out_idx[k])
+        print line
+    }
+}
+' "$input_csv" > "$output_csv"
+
+echo "Done. Rows kept: $(($(wc -l < "$output_csv") - 1))"

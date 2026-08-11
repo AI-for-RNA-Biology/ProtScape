@@ -25,6 +25,7 @@ dependencies:
   - tqdm
   - joblib
   - requests
+  - statsmodels
   - pip
   - wandb=0.13.4
   - protobuf=3.20.3
