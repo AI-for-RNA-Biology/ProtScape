@@ -1,48 +1,51 @@
-data_root: /storage/research/dbmr_luisierlab/database/PINNACLE/data
-networks_bulk: /storage/research/dbmr_luisierlab/database/PINNACLE/data/networks_bulk
-global_ppi: /storage/research/dbmr_luisierlab/database/PINNACLE/networks/global_ppi_edgelist.txt
-inference_root: /storage/research/dbmr_luisierlab/database/PINNACLE/inference
-output_root: /storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo
-checkpoint_root: /storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/release_checkpoints
+data_root: ../ProtScape_release/data
+networks_bulk: ../ProtScape_release/data/networks_bulk
+global_ppi: ../ProtScape_release/data/networks_bulk/global_ppi_edgelist.txt
+inference_root: ../ProtScape_release/embeddings
+output_root: outputs
+checkpoint_root: ../ProtScape_release/models/pretraining
 
-tabula_h5ad: /storage/research/dbmr_luisierlab/database/Tabula_Sapiens_v1/GSM6058681_TabulaSapiens.h5ad
-tabula_metadata: /storage/research/dbmr_luisierlab/database/Tabula_Sapiens_v1/GSM6058681_TabulaSapiens_metadata.csv
-hbca_neurons_h5ad: /storage/research/dbmr_luisierlab/database/HBCA_v1/HBCA_v1_all_neurons.h5ad
-hbca_nonneurons_h5ad: /storage/research/dbmr_luisierlab/database/HBCA_v1/HBCA_v1_all_non_neuronal.h5ad
-hbca_gene_metadata: /storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/input_data/hbca_gene_metadata.csv
-als_gene_metadata: /storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/input_data/als_gene_metadata.csv
+tabula_h5ad: data/raw/GSM6058681_TabulaSapiens.h5ad
+tabula_metadata: data/raw/GSM6058681_TabulaSapiens_metadata.csv
+hbca_neurons_h5ad: data/raw/HBCA_v1_all_neurons.h5ad
+hbca_nonneurons_h5ad: data/raw/HBCA_v1_all_non_neuronal.h5ad
+hbca_gene_metadata: data/raw/hbca_gene_metadata.csv
+als_gene_metadata: data/raw/als_gene_metadata.csv
 
-cell_ontology_obo: /storage/research/dbmr_luisierlab/database/PINNACLE/ontologies/cl-full.obo
-tissue_ontology_obo: /storage/research/dbmr_luisierlab/database/PINNACLE/ontologies/bto.obo
-celltype_class_mapping: /storage/research/dbmr_luisierlab/database/PINNACLE/data/networks_bulk/celltype_class_mapping.csv
+cell_ontology_obo: data/reference_data/cl-full.obo
+tissue_ontology_obo: data/reference_data/bto.obo
+celltype_class_mapping: ../ProtScape_release/data/networks_bulk/celltype_class_mapping.csv
 
-als_motor_neuron_counts: /storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/input_data/als_motor_neuron_counts.csv
-als_motor_neuron_metadata: /storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/input_data/als_motor_neuron_metadata.csv
-als_astrocyte_counts: /storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/input_data/als_astrocyte_counts.csv
-als_astrocyte_metadata: /storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/input_data/als_astrocyte_metadata.csv
+als_motor_neuron_counts: data/raw/als_motor_neuron_counts.csv
+als_motor_neuron_metadata: data/raw/als_motor_neuron_metadata.csv
+als_astrocyte_counts: data/raw/als_astrocyte_counts.csv
+als_astrocyte_metadata: data/raw/als_astrocyte_metadata.csv
 
-cellphonedb_database: /storage/homefs/at25c279/.cpdb/releases/v3.0.0/cellphone.db
+cellphonedb_database: data/reference_data/cellphonedb_v3.0.0/cellphone.db
 
-protein_sequences: /storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/input_data/protein_sequences.csv.gz
+protein_sequences: data/raw/protein_sequences.csv.gz
 # Legacy filename; this file contains esm2_t36_3B_UR50D layer-33 features (2,560 dimensions).
-esm2_embeddings: /storage/research/dbmr_luisierlab/database/PINNACLE/data/protein_gene_based_embeddings/gene_protein_embeddings_esm2_650M.plk
-prostt5_embeddings: /storage/research/dbmr_luisierlab/database/PINNACLE/data/protein_gene_based_embeddings/gene_protein_embeddings_prostt5_1024.plk
-pinnacle_paper_embeddings_dir: /storage/research/dbmr_luisierlab/database/PINNACLE/pinnacle_embeds
-corum_raw_json: /storage/research/dbmr_luisierlab/database/PINNACLE/data/downstream_tasks/corum_dataset/corum_humanComplexes.json
-corum_dataset_dir: /storage/research/dbmr_luisierlab/database/PINNACLE/data/downstream_tasks/corum_dataset
-therapeutic_target_drugbank_targets: /storage/research/dbmr_luisierlab/database/PINNACLE/data/downstream_tasks/therapeutic_target_dataset/all_approved_oct2022.csv
-therapeutic_target_evidence_dir: /storage/research/dbmr_luisierlab/database/PINNACLE/data/downstream_tasks/therapeutic_target_dataset/evidence_data/ot_24_03_evidence_chembl
-therapeutic_target_dataset_dir: /storage/research/dbmr_luisierlab/database/PINNACLE/data/downstream_tasks/therapeutic_target_dataset
+esm2_embeddings: ../ProtScape_release/data/sequence_embeddings/gene_protein_embeddings_esm2_3B_layer33.plk
+prostt5_embeddings: ../ProtScape_release/data/sequence_embeddings/gene_protein_embeddings_prostt5_1024.plk
+pinnacle_paper_embeddings_dir: data/reference_data/pinnacle_paper_embeddings
+corum_raw_json: data/reference_data/corum_4.1/corum_humanComplexes.json
+corum_dataset_dir: ../ProtScape_release/data/downstream_tasks/corum_dataset
+therapeutic_target_drugbank_targets: ../ProtScape_release/data/downstream_tasks/therapeutic_target_dataset/drugbank_approved_human_target_symbols_oct2022.csv
+therapeutic_target_evidence_dir: data/reference_data/opentargets_24_03/evidence/sourceId=chembl
+therapeutic_target_ot_diseases_dir: data/reference_data/opentargets_24_03/diseases
+therapeutic_target_ot_targets_dir: data/reference_data/opentargets_24_03/targets
+therapeutic_target_ot_associations_dir: data/reference_data/opentargets_24_03/associationByDatatypeIndirect
+therapeutic_target_dataset_dir: ../ProtScape_release/data/downstream_tasks/therapeutic_target_dataset
 
-string_protein_info: /storage/research/dbmr_luisierlab/temp/athomas/.cache/stringdb/9606.protein.info.v12.0.txt.gz
-string_links_detailed: /storage/research/dbmr_luisierlab/temp/athomas/.cache/stringdb/9606.protein.links.detailed.v12.0.txt.gz
-string_protein_aliases: /storage/research/dbmr_luisierlab/temp/athomas/outputs/reference_cache/string_v12_human/9606.protein.aliases.v12.0.txt.gz
-string_enrichment_terms: /storage/research/dbmr_luisierlab/temp/athomas/outputs/reference_cache/string_v12_human/9606.protein.enrichment.terms.v12.0.txt.gz
-parkinson_external_support: /storage/research/dbmr_luisierlab/temp/athomas/outputs_protscape_repo/input_data/parkinson_external_support.csv
+string_protein_info: data/reference_data/string_v12_human/9606.protein.info.v12.0.txt.gz
+string_links_detailed: data/reference_data/string_v12_human/9606.protein.links.detailed.v12.0.txt.gz
+string_protein_aliases: data/reference_data/string_v12_human/9606.protein.aliases.v12.0.txt.gz
+string_enrichment_terms: data/reference_data/string_v12_human/9606.protein.enrichment.terms.v12.0.txt.gz
+parkinson_external_support: data/raw/parkinson_external_support.csv
 
 # ALS_rewiring analysis (exploration/analysis/ALS_rewiring) - PPI-module
-als_rewiring_data_root: /storage/research/dbmr_luisierlab/projects/RNA_interactome
-als_rewiring_go_terms_csv: /storage/research/dbmr_luisierlab/group/genomics/annotation/GO/human/human_GO_terms.csv
-als_rewiring_cyto_gene_expression_csv: /storage/research/dbmr_luisierlab/projects/ALS_Comp/MN_diff/results/genes_preprocessing/df_genes_filtered_normalized.csv
-als_rewiring_raw_matrix_csv: /storage/research/dbmr_luisierlab/temp/athomas/outputs/exploration/ALS_motor_neuron_ppi_stringdb_s2gae_matrix.csv
-als_rewiring_neighborhood_edges_csv: /storage/research/dbmr_luisierlab/temp/athomas/outputs/exploration/ALS_merging_analysis/ALS2CL_bulk_union_neighborhood/ALS2CL_neighborhood_edges.csv
+als_rewiring_data_root: data/raw/als_rewiring
+als_rewiring_go_terms_csv: data/reference_data/human_GO_terms.csv
+als_rewiring_cyto_gene_expression_csv: data/raw/als_rewiring/df_genes_filtered_normalized.csv
+als_rewiring_raw_matrix_csv: data/raw/als_rewiring/ALS_motor_neuron_ppi_stringdb_s2gae_matrix.csv
+als_rewiring_neighborhood_edges_csv: data/raw/als_rewiring/ALS2CL_neighborhood_edges.csv

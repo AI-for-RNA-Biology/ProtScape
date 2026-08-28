@@ -4,7 +4,7 @@
 
 **Authors:** Alois Thomas, Lisa Fournier, Vincent Jung, Pascal Frossard, Rickie Patani, Raphaëlle Luisier and Cédric Vincent-Cuaz<br>
 **Correspondence:** [Cédric Vincent-Cuaz](mailto:cedric.vincent-cuaz@unibe.ch)<br>
-**Paper:** preprint forthcoming · **Data and pretrained models:** release forthcoming
+**Paper:** preprint forthcoming · **Data and pretrained models:** companion release prepared; public link forthcoming
 
 [![Overview of ProtScape](assets/protscape_overview.png)](assets/protscape_overview.pdf)
 
@@ -31,9 +31,9 @@ conda env create -f environment_cellphonedb.yml
 
 ## Data and configuration
 
-Set input and output paths in [`configs/paths.yaml`](configs/paths.yaml). Large datasets, checkpoints and generated outputs are stored outside the repository.
+Set input and output paths in [`configs/paths.yaml`](configs/paths.yaml). The committed defaults expect the extracted companion archive in a sibling directory named `ProtScape_release` and write new results below `outputs/`. Edit the paths if the archive is stored elsewhere. Inputs needed only for rebuilding raw networks or labels use `data/raw/` and `data/reference_data/` placeholders.
 
-Requirements for rebuilding the networks are documented in [`data_processing_bulk/README.md`](data_processing_bulk/README.md). Links to the processed datasets and released checkpoints will be added here when the accompanying archive is public. After downloading the archive, extract its graph bundle with:
+Requirements for rebuilding the networks are documented in [`data_processing_bulk/README.md`](data_processing_bulk/README.md). The companion archive contains the exact processed networks, ESM-2 and ProstT5 protein vectors, contextual embedding exports, pretraining checkpoints, and CORUM/therapeutic-target labels used in the paper. The public archive link will be added here after deposition. After downloading it, extract its graph bundle with:
 
 ```bash
 unzip /path/to/ProtScape_release/data/networks_bulk.zip \

@@ -18,6 +18,8 @@ The CORUM and therapeutic-target shell scripts generate the configured ESM-2 and
 
 `corum_dataset_dir` must contain `corum_memberships_filtered.csv`; `therapeutic_target_dataset_dir` must contain the 15 `therapeutic_target_<DISEASE_ID>.csv` tables.
 
+The companion release includes these exact paper label tables. Use them when reproducing the reported downstream experiments.
+
 ## Rebuilding the labels
 
 To rebuild the processed labels, set:
@@ -26,7 +28,10 @@ To rebuild the processed labels, set:
 |---|---|
 | `corum_raw_json` | Frozen `corum_humanComplexes.json` snapshot from [CORUM](https://mips.helmholtz-muenchen.de/corum/download) |
 | `therapeutic_target_evidence_dir` | [Open Targets Platform 24.03 ChEMBL evidence](https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/24.03/output/etl/json/evidence/sourceId=chembl/) |
-| `therapeutic_target_drugbank_targets` | Frozen approved-drug target table, `all_approved_oct2022.csv`, from [DrugBank](https://go.drugbank.com/) |
+| `therapeutic_target_ot_diseases_dir` | Open Targets 24.03 [`diseases`](https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/24.03/output/etl/parquet/diseases/) |
+| `therapeutic_target_ot_targets_dir` | Open Targets 24.03 [`targets`](https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/24.03/output/etl/parquet/targets/) |
+| `therapeutic_target_ot_associations_dir` | Open Targets 24.03 [`associationByDatatypeIndirect`](https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/24.03/output/etl/parquet/associationByDatatypeIndirect/) |
+| `therapeutic_target_drugbank_targets` | The release's minimal October 2022 approved-human target-symbol table, or the corresponding authenticated [DrugBank](https://go.drugbank.com/) export |
 | `global_ppi` | The same two-column HGNC-symbol interactome used for pretraining |
 
 After setting these paths, rebuild both datasets from the repository root:
@@ -37,6 +42,10 @@ python -m downstream_tasks.data_processing.therapeutic_target_processing
 ```
 
 By default, the rebuilt labels are written below `<output_root>/downstream_tasks/data/`. Update `corum_dataset_dir` and `therapeutic_target_dataset_dir` to those generated directories before training.
+
+The therapeutic-target builder performs no live API calls. It reads the frozen Open Targets 24.03 disease hierarchy, target symbols and indirect associations, and maps ChEMBL evidence through the same release. Parquet and JSON archives are both supported; Parquet is substantially smaller.
+
+The fully static 24.03 reconstruction is not identical to the historical paper benchmark because the original negative labels were generated in several batches using the then-live Open Targets association API. The current API no longer resolves 11 of the 15 historical identifiers. Do not overwrite the released paper-label CSVs when reproducing the paper; write static reconstruction audits to a separate `--output-dir`.
 
 ## Training
 
