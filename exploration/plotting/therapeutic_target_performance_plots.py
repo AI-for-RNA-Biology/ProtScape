@@ -420,7 +420,8 @@ def plot_loss_metric(
             zorder=5,
         )
 
-    ax.set_ylim(40.0, 80.0)
+    y_upper = 82.0 if metric == "f1" else 80.0
+    ax.set_ylim(40.0, y_upper)
     ax.set_yticks(np.arange(40.0, 80.1, 10.0))
     metric_label = "macro F1" if metric == "f1" else metric.upper()
     ax.set_ylabel(
