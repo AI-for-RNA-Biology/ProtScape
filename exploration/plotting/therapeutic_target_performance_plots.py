@@ -420,11 +420,8 @@ def plot_loss_metric(
             zorder=5,
         )
 
-    upper_values = sub["score_percent"] + sub["sem_percent"].fillna(0.0)
-    y_top = max(80.0, np.ceil((float(upper_values.max()) + 1.0) / 5.0) * 5.0)
-    y_top = min(100.0, y_top)
-    ax.set_ylim(0.0, y_top)
-    ax.set_yticks(np.arange(0.0, y_top + 0.1, 20.0))
+    ax.set_ylim(40.0, 80.0)
+    ax.set_yticks(np.arange(40.0, 80.1, 10.0))
     metric_label = "macro F1" if metric == "f1" else metric.upper()
     ax.set_ylabel(
         f"Mean {metric_label} across diseases (%)",
