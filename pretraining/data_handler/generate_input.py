@@ -437,7 +437,8 @@ def read_data(
     split_mode='context',
     count_edge_path=None,
     weighted_ppi_loss=False,
-    defer_ppi_features=False):
+    defer_ppi_features=False,
+    seed=0):
     """Load the global PPI, context-specific PPIs, and metagraph.
 
     ``ppi_feat_dir`` may provide pretrained protein features; otherwise random
@@ -456,6 +457,8 @@ def read_data(
     
     # Feature Matrix for All Proteins
     removed_genes = []
+    feat_mat_mean = None
+    feat_mat_std = None
     
     if ppi_feat_dir is None:
         print('set random features as initial protein node features')
@@ -503,7 +506,8 @@ def read_data(
         G, dataset_mode=dataset_mode,
         split_mode=split_mode,
         count_edge_path=count_edge_path,
-        weighted_ppi_loss=weighted_ppi_loss)
+        weighted_ppi_loss=weighted_ppi_loss,
+        seed=seed)
     print(f"Number of PPI layers: orig = {len(orig_ppi_layers)} / ppi_layers = {len(ppi_layers)} / train = {len(ppi_train)}/ val = {len(ppi_val)} / test = {len(ppi_test)}")
     
     # remove genes with missing embeddings from global ppi
@@ -615,6 +619,10 @@ def read_data(
 
     if defer_ppi_features:
         mg_data.global_protein_features = feat_mat
+        mg_data.global_protein_names = list(G.nodes())
+        if feat_mat_mean is not None:
+            mg_data.global_feature_mean = feat_mat_mean
+            mg_data.global_feature_std = feat_mat_std
         
             
     #  Set up edge attr dict

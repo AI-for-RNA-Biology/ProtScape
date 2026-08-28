@@ -1,0 +1,47 @@
+selection_metric: global_val_ap
+
+defaults:
+  experiment_role: sweep
+  hidden_dim: 512
+  num_layers: 3
+  dropout: 0.4
+  decode_channels: 512
+  decoder_layers: 2
+  decoder_dropout: 0.0
+  mask_ratio: 0.5
+  mask_type: dm
+  k_negatives: 1
+  epochs: 300
+  lr: 0.01
+  seed: 0
+  split_seed: 0
+  wandb_entity: cedricvincentcuaz
+  wandb_project: pinnacle
+  wandb_group: protscape_global_ppi_baseline
+
+runs:
+  - name: global_s2gae_dm_h512_l3_d04
+  - name: global_s2gae_dm_h128_l3_d04
+    hidden_dim: 128
+  - name: global_s2gae_dm_h256_l3_d04
+    hidden_dim: 256
+  - name: global_s2gae_dm_h512_l4_d04
+    num_layers: 4
+  - name: global_s2gae_dm_h512_l5_d04
+    num_layers: 5
+  - name: global_s2gae_dm_h512_l3_d00
+    dropout: 0.0
+  - name: global_s2gae_dm_h512_l3_d01
+    dropout: 0.1
+  - name: global_s2gae_dm_h512_l3_d02
+    dropout: 0.2
+  - name: global_s2gae_dm_h512_l3_d03
+    dropout: 0.3
+  - name: global_s2gae_dm_h512_l3_d05
+    dropout: 0.5
+  - name: global_s2gae_um_h512_l3_d04_seed0
+    mask_type: um
+    experiment_role: sensitivity
+  - name: global_s2gae_dm_h512_l3_d04_seed1
+    seed: 1
+    experiment_role: sensitivity
