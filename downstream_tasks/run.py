@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 
 import argparse
+import hashlib
+import json
+import os
 import sys
 from pathlib import Path
 from typing import List, Optional, Set, Tuple
@@ -9,6 +12,12 @@ import numpy as np
 import torch
 
 from .config import DEFAULT_OUTPUT_ROOT, get_hc_embedding_paths, load_config
+from .data.global_split import (
+    ContextPresence,
+    load_context_presence,
+    restrict_global_probe_universe,
+    split_fingerprint,
+)
 from .data.loaders import EmbeddingLoader, load_pinnacle_paper_gene_universe
 from .data.task_loaders import get_task_loader
 from .models.registry import MODEL_VARIANTS, parse_model_argument
@@ -18,6 +27,120 @@ from .utils.io_utils import save_results_csv, save_task_results, setup_output_di
 
 
 CANONICAL_PDL_IMPLEMENTATION = "canonical"
+GLOBAL_LR_MODEL_KEYS = frozenset(
+    {"lr_ext_embed", "lr_global", "lr_global_ext_embed"}
+)
+EXPECTED_CELL_PPI_CONTEXTS = 207
+
+
+def _reset_random_seed(seed: int) -> None:
+    """Restart every model variant from the configured random seed."""
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_task_dataset_provenance(task: str, task_csv: Path) -> dict:
+    """Load optional frozen-label metadata adjacent to a TT label table."""
+    if not task.startswith("therapeutic_target_"):
+        return {}
+    manifest_path = task_csv.parent / "therapeutic_target_manifest.json"
+    if not manifest_path.is_file():
+        return {}
+    with manifest_path.open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Invalid therapeutic-target manifest: {manifest_path}")
+    required = {
+        "format_version",
+        "dataset",
+        "reconstruction",
+        "open_targets_release",
+        "association_scope",
+    }
+    missing = sorted(required.difference(payload))
+    if missing:
+        raise ValueError(
+            f"Therapeutic-target manifest is missing {', '.join(missing)}: "
+            f"{manifest_path}"
+        )
+    if payload["dataset"] != "therapeutic_target":
+        raise ValueError(f"Unexpected dataset in {manifest_path}: {payload['dataset']}")
+    return {
+        "manifest_path": str(manifest_path.resolve()),
+        "manifest_sha256": _sha256_file(manifest_path),
+        "reconstruction": str(payload["reconstruction"]),
+        "open_targets_release": str(payload["open_targets_release"]),
+        "association_scope": str(payload["association_scope"]),
+    }
+
+
+def _load_global_embedding_provenance(
+    inference_path: Path,
+    embedding_path: Path,
+) -> dict:
+    """Bind downstream results to the exact frozen global embedding export."""
+    manifest_path = inference_path / "manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"Global embedding manifest not found: {manifest_path}")
+    with manifest_path.open(encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    if not isinstance(manifest, dict):
+        raise ValueError(f"Invalid global embedding manifest: {manifest_path}")
+
+    required = {
+        "format_version",
+        "model_type",
+        "embedding_scope",
+        "embedding_topology",
+        "representation",
+        "embedding_sha256",
+        "checkpoint_sha256",
+        "training_git_commit",
+        "export_git_commit",
+        "ppi_test_compatible",
+    }
+    missing = sorted(required.difference(manifest))
+    if missing:
+        raise ValueError(
+            f"Global embedding manifest is missing {', '.join(missing)}: "
+            f"{manifest_path}"
+        )
+    expected = {
+        "model_type": "global_s2gae",
+        "embedding_scope": "global",
+        "embedding_topology": "full_reference",
+        "representation": "encoder_jk_concat",
+        "ppi_test_compatible": False,
+    }
+    mismatched = [
+        key for key, value in expected.items() if manifest.get(key) != value
+    ]
+    if mismatched:
+        raise ValueError(
+            "Unexpected global embedding provenance: " + ", ".join(mismatched)
+        )
+
+    return {
+        "manifest_path": str(manifest_path.resolve()),
+        "manifest_sha256": _sha256_file(manifest_path),
+        "embedding_path": str(embedding_path.resolve()),
+        "embedding_sha256": str(manifest["embedding_sha256"]),
+        "checkpoint_sha256": str(manifest["checkpoint_sha256"]),
+        "training_git_commit": str(manifest["training_git_commit"]),
+        "export_git_commit": str(manifest["export_git_commit"]),
+        "embedding_topology": str(manifest["embedding_topology"]),
+        "representation": str(manifest["representation"]),
+    }
 
 
 def _fmt_hp_value(value):
@@ -85,6 +208,36 @@ def parse_args():
         "--cell-embedding-file",
         default="cell_embeddings.pt",
         help="Cell representation file within the inference directory.",
+    )
+    parser.add_argument(
+        "--global-inference",
+        type=Path,
+        default=None,
+        help=(
+            "Global S2GAE export directory, or its protein_embeddings.pt file. "
+            "Enables the shared context-free LR protocol."
+        ),
+    )
+    parser.add_argument(
+        "--esm2-embeddings",
+        type=Path,
+        default=None,
+        help="Explicit ESM2 embedding pickle used by all global LR comparisons.",
+    )
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=None,
+        help="Downstream output root override (does not modify configs/paths.yaml).",
+    )
+    parser.add_argument(
+        "--context-ppi-edgelists",
+        type=Path,
+        default=None,
+        help=(
+            "Directory containing the 207 released Cell-PPI .txt edgelists. "
+            "Protein presence is used only to define and stratify shared folds."
+        ),
     )
     parser.add_argument(
         "--output-model-key",
@@ -195,6 +348,132 @@ def _build_shared_split(
     return shared_genes, Y_shared, split_plan
 
 
+def _resolve_global_embedding_path(path: Path) -> Tuple[Path, Path]:
+    """Resolve a global export file and its containing inference directory."""
+    path = Path(path).expanduser()
+    if path.is_dir():
+        embedding_path = path / "protein_embeddings.pt"
+        inference_path = path
+    elif path.is_file():
+        embedding_path = path
+        inference_path = path.parent
+    else:
+        raise FileNotFoundError(f"Global inference path not found: {path}")
+    if not embedding_path.is_file():
+        raise FileNotFoundError(
+            f"Global protein embedding export not found: {embedding_path}"
+        )
+    return embedding_path, inference_path
+
+
+def _build_global_shared_split(
+    genes: List[str],
+    Y: np.ndarray,
+    embedding_loader: EmbeddingLoader,
+    context_presence: ContextPresence,
+    seed: int,
+    n_splits: int,
+) -> Tuple[List[str], np.ndarray, SplitPlan, List[List[str]]]:
+    """Build one split over task/global/ESM2/Cell-PPI shared proteins."""
+    sequence_genes = embedding_loader.load_esm().keys()
+    global_genes = embedding_loader.load_global().keys()
+    shared_genes, Y_shared, shared_contexts = restrict_global_probe_universe(
+        genes,
+        Y,
+        global_genes=global_genes,
+        sequence_genes=sequence_genes,
+        context_presence=context_presence,
+    )
+    if len(shared_genes) < n_splits:
+        raise ValueError(
+            "Global shared intersection has too few genes "
+            f"({len(shared_genes)}) for {n_splits}-fold CV."
+        )
+
+    split_plan = build_cv_splits(
+        Y_shared,
+        cell_ids_per_bag=shared_contexts,
+        use_context_split=True,
+        k_label=None,
+        n_splits=n_splits,
+        seed=seed,
+    )
+    print(
+        "[INFO] Shared intersection (task ∩ global ∩ ESM2 ∩ Cell-PPI): "
+        f"{len(shared_genes)}/{len(genes)} genes"
+    )
+    return shared_genes, Y_shared, split_plan, shared_contexts
+
+
+def _save_split_artifacts(
+    output_dir: Path,
+    genes: List[str],
+    split_plan: SplitPlan,
+    *,
+    seed: int,
+    context_presence: Optional[ContextPresence] = None,
+    gene_contexts: Optional[List[List[str]]] = None,
+) -> str:
+    """Save the common folds and, for global probes, split-only context metadata."""
+    fingerprint = split_fingerprint(genes, split_plan.folds)
+    split_arrays = {
+        "genes": np.asarray(genes, dtype=str),
+        "split_stratification": np.asarray(
+            split_plan.stratification_method, dtype=str
+        ),
+        **{
+            f"fold_{fold}": np.asarray(indices, dtype=np.int64)
+            for fold, indices in enumerate(split_plan.folds)
+        },
+    }
+    if context_presence is not None:
+        if gene_contexts is None or len(gene_contexts) != len(genes):
+            raise ValueError("Global split metadata is not aligned with shared genes.")
+        context_to_index = {
+            name: index for index, name in enumerate(context_presence.context_names)
+        }
+        context_matrix = np.zeros(
+            (len(genes), len(context_presence.context_names)), dtype=np.bool_
+        )
+        for gene_index, contexts in enumerate(gene_contexts):
+            for context in contexts:
+                context_matrix[gene_index, context_to_index[context]] = True
+        split_arrays.update(
+            {
+                "context_names": np.asarray(context_presence.context_names, dtype=str),
+                "context_presence": context_matrix,
+                "context_presence_fingerprint": np.asarray(
+                    context_presence.fingerprint, dtype=str
+                ),
+                "split_fingerprint": np.asarray(fingerprint, dtype=str),
+            }
+        )
+
+    np.savez_compressed(output_dir / "split_indices.npz", **split_arrays)
+    np.save(
+        output_dir / "test_idx.npy",
+        np.asarray(split_plan.folds[split_plan.test_fold_idx], dtype=np.int64),
+    )
+    if context_presence is not None:
+        metadata = {
+            "version": 1,
+            "gene_universe": "task_global_esm2_cellppi",
+            "n_genes": len(genes),
+            "n_contexts": len(context_presence.context_names),
+            "context_presence_fingerprint": context_presence.fingerprint,
+            "split_fingerprint": fingerprint,
+            "seed": int(seed),
+            "test_fold": int(split_plan.test_fold_idx),
+            "split_protocol": "fold_0_test_remaining_folds_rotate_validation",
+            "split_stratification": split_plan.stratification_method,
+        }
+        (output_dir / "split_metadata.json").write_text(
+            json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    return fingerprint
+
+
 def main():
     args = parse_args()
 
@@ -203,12 +482,25 @@ def main():
         return 0
 
     if args.aggregate_only:
-        agg_path = save_task_results(DEFAULT_OUTPUT_ROOT, args.task)
+        output_root = (
+            args.output_root.expanduser()
+            if args.output_root is not None
+            else DEFAULT_OUTPUT_ROOT
+        )
+        agg_path = save_task_results(output_root, args.task)
         if agg_path is None:
             print("[WARN] No results found to aggregate")
             return 1
         print(f"[OK] Task results saved to: {agg_path}")
         return 0
+
+    is_global_protocol = args.global_inference is not None
+    if is_global_protocol and args.embedding_inference_model is not None:
+        print(
+            "[ERROR] --embedding-inference-model cannot be combined with "
+            "--global-inference; use --inference-model as the run identifier."
+        )
+        return 1
 
     embedding_inference_model = args.embedding_inference_model or args.inference_model
     config = load_config(
@@ -222,10 +514,34 @@ def main():
         print(f"[INFO] Available tasks: {available}")
         return 1
 
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.seed)
+    if args.output_root is not None:
+        config.output_root = args.output_root.expanduser()
+    if args.esm2_embeddings is not None:
+        config.embeddings.esm = args.esm2_embeddings.expanduser()
+
+    if is_global_protocol:
+        if config.dataset_mode != "bulk":
+            print("[ERROR] Global LR evaluation requires --dataset-mode bulk.")
+            return 1
+        if config.embedding_source != "esm":
+            print("[ERROR] Global LR evaluation requires --embedding-source esm.")
+            return 1
+        missing_global_args = []
+        if args.esm2_embeddings is None:
+            missing_global_args.append("--esm2-embeddings")
+        if args.context_ppi_edgelists is None:
+            missing_global_args.append("--context-ppi-edgelists")
+        if missing_global_args:
+            print(
+                "[ERROR] Global LR evaluation requires explicit released-data paths: "
+                + ", ".join(missing_global_args)
+            )
+            return 1
+        if not config.embeddings.esm.is_file():
+            print(f"[ERROR] ESM2 embedding file not found: {config.embeddings.esm}")
+            return 1
+
+    _reset_random_seed(args.seed)
 
     config.seed = args.seed
     config.train_selection_metric = args.train_selection_metric
@@ -244,15 +560,36 @@ def main():
     if args.no_class_weight:
         config.use_class_weights = False
 
-    is_pinnacle_paper = embedding_inference_model == "pinnacle_paper"
+    is_pinnacle_paper = (
+        not is_global_protocol and embedding_inference_model == "pinnacle_paper"
+    )
     if is_pinnacle_paper and config.dataset_mode != "legacy":
         print("[INFO] inference-model=pinnacle_paper implies --dataset-mode legacy")
         config.dataset_mode = "legacy"
 
     hc_protein_labels_path = None
     hc_cell_labels_path = None
+    global_embedding_provenance = {}
     inference_path = config.get_inference_path()
-    if is_pinnacle_paper:
+    if is_global_protocol:
+        try:
+            global_embedding_path, inference_path = _resolve_global_embedding_path(
+                args.global_inference
+            )
+            global_embedding_provenance = _load_global_embedding_provenance(
+                inference_path,
+                global_embedding_path,
+            )
+        except (FileNotFoundError, json.JSONDecodeError, ValueError) as error:
+            print(f"[ERROR] {error}")
+            return 1
+        hc_paths = {
+            "protein_embed": global_embedding_path,
+            "cell_embed": None,
+            "protein_labels": None,
+            "cell_labels": None,
+        }
+    elif is_pinnacle_paper:
         inference_path = config.embeddings.pinnacle_paper_protein.parent
         required_paths = [
             config.embeddings.pinnacle_paper_protein,
@@ -301,11 +638,51 @@ def main():
         list_models()
         return 1
 
+    if args.output_model_key is not None and len(model_keys) != 1:
+        print("[ERROR] --output-model-key can only be used with one model.")
+        return 1
+    if is_global_protocol:
+        invalid_model_keys = [
+            model_key
+            for model_key in model_keys
+            if model_key not in GLOBAL_LR_MODEL_KEYS
+        ]
+        if invalid_model_keys:
+            print(
+                "[ERROR] --global-inference supports only: "
+                + ", ".join(sorted(GLOBAL_LR_MODEL_KEYS))
+                + ". Invalid: "
+                + ", ".join(invalid_model_keys)
+            )
+            return 1
+    else:
+        global_model_keys = [
+            model_key
+            for model_key in model_keys
+            if "global" in MODEL_VARIANTS[model_key].embedding_sources
+        ]
+        if global_model_keys:
+            print(
+                "[ERROR] Models using global embeddings require --global-inference: "
+                + ", ".join(global_model_keys)
+            )
+            return 1
+
     task_config = config.tasks[args.task]
     task_csv = args.task_csv if args.task_csv is not None else task_config.label_csv
     if not task_csv.exists():
         print(f"[ERROR] Label CSV not found: {task_csv}")
         return 1
+    task_csv = task_csv.expanduser().resolve()
+    try:
+        task_dataset_provenance = _load_task_dataset_provenance(
+            args.task,
+            task_csv,
+        )
+    except (json.JSONDecodeError, ValueError) as error:
+        print(f"[ERROR] {error}")
+        return 1
+    task_csv_sha256 = _sha256_file(task_csv)
 
     task_loader = get_task_loader(args.task, task_csv)
     genes, Y, class_names = task_loader.load()
@@ -319,7 +696,7 @@ def main():
     )
 
     legacy_gene_universe = None
-    if config.dataset_mode == "legacy":
+    if not is_global_protocol and config.dataset_mode == "legacy":
         if not config.embeddings.pinnacle_paper_labels.exists():
             print(
                 "[ERROR] PINNACLE labels not found: "
@@ -331,16 +708,41 @@ def main():
         )
         print(f"[INFO] Legacy gene universe (pinnacle_paper): {len(legacy_gene_universe)} genes")
 
-    shared_genes, Y_shared, shared_split_plan = _build_shared_split(
-        genes=genes,
-        Y=Y,
-        embedding_loader=embedding_loader,
-        seed=config.seed,
-        n_splits=config.n_folds,
-        gene_universe=legacy_gene_universe,
-        gene_universe_name="pinnacle_paper",
-    )
+    context_presence = None
+    shared_contexts = None
+    if is_global_protocol:
+        try:
+            context_presence = load_context_presence(
+                args.context_ppi_edgelists,
+                expected_context_count=EXPECTED_CELL_PPI_CONTEXTS,
+            )
+            shared_genes, Y_shared, shared_split_plan, shared_contexts = (
+                _build_global_shared_split(
+                    genes=genes,
+                    Y=Y,
+                    embedding_loader=embedding_loader,
+                    context_presence=context_presence,
+                    seed=config.seed,
+                    n_splits=config.n_folds,
+                )
+            )
+        except (FileNotFoundError, ValueError) as error:
+            print(f"[ERROR] {error}")
+            return 1
+    else:
+        shared_genes, Y_shared, shared_split_plan = _build_shared_split(
+            genes=genes,
+            Y=Y,
+            embedding_loader=embedding_loader,
+            seed=config.seed,
+            n_splits=config.n_folds,
+            gene_universe=legacy_gene_universe,
+            gene_universe_name="pinnacle_paper",
+        )
     embedding_loader.clear_cache()
+    shared_split_fingerprint = split_fingerprint(
+        shared_genes, shared_split_plan.folds
+    )
 
     print(f"Inference model: {args.inference_model}")
     print(f"Embedding inference model: {embedding_inference_model}")
@@ -350,8 +752,13 @@ def main():
     print(f"Dataset mode: {config.dataset_mode}")
     print(f"Train selection metric: {config.train_selection_metric}")
     print(f"Sequence embedding file: {config.embeddings.esm}")
+    if is_global_protocol:
+        print(f"Global embedding file: {hc_paths['protein_embed']}")
+        print(f"Cell-PPI edgelists: {args.context_ppi_edgelists}")
+        print(f"Shared split fingerprint: {shared_split_fingerprint}")
 
     for model_key in model_keys:
+        _reset_random_seed(config.seed)
         variant = MODEL_VARIANTS[model_key]
         config.num_heads = variant.num_heads
         if variant.use_pdl and not 0.0 < float(config.pdl_pmax) <= 1.0:
@@ -372,21 +779,16 @@ def main():
             args.inference_model,
             output_model_key,
         )
-        split_arrays = {
-            "genes": np.asarray(shared_genes, dtype=str),
-            **{
-                f"fold_{fold}": np.asarray(indices, dtype=np.int64)
-                for fold, indices in enumerate(shared_split_plan.folds)
-            },
-        }
-        np.savez_compressed(output_dir / "split_indices.npz", **split_arrays)
-        np.save(
-            output_dir / "test_idx.npy",
-            np.asarray(
-                shared_split_plan.folds[shared_split_plan.test_fold_idx],
-                dtype=np.int64,
-            ),
+        saved_split_fingerprint = _save_split_artifacts(
+            output_dir,
+            shared_genes,
+            shared_split_plan,
+            seed=config.seed,
+            context_presence=context_presence,
+            gene_contexts=shared_contexts,
         )
+        if saved_split_fingerprint != shared_split_fingerprint:
+            raise RuntimeError("Shared split changed between model variants.")
 
         trainer = Trainer(
             config=config,
@@ -411,6 +813,23 @@ def main():
 
         result["task"] = args.task
         result["task_csv"] = task_csv.name
+        result["task_csv_path"] = str(task_csv)
+        result["task_csv_sha256"] = task_csv_sha256
+        result["task_dataset_manifest"] = task_dataset_provenance.get(
+            "manifest_path", ""
+        )
+        result["task_dataset_manifest_sha256"] = task_dataset_provenance.get(
+            "manifest_sha256", ""
+        )
+        result["task_dataset_reconstruction"] = task_dataset_provenance.get(
+            "reconstruction", ""
+        )
+        result["open_targets_release"] = task_dataset_provenance.get(
+            "open_targets_release", ""
+        )
+        result["open_targets_association_scope"] = task_dataset_provenance.get(
+            "association_scope", ""
+        )
         result["model_key"] = model_key
         result["base_model_key"] = model_key
         result["output_model_key"] = output_model_key
@@ -422,19 +841,79 @@ def main():
         result["readout_label"] = args.readout_label or variant.name
         result["embedding_source"] = config.embedding_source
         result["dataset_mode"] = config.dataset_mode
-        result["gene_universe"] = (
-            "pinnacle_paper" if config.dataset_mode == "legacy" else "bulk_shared"
-        )
+        if is_global_protocol:
+            result["gene_universe"] = "task_global_esm2_cellppi"
+        else:
+            result["gene_universe"] = (
+                "pinnacle_paper" if config.dataset_mode == "legacy" else "bulk_shared"
+            )
         result["inference_name"] = args.inference_model
         result["embedding_inference_name"] = embedding_inference_model
         result["inference_dir"] = inference_path.name
         result["sequence_embedding_path"] = Path(config.embeddings.esm).name
+        result["esm2_embedding_path"] = (
+            str(Path(config.embeddings.esm).expanduser().resolve())
+            if is_global_protocol
+            else ""
+        )
         result["hc_protein_embedding_path"] = (
             Path(hc_paths["protein_embed"]).name if hc_paths["protein_embed"] is not None else ""
         )
         result["hc_cell_embedding_path"] = (
             Path(hc_paths["cell_embed"]).name if hc_paths["cell_embed"] is not None else ""
         )
+        result["global_embedding_path"] = (
+            str(Path(hc_paths["protein_embed"]).resolve())
+            if is_global_protocol
+            else ""
+        )
+        result["global_embedding_manifest"] = global_embedding_provenance.get(
+            "manifest_path", ""
+        )
+        result["global_embedding_manifest_sha256"] = global_embedding_provenance.get(
+            "manifest_sha256", ""
+        )
+        result["global_embedding_sha256"] = global_embedding_provenance.get(
+            "embedding_sha256", ""
+        )
+        result["global_checkpoint_sha256"] = global_embedding_provenance.get(
+            "checkpoint_sha256", ""
+        )
+        result["global_training_git_commit"] = global_embedding_provenance.get(
+            "training_git_commit", ""
+        )
+        result["global_export_git_commit"] = global_embedding_provenance.get(
+            "export_git_commit", ""
+        )
+        result["global_embedding_topology"] = global_embedding_provenance.get(
+            "embedding_topology", ""
+        )
+        result["global_embedding_representation"] = global_embedding_provenance.get(
+            "representation", ""
+        )
+        result["context_ppi_edgelists"] = (
+            str(Path(args.context_ppi_edgelists).expanduser().resolve())
+            if is_global_protocol
+            else ""
+        )
+        result["context_presence_count"] = (
+            len(context_presence.context_names) if context_presence is not None else 0
+        )
+        result["context_presence_fingerprint"] = (
+            context_presence.fingerprint if context_presence is not None else ""
+        )
+        result["shared_split_fingerprint"] = shared_split_fingerprint
+        result["downstream_git_commit"] = os.environ.get(
+            "PROTSCAPE_GIT_COMMIT", "uncommitted"
+        )
+        result["n_shared_samples"] = int(len(shared_genes))
+        result["n_label_classes"] = int(Y_shared.shape[1])
+        if Y_shared.shape[1] == 1:
+            result["n_positive"] = int(Y_shared[:, 0].sum())
+            result["n_negative"] = int(len(Y_shared) - Y_shared[:, 0].sum())
+        else:
+            result["n_positive"] = ""
+            result["n_negative"] = ""
         result["folder name"] = args.inference_model
         result["lr"] = float(config.lr)
         result["weight_decay"] = float(config.weight_decay)
@@ -472,6 +951,9 @@ def main():
         result["n_cv_folds"] = int(config.n_folds - 1)
         result["test_fold"] = 0
         result["split_protocol"] = "fold_0_test_remaining_folds_rotate_validation"
+        result["split_stratification"] = (
+            shared_split_plan.stratification_method
+        )
         result["batch_size"] = int(config.batch_size)
         result["epochs"] = int(config.epochs)
         result["patience"] = int(config.patience)

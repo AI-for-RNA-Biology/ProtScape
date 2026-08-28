@@ -1,0 +1,15 @@
+scope,paper_model,paper_loss,paper_features,paper_readout,our_model_key,paper_auprc_pct,paper_f1_pct,paper_f1_type,paper_table,paper_page
+corum,ESM2,not_applicable,sequence,linear_probe,lr_ext_embed,34.4,4.2,positive_class_macro_over_complexes,4,35
+corum,ProtScape-GAE,GAE,contextual_mean,mean_pool_lr,lr_global,48.5,5.5,positive_class_macro_over_complexes,4,35
+corum,ProtScape-GAE,GAE,contextual_mean+ESM2,mean_pool_lr,lr_global_ext_embed,45.5,4.9,positive_class_macro_over_complexes,4,35
+corum,ProtScape,BCE,contextual_mean,mean_pool_lr,lr_global,69.5,5.8,positive_class_macro_over_complexes,4,35
+corum,ProtScape,BCE,contextual_mean+ESM2,mean_pool_lr,lr_global_ext_embed,60.2,5.2,positive_class_macro_over_complexes,4,35
+corum,ProtScape,pHuber,contextual_mean,mean_pool_lr,lr_global,68.6,5.9,positive_class_macro_over_complexes,4,35
+corum,ProtScape,pHuber,contextual_mean+ESM2,mean_pool_lr,lr_global_ext_embed,58.5,5.2,positive_class_macro_over_complexes,4,35
+corum,ProtScape,L1,contextual_mean,mean_pool_lr,lr_global,62.1,5.6,positive_class_macro_over_complexes,4,35
+corum,ProtScape,L1,contextual_mean+ESM2,mean_pool_lr,lr_global_ext_embed,50.6,5.0,positive_class_macro_over_complexes,4,35
+therapeutic_target_mean,ESM2,not_applicable,sequence,linear_probe,lr_ext_embed,55.2,54.2,binary_macro,5,36
+therapeutic_target_mean,ProtScape-GAE,GAE,contextual_mean,mean_pool_lr,lr_global,35.6,48.7,binary_macro,5,36
+therapeutic_target_mean,ProtScape-GAE,GAE,contextual_mean+ESM2,mean_pool_lr,lr_global_ext_embed,55.3,53.0,binary_macro,5,36
+therapeutic_target_mean,ProtScape,BCE,contextual_mean,mean_pool_lr,lr_global,57.3,52.1,binary_macro,5,36
+therapeutic_target_mean,ProtScape,BCE,contextual_mean+ESM2,mean_pool_lr,lr_global_ext_embed,65.9,55.2,binary_macro,5,36

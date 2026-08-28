@@ -34,6 +34,18 @@ class ModelVariant:
 
 
 MODEL_VARIANTS = {
+    "lr_global": ModelVariant(
+        name="LR global protein embedding",
+        model_type=ModelType.LR,
+        embedding_sources=["global"],
+        use_context_stratification=False,
+    ),
+    "lr_global_ext_embed": ModelVariant(
+        name="LR global protein embedding + sequence",
+        model_type=ModelType.LR,
+        embedding_sources=["global", "ext_embed"],
+        use_context_stratification=False,
+    ),
     "lr_ext_embed": ModelVariant(
         name="LR sequence embedding",
         model_type=ModelType.LR,

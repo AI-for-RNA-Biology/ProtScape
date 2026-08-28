@@ -26,6 +26,7 @@ class SplitPlan:
     cv_folds: List[np.ndarray]  # The 5 folds used for CV (folds 1-5)
     label_clusters: Optional[np.ndarray]  # Cluster assignments for stratified sampling
     n_cv_folds: int  # Number of CV folds (5)
+    stratification_method: str = "unspecified"
 
 
 def build_cv_splits(
@@ -61,6 +62,7 @@ def build_cv_splits(
         raise ValueError(f"Need at least {n_splits} samples for CV.")
 
     if use_context_split:
+        stratification_method = "task_label_and_context_cluster"
         print("computing context-stratified folds...")
         if cell_ids_per_bag is None or len(cell_ids_per_bag) != len(Y_ref):
             raise ValueError("Context split requires cell_ids_per_bag with length matching Y_ref.")
@@ -82,6 +84,7 @@ def build_cv_splits(
         )
         missing_required = (fold_label_counts[:, required_labels] == 0).sum()
         if missing_required:
+            stratification_method = "task_label_multilabel_fallback"
             print(
                 "[WARN] Context-stratified folds omit "
                 f"{int(missing_required)} required fold-label combinations; "
@@ -108,6 +111,7 @@ def build_cv_splits(
                     "eligible label in every fold."
                 )
     else:
+        stratification_method = "task_label_multilabel"
         # Use standard multilabel stratified split
         splitter = MultilabelStratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
         folds = []
@@ -125,6 +129,7 @@ def build_cv_splits(
         cv_folds=cv_folds,
         label_clusters=label_clusters,
         n_cv_folds=len(cv_folds),
+        stratification_method=stratification_method,
     )
 
 

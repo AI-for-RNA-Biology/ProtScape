@@ -347,6 +347,24 @@ class Trainer:
             X_esm = np.stack([esm_dict[g.upper()] for g in genes]).astype(np.float32)
             result["esm"] = X_esm
 
+        # One frozen vector per protein from the context-free global encoder.
+        X_global = None
+        global_dict = None
+        if "global" in sources:
+            global_dict = self.loader.load_global()
+            valid_genes = [g for g in genes if g.upper() in global_dict]
+            if len(valid_genes) < len(genes):
+                print(
+                    f"[INFO] Filtering to {len(valid_genes)}/{len(genes)} genes "
+                    "with global protein embeddings"
+                )
+                genes = valid_genes
+                gene_set = set(g.upper() for g in genes)
+            X_global = np.stack(
+                [global_dict[g.upper()] for g in genes]
+            ).astype(np.float32)
+            result["global"] = X_global
+
         # Context features (HC, Cell)
         ctx_vecs = None
         cell_ids = None
@@ -397,6 +415,14 @@ class Trainer:
             X_esm = np.stack([esm_dict[g.upper()] for g in genes]).astype(np.float32)
             result["esm"] = X_esm
 
+        if X_global is not None and len(X_global) != len(genes):
+            if global_dict is None:
+                global_dict = self.loader.load_global()
+            X_global = np.stack(
+                [global_dict[g.upper()] for g in genes]
+            ).astype(np.float32)
+            result["global"] = X_global
+
         # Build context bags for ABMIL
         if ctx_vecs is not None and variant.model_type == ModelType.ABMIL:
             ctx_bags = []
@@ -420,6 +446,8 @@ class Trainer:
         # Build final feature matrix for LR only
         if variant.model_type == ModelType.LR:
             X_parts = []
+            if X_global is not None:
+                X_parts.append(X_global)
             if X_esm is not None:
                 X_parts.append(X_esm)
                 result["esm"] = X_esm

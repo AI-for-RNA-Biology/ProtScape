@@ -65,6 +65,37 @@ def load_esm_embeddings(path: Path) -> Dict[str, np.ndarray]:
     return esm_dict
 
 
+def load_global_protein_embeddings(path: Path) -> Dict[str, np.ndarray]:
+    """Load a one-vector-per-protein global encoder export."""
+    payload = torch.load(path, map_location="cpu", weights_only=True)
+    if not isinstance(payload, dict) or payload.get("embedding_scope") != "global":
+        raise ValueError(f"Expected a global protein embedding export: {path}")
+
+    embeddings = payload.get("embeddings")
+    protein_names = payload.get("protein_names")
+    if embeddings is None or protein_names is None:
+        raise ValueError(f"Global embedding export is missing embeddings or names: {path}")
+    if isinstance(embeddings, torch.Tensor):
+        embeddings = embeddings.detach().cpu().numpy()
+    else:
+        embeddings = np.asarray(embeddings)
+    if embeddings.ndim != 2 or embeddings.shape[0] != len(protein_names):
+        raise ValueError(
+            "Global embedding rows do not align with protein names: "
+            f"{embeddings.shape} versus {len(protein_names)}"
+        )
+    if not np.isfinite(embeddings).all():
+        raise ValueError(f"Global embedding export contains non-finite values: {path}")
+
+    result: Dict[str, np.ndarray] = {}
+    for index, raw_name in enumerate(protein_names):
+        name = str(raw_name).upper()
+        if name in result:
+            raise ValueError(f"Duplicate global protein name after uppercasing: {name}")
+        result[name] = np.asarray(embeddings[index], dtype=np.float32)
+    return result
+
+
 @lru_cache(maxsize=4)
 def load_pinnacle_paper_labels(
     labels_path: str,
@@ -601,6 +632,7 @@ class EmbeddingLoader:
         self.hc_cell_labels_path = hc_cell_labels_path
 
         self._esm_dict: Optional[Dict[str, np.ndarray]] = None
+        self._global_dict: Optional[Dict[str, np.ndarray]] = None
         self._hc_protein_embed: Optional[Dict] = None
         self._hc_cell_embed: Optional[Dict] = None
 
@@ -611,6 +643,16 @@ class EmbeddingLoader:
             self._esm_dict = load_esm_embeddings(self.esm_path)
             print(f"  Loaded {len(self._esm_dict)} sequence embeddings")
         return self._esm_dict
+
+    def load_global(self) -> Dict[str, np.ndarray]:
+        """Load a global one-vector-per-protein export (cached)."""
+        if self.hc_protein_path is None:
+            raise ValueError("Global protein path not configured")
+        if self._global_dict is None:
+            print(f"Loading global protein embeddings from {self.hc_protein_path}")
+            self._global_dict = load_global_protein_embeddings(self.hc_protein_path)
+            print(f"  Loaded {len(self._global_dict)} global protein embeddings")
+        return self._global_dict
 
     def _load_hc_protein_embed(self) -> Dict:
         if self.hc_protein_path is None:
@@ -737,6 +779,10 @@ class EmbeddingLoader:
 
         if not keep_esm and self._esm_dict is not None:
             self._esm_dict = None
+            cleared = True
+
+        if self._global_dict is not None:
+            self._global_dict = None
             cleared = True
 
         if self._hc_protein_embed is not None:

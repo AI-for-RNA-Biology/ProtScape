@@ -1,0 +1,16 @@
+task,disease,paper_positive,paper_negative,paper_table,paper_page
+therapeutic_target_efo_0003767,Inflammatory bowel disease,126,1360,1,31
+therapeutic_target_efo_0000685,Rheumatoid arthritis,173,1327,1,31
+therapeutic_target_efo_0000305,Breast carcinoma,176,642,1,31
+therapeutic_target_efo_1001207,Systolic heart failure,59,1928,1,31
+therapeutic_target_efo_0000571,Lung adenocarcinoma,52,1438,1,31
+therapeutic_target_efo_0000676,Psoriasis,170,1233,1,31
+therapeutic_target_efo_0001361,Pulmonary arterial hypertension,63,1746,1,31
+therapeutic_target_mondo_0005148,Type 2 diabetes,202,1364,1,31
+therapeutic_target_mondo_0007915,Systemic lupus erythematosus,126,1623,1,31
+therapeutic_target_efo_0000274,Atopic eczema,64,1696,1,31
+therapeutic_target_mondo_0004979,Asthma,112,1523,1,31
+therapeutic_target_efo_0000341,COPD,154,1655,1,31
+therapeutic_target_efo_1001249,NASH,62,1884,1,31
+therapeutic_target_efo_0003884,Chronic kidney disease,190,1466,1,31
+therapeutic_target_mondo_0005180,Parkinson disease,107,1372,1,31

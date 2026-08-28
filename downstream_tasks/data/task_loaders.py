@@ -89,11 +89,39 @@ class TherapeuticTargetLoader(BaseTaskLoader):
             raise ValueError(f"Expected gene and binary-label columns in {self.label_csv}")
 
         df = df[[gene_col, label_col]].copy()
+        if df.empty:
+            raise ValueError(f"Therapeutic-target label table is empty: {self.label_csv}")
+        if df[gene_col].isna().any() or df[label_col].isna().any():
+            raise ValueError(
+                f"Therapeutic-target labels contain missing values: {self.label_csv}"
+            )
         df[gene_col] = df[gene_col].astype(str).str.strip().str.upper()
-        df[label_col] = pd.to_numeric(df[label_col], errors="coerce")
-        df = df[(df[gene_col] != "") & df[label_col].notna()]
-        df[label_col] = (df[label_col] > 0).astype(np.float32)
-        df = df.groupby(gene_col, as_index=False)[label_col].max().sort_values(gene_col)
+        if (df[gene_col] == "").any():
+            raise ValueError(
+                f"Therapeutic-target labels contain empty gene names: {self.label_csv}"
+            )
+        numeric_labels = pd.to_numeric(df[label_col], errors="coerce")
+        if numeric_labels.isna().any() or not set(numeric_labels.unique()).issubset(
+            {0, 1}
+        ):
+            raise ValueError(
+                f"Therapeutic-target labels must be binary 0/1: {self.label_csv}"
+            )
+        df[label_col] = numeric_labels.astype(np.float32)
+        conflicts = df.groupby(gene_col)[label_col].nunique()
+        if (conflicts > 1).any():
+            raise ValueError(
+                f"Therapeutic-target genes have conflicting labels: {self.label_csv}"
+            )
+        df = (
+            df.drop_duplicates(subset=[gene_col])
+            .sort_values(gene_col)
+            .reset_index(drop=True)
+        )
+        if set(df[label_col].unique()) != {0.0, 1.0}:
+            raise ValueError(
+                f"Therapeutic-target labels must contain both classes: {self.label_csv}"
+            )
 
         return (
             df[gene_col].tolist(),
