@@ -14,7 +14,6 @@ import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
-from matplotlib.patches import Patch
 
 import matplotlib.pyplot as plt
 
@@ -25,21 +24,13 @@ SOURCE_STYLE = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
     "font.family": "Arial",
-    "font.sans-serif": ["Arial"],
-    "mathtext.fontset": "custom",
-    "mathtext.rm": "Arial",
-    "mathtext.it": "Arial:italic",
-    "mathtext.bf": "Arial:bold",
-    "mathtext.cal": "Arial:italic",
-    "mathtext.sf": "Arial",
-    "mathtext.tt": "Arial",
-    "axes.labelsize": 7.0,
+    "axes.labelsize": 8.0,
     "xtick.labelsize": 6.0,
     "ytick.labelsize": 6.0,
     "font.size": 7.0,
-    "axes.titlesize": 7.0,
+    "axes.titlesize": 8.0,
     "legend.fontsize": 6.0,
-    "figure.titlesize": 7.0,
+    "figure.titlesize": 8.0,
     "axes.linewidth": 0.6,
     "xtick.major.width": 0.6,
     "ytick.major.width": 0.6,
@@ -71,11 +62,32 @@ CLASS_LABELS = {
     "Weak disagreement positive": "(++)",
     "Consensus positive": "(+++)",
 }
-CLASS_COLORS = {
-    name: mcolors.to_hex(matplotlib.cm.get_cmap("seismic")(position))
-    for name, position in zip(CLASS_ORDER, [0.02, 0.18, 0.40, 0.60, 0.82, 0.98])
-}
+NEGATIVE_CMAP = mcolors.LinearSegmentedColormap.from_list(
+    "negative_consensus", ["#08306B", "#6baed6"]
+)
+POSITIVE_CMAP = mcolors.LinearSegmentedColormap.from_list(
+    "positive_consensus", ["#fdd0a2", "#a63603"]
+)
+NEGATIVE_COLORS = [mcolors.to_hex(NEGATIVE_CMAP(value)) for value in (0.0, 0.5, 1.0)]
+POSITIVE_COLORS = [mcolors.to_hex(POSITIVE_CMAP(value)) for value in (0.0, 0.5, 1.0)]
+CLASS_COLORS = dict(
+    zip(CLASS_ORDER, [*NEGATIVE_COLORS, *POSITIVE_COLORS])
+)
 EDGE_LABELS = ["Labelled positive", "Labelled negative"]
+
+
+def lighten_hex_color(color: str, amount: float = 0.60) -> str:
+    rgb = np.asarray(mcolors.to_rgb(color))
+    white = np.ones(3)
+    return mcolors.to_hex(rgb * (1.0 - amount) + white * amount)
+
+
+def comparison_group_styles(comparison: str) -> list[tuple[str, str]]:
+    primary_color = "#d31529" if "pHuber" in comparison else "#9200bf"
+    return [
+        ("Labelled positives", primary_color),
+        ("Labelled negatives", lighten_hex_color(primary_color)),
+    ]
 
 
 def save_original(
@@ -181,12 +193,12 @@ def plot_3d_legend(legend_ax):
         label.set_fontweight("bold")
 
 
-def plot_3d_score_space(table, *, show_values=True):
+def plot_3d_score_space(table, *, show_values=True, set_title=False):
     if show_values:
         fig = plt.figure(figsize=(16 * CM, 8 * CM))
         fig.subplots_adjust(left=0.06, right=0.98, bottom=0.14, top=0.92, wspace=0.08)
     else:
-        fig = plt.figure(figsize=(10 * CM, 5 * CM))
+        fig = plt.figure(figsize=(8 * CM, 4.5 * CM))
 
     for index, edge_label in enumerate(EDGE_LABELS, start=1):
         ax = fig.add_subplot(1, 2, index, projection="3d")
@@ -206,7 +218,8 @@ def plot_3d_score_space(table, *, show_values=True):
                 rasterized=False,
             )
         add_threshold_planes(ax)
-        ax.set_title(edge_label)
+        if set_title:
+            ax.set_title(edge_label)
         if show_values:
             ax.set_xlabel("BCE", labelpad=-1.0)
             ax.set_ylabel("pHuber", labelpad=-1.0)
@@ -253,7 +266,7 @@ def plot_3d_score_space(table, *, show_values=True):
     return fig
 
 
-def plot_mean_std(axes, table):
+def plot_mean_std(axes, table, *, set_title=False, show_labels=False):
     for ax, edge_label in zip(axes, EDGE_LABELS):
         labelled = table[table["edge_label"] == edge_label]
         for class_name in CLASS_ORDER:
@@ -268,68 +281,67 @@ def plot_mean_std(axes, table):
                 rasterized=False,
             )
         ax.axvline(0.5, color="#222222", linewidth=1.0, linestyle="--", alpha=0.75)
-        ax.set_title(edge_label)
-        ax.set_xlabel("Prediction mean")
+        if set_title:
+            ax.set_title(edge_label)
+        if show_labels:
+            ax.set_xlabel("Prediction mean")
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 0.5)
         clean_2d_axis(ax)
-    axes[0].set_ylabel("Prediction std")
+    if show_labels:
+        axes[0].set_ylabel("Prediction std")
 
 
 def plot_loss_similarity(axes, table):
-    colors = {"Labelled positives": CLASS_COLORS["Consensus positive"],
-              "Labelled negatives": CLASS_COLORS["Consensus negative"]}
-
     panels = [
         ("Binned Spearman score correlation", "Before thresholding"),
         ("Thresholded Spearman call correlation", "After thresholding"),
     ]
     comparisons = ["BCE vs pHuber", "BCE vs L1"]
-    groups = ["Labelled positives", "Labelled negatives"]
-    x = np.arange(2)
+    x = np.arange(len(comparisons)) * 0.90
     width = 0.55 / 2
-    legend_handles = None
-    legend_labels = None
     for ax, (metric, title) in zip(axes, panels):
         rows = table[table["metric"] == metric]
-        offsets = np.linspace(-width * (len(groups) - 1) / 2, width * (len(groups) - 1) / 2, len(groups))
-        for offset, group in zip(offsets, groups):
-            values = rows[rows["group"] == group].set_index("comparison").loc[comparisons, "value"] * 100
-            bars = ax.bar(
-                x + offset,
-                values,
-                width=width,
-                color=colors[group],
-                edgecolor="#222222",
-                linewidth=0.55,
+        for comparison_index, comparison in enumerate(comparisons):
+            groups = comparison_group_styles(comparison)
+            offsets = np.linspace(
+                -width * (len(groups) - 1) / 2,
+                width * (len(groups) - 1) / 2,
+                len(groups),
             )
-            for bar, value in zip(bars, values):
-                ax.text(
-                    bar.get_x() + bar.get_width() / 2,
-                    value + 2.5,
-                    f"{value:.0f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=6,
+            for offset, (group, color) in zip(offsets, groups):
+                values = (
+                    rows[rows["group"] == group]
+                    .set_index("comparison")
+                    .reindex([comparison])["value"]
+                    .to_numpy()
+                    * 100
                 )
+                bars = ax.bar(
+                    x[comparison_index] + offset,
+                    values,
+                    width=width,
+                    color=color,
+                    edgecolor="#222222",
+                    linewidth=0.55,
+                    label=group,
+                )
+                for bar, value in zip(bars, values):
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2,
+                        value + 2.5,
+                        f"{value:.0f}",
+                        ha="center",
+                        va="bottom",
+                        fontsize=6,
+                    )
         ax.set_title(title)
         ax.set_xticks(x)
         ax.set_xticklabels(["pHuber", "L1"])
         ax.set_ylim(0, 108)
         clean_2d_axis(ax)
-        if legend_handles is None:
-            legend_handles = [
-                Patch(
-                    facecolor=colors[group],
-                    edgecolor="#222222",
-                    linewidth=0.55,
-                    label=group,
-                )
-                for group in groups
-            ]
-            legend_labels = groups
     axes[0].set_ylabel(r"$\rho$ (BCE, loss) (%)")
-    return legend_handles, legend_labels
+    return axes[0].get_legend_handles_labels()
 
 
 def plot_consensus(source, output):
@@ -364,7 +376,7 @@ def plot_consensus(source, output):
     )
 
     d_fig, d_axes = plt.subplots(
-        1, 2, figsize=(7 * CM, 4.5 * CM), sharex=True, sharey=True
+        1, 2, figsize=(6 * CM, 4.5 * CM), sharex=True, sharey=True
     )
     plot_mean_std(d_axes, score_sample)
     d_fig.subplots_adjust(left=0.10, right=0.99, bottom=0.38, top=0.93, wspace=0.22)
@@ -372,7 +384,7 @@ def plot_consensus(source, output):
 
     e_legend_fig, e_legend_ax = plt.subplots(figsize=(5 * CM, 2 * CM))
     e_fig, e_axes = plt.subplots(
-        1, 2, figsize=(5 * CM, 4.5 * CM), sharey=True
+        1, 2, figsize=(4 * CM, 5.5 * CM), sharey=True
     )
     legend_handles, legend_labels = plot_loss_similarity(e_axes, loss_similarity)
     e_fig.subplots_adjust(left=0.10, right=0.99, bottom=0.20, top=0.86, wspace=0.18)
@@ -386,4 +398,3 @@ def plot_consensus(source, output):
     )
     save_original(e_legend_fig, output, "loss_similarity_to_bce_legend")
     save_original(e_fig, output, "loss_similarity_to_bce_barplots")
-

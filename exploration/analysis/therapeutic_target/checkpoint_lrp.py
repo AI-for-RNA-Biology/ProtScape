@@ -64,8 +64,14 @@ def apply_hyperparameters(config, row: pd.Series) -> None:
         config.pdl_proj_mode = str(row["pdl_proj_mode"])
 
 
-def load_embeddings(config) -> EmbeddingLoader:
-    paths = get_hc_embedding_paths(config.get_inference_path())
+def load_embeddings(
+    config,
+    cell_embedding_file: str = "cell_embeddings.pt",
+) -> EmbeddingLoader:
+    paths = get_hc_embedding_paths(
+        config.get_inference_path(),
+        cell_embedding_file=cell_embedding_file,
+    )
     return EmbeddingLoader(
         config.embeddings.esm,
         paths["protein_embed"],
@@ -198,11 +204,24 @@ def recompute_performance() -> pd.DataFrame:
         row["run_dir"] = str(run_dir)
         configs.append(row)
     configs = pd.DataFrame(configs)
+    configs["cell_embedding_file"] = (
+        configs["cell_embedding_file"]
+        .replace("", pd.NA)
+        .fillna("cell_embeddings.pt")
+    )
     output = []
-    group_columns = ["embedding_inference_name", "embedding_source"]
-    for (inference_name, embedding_source), group in configs.groupby(group_columns, sort=False):
+    group_columns = [
+        "embedding_inference_name",
+        "embedding_source",
+        "cell_embedding_file",
+    ]
+    for (
+        inference_name,
+        embedding_source,
+        cell_embedding_file,
+    ), group in configs.groupby(group_columns, sort=False):
         config = load_config(str(inference_name), str(embedding_source), "bulk")
-        loader = load_embeddings(config)
+        loader = load_embeddings(config, str(cell_embedding_file))
         for task, task_runs in group.groupby("task", sort=False):
             genes, labels, _, split_plan = load_task(task, config, loader)
             for _, row in task_runs.iterrows():
@@ -243,7 +262,10 @@ def generate_lrp(
     inference_name = str(row["embedding_inference_name"])
     config = load_config(inference_name, str(row["embedding_source"]), "bulk")
     apply_hyperparameters(config, row)
-    loader = load_embeddings(config)
+    cell_embedding_file = row.get("cell_embedding_file", "cell_embeddings.pt")
+    if pd.isna(cell_embedding_file) or not str(cell_embedding_file).strip():
+        cell_embedding_file = "cell_embeddings.pt"
+    loader = load_embeddings(config, str(cell_embedding_file))
     genes, labels, class_names, split_plan = load_task(str(row["task"]), config, loader)
     trainer = Trainer(config, loader, run_dir, force=False)
     variant = MODEL_VARIANTS[str(row["base_model_key"])]

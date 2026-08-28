@@ -130,25 +130,28 @@ def build_output_tables(robust, metagraph, cci, parameters, contextwise):
 
     metagraph_rows = []
     for key in CORE_MODEL_ORDER:
-        ppi_score = by_model.loc[(key, 1), "test_ap_ppi"]
-        meta_score = metagraph[key]["ap"]
         is_pinnacle = MODELS[key]["kind"] == "pinnacle"
-        metagraph_rows.append(
-            {
-                "model_key": key,
-                "metric": "ap",
-                "protein_score": ppi_score,
-                "metagraph_score": meta_score,
-                "protein_percent": 100.0 * ppi_score,
-                "metagraph_percent": 100.0 * meta_score,
-                "higher_level_scope": "full_metagraph" if is_pinnacle else "cell_cell",
-                "higher_level_protocol": (
-                    "in_sample_reconstruction"
-                    if is_pinnacle
-                    else "held_out_1to1_train_only_message_passing"
-                ),
-            }
-        )
+        for metric in ("ap", "f1"):
+            ppi_score = by_model.loc[(key, 1), f"test_{metric}_ppi"]
+            meta_score = metagraph[key][metric]
+            metagraph_rows.append(
+                {
+                    "model_key": key,
+                    "metric": metric,
+                    "protein_score": ppi_score,
+                    "metagraph_score": meta_score,
+                    "protein_percent": 100.0 * ppi_score,
+                    "metagraph_percent": 100.0 * meta_score,
+                    "higher_level_scope": (
+                        "full_metagraph" if is_pinnacle else "cell_cell"
+                    ),
+                    "higher_level_protocol": (
+                        "in_sample_reconstruction"
+                        if is_pinnacle
+                        else "held_out_1to1_train_only_message_passing"
+                    ),
+                }
+            )
 
     pooling_rows = []
     for key in POOLING_MODEL_ORDER:
@@ -173,6 +176,7 @@ def build_output_tables(robust, metagraph, cci, parameters, contextwise):
             )
 
     contextwise = pd.DataFrame(contextwise)
+    metagraph_table = pd.DataFrame(metagraph_rows)
     outputs = {
         "robust_ppi_auprc.csv": curve_table(
             robust, CORE_MODEL_ORDER, "test_ap_ppi", chance=True
@@ -186,7 +190,10 @@ def build_output_tables(robust, metagraph, cci, parameters, contextwise):
         "loss_sensitivity_f1.csv": curve_table(
             robust, LOSS_MODEL_ORDER, "test_f1_ppi"
         ),
-        "metagraph_auprc.csv": pd.DataFrame(metagraph_rows),
+        "metagraph_auprc.csv": metagraph_table[
+            metagraph_table["metric"] == "ap"
+        ].reset_index(drop=True),
+        "metagraph_metrics.csv": metagraph_table,
         "parameter_counts.csv": pd.DataFrame(
             [
                 {

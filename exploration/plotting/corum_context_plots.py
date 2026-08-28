@@ -24,7 +24,7 @@ AXIS_LINEWIDTH = 0.6
 BAR_EDGE_LINEWIDTH = 0.55
 DATA_LINEWIDTH = 0.8
 TICK_LABEL_SIZE = 6.0
-AXIS_LABEL_SIZE = 7.0
+AXIS_LABEL_SIZE = 8.0
 PANEL_TITLE_SIZE = 7.0
 LEGEND_SIZE = 6.0
 SINGLE_COLUMN_WIDTH_CM = 8.8
@@ -56,6 +56,7 @@ PLOT_RC = {
     "hatch.linewidth": AXIS_LINEWIDTH,
     "axes.labelsize": AXIS_LABEL_SIZE,
     "axes.titlesize": PANEL_TITLE_SIZE,
+    "figure.titlesize": PANEL_TITLE_SIZE,
     "xtick.major.width": 0.6,
     "ytick.major.width": 0.6,
     "xtick.major.size": 2.5,
@@ -68,6 +69,7 @@ PLOT_RC = {
     "ytick.labelsize": TICK_LABEL_SIZE,
     "legend.fontsize": LEGEND_SIZE,
     "legend.frameon": False,
+    "savefig.format": "pdf",
     "svg.fonttype": "none",
     "savefig.dpi": 300,
     "savefig.transparent": True,
@@ -340,6 +342,64 @@ def plot_per_complex_drivers(
     save_figure(fig, output, "corum_main_competitors_auprc_driver_summary")
 
 
+def plot_per_complex_drivers_factored(
+    correlations: pd.DataFrame,
+    output: Path,
+) -> None:
+    """Plot compact driver correlations for contextual models only."""
+    fig = plt.figure(figsize=figure_size(DOUBLE_COLUMN_WIDTH_CM * 0.75, 4.5))
+    grid = fig.add_gridspec(1, len(DRIVER_SPECS), wspace=0.34)
+    rho_axes = [
+        fig.add_subplot(grid[0, index]) for index in range(len(DRIVER_SPECS))
+    ]
+    rho_ticks = np.asarray([-20.0, 0.0, 20.0, 40.0])
+
+    for rho_ax, driver in zip(rho_axes, DRIVER_SPECS):
+        stat_rows = (
+            correlations[correlations["driver"] == driver["key"]]
+            .set_index("inference_key")
+            .loc[MAIN_CONTEXT_MODEL_ORDER]
+            .reset_index()
+        )
+        positions = np.arange(len(stat_rows), dtype=float)
+        for position, stat in zip(positions, stat_rows.itertuples(index=False)):
+            rho_percent = 100.0 * float(stat.spearman)
+            rho_ax.barh(
+                position,
+                rho_percent,
+                height=0.72,
+                color=MODEL_COLORS[stat.inference_key],
+                edgecolor="none",
+            )
+            symbol = significance_symbol(stat.spearman_p)
+            suffix = "" if symbol == "ns" else symbol
+            rho_ax.text(
+                rho_percent + (0.6 if rho_percent >= 0.0 else 0.8),
+                position,
+                f"{int(round(rho_percent))}{suffix}",
+                ha="left",
+                va="center",
+                fontsize=TICK_LABEL_SIZE,
+            )
+
+        rho_ax.set_xticks(rho_ticks)
+        rho_ax.set_xlim(rho_ticks[0], rho_ticks[-1])
+        rho_ax.set_ylim(-0.15, len(stat_rows) - 0.15)
+        rho_ax.set_yticks([])
+        rho_ax.invert_yaxis()
+        clean_axes(rho_ax)
+        place_bar_y_axis_at_zero(rho_ax)
+        rho_ax.tick_params(axis="y", labelleft=False)
+        rho_ax.set_xlabel(r"$\rho$ (metric, AUPRC)", fontsize=AXIS_LABEL_SIZE)
+
+    fig.subplots_adjust(left=0.15, right=0.975, bottom=0.11, top=0.96)
+    save_figure(
+        fig,
+        output,
+        "corum_main_competitors_auprc_driver_summary_factored",
+    )
+
+
 def plot_xmil_summary(
     summary: pd.DataFrame,
     correlations: pd.DataFrame,
@@ -442,6 +502,65 @@ def plot_xmil_summary(
     save_figure(fig, output, "corum_xmil_main_models_context_summary")
 
 
+def plot_xmil_summary_factored(
+    correlations: pd.DataFrame,
+    output: Path,
+) -> None:
+    """Plot compact xMIL correlations using the released mean-LRP table."""
+    correlations = correlations[
+        correlations["evidence_score"] == "complete_positive_lrp"
+    ].copy()
+    fig = plt.figure(figsize=figure_size(DOUBLE_COLUMN_WIDTH_CM * 0.375, 4.5))
+    grid = fig.add_gridspec(1, len(XMIL_METRICS), wspace=0.34)
+    rho_axes = [
+        fig.add_subplot(grid[0, index]) for index in range(len(XMIL_METRICS))
+    ]
+    rho_ticks = np.asarray([-20.0, 0.0, 20.0, 40.0])
+
+    for rho_ax, metric in zip(rho_axes, XMIL_METRICS):
+        stat_rows = (
+            correlations[correlations["coverage_metric"] == metric["key"]]
+            .set_index("inference_key")
+            .loc[MAIN_CONTEXT_MODEL_ORDER]
+            .reset_index()
+        )
+        positions = np.arange(len(stat_rows), dtype=float)
+        for position, stat in zip(positions, stat_rows.itertuples(index=False)):
+            rho_percent = 100.0 * float(stat.median_spearman)
+            rho_ax.barh(
+                position,
+                rho_percent,
+                height=0.72,
+                color=MODEL_COLORS[stat.inference_key],
+                edgecolor="none",
+            )
+            rho_ax.text(
+                rho_percent + (0.6 if rho_percent >= 0.0 else 0.8),
+                position,
+                f"{int(round(rho_percent))}",
+                ha="left",
+                va="center",
+                fontsize=TICK_LABEL_SIZE,
+            )
+
+        rho_ax.set_xticks(rho_ticks)
+        rho_ax.set_xlim(rho_ticks[0], rho_ticks[-1])
+        rho_ax.set_ylim(-0.15, len(stat_rows) - 0.15)
+        rho_ax.set_yticks([])
+        rho_ax.invert_yaxis()
+        clean_axes(rho_ax)
+        place_bar_y_axis_at_zero(rho_ax)
+        rho_ax.tick_params(axis="y", labelleft=False)
+        rho_ax.set_xlabel(r"$\rho$ (metric, AUPRC)", fontsize=AXIS_LABEL_SIZE)
+
+    fig.subplots_adjust(left=0.15, right=0.975, bottom=0.11, top=0.96)
+    save_figure(
+        fig,
+        output,
+        "corum_xmil_main_models_context_summary_factored",
+    )
+
+
 def plot_xmil_legend(output: Path) -> None:
     fig = plt.figure(figsize=figure_size(DOUBLE_COLUMN_WIDTH_CM, 1.9))
     fig.legend(
@@ -458,17 +577,28 @@ def plot_xmil_legend(output: Path) -> None:
 def plot_context_analysis(source: Path, output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
     with matplotlib.rc_context(PLOT_RC):
+        driver_summary = read_table(source, "corum_per_complex_driver_summary.csv")
+        driver_bins = read_table(source, "corum_per_complex_driver_bins.csv")
+        driver_correlations = read_table(
+            source, "corum_per_complex_driver_correlations.csv"
+        )
         plot_per_complex_drivers(
-            read_table(source, "corum_per_complex_driver_summary.csv"),
-            read_table(source, "corum_per_complex_driver_bins.csv"),
-            read_table(source, "corum_per_complex_driver_correlations.csv"),
+            driver_summary,
+            driver_bins,
+            driver_correlations,
             output,
         )
+        plot_per_complex_drivers_factored(driver_correlations, output)
         plot_driver_legend(output)
 
+        xmil_summary = read_table(source, "corum_xmil_binned_summary.csv")
+        xmil_correlations = read_table(
+            source, "corum_xmil_correlation_summary.csv"
+        )
         plot_xmil_summary(
-            read_table(source, "corum_xmil_binned_summary.csv"),
-            read_table(source, "corum_xmil_correlation_summary.csv"),
+            xmil_summary,
+            xmil_correlations,
             output,
         )
+        plot_xmil_summary_factored(xmil_correlations, output)
         plot_xmil_legend(output)

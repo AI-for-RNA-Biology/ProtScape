@@ -28,10 +28,11 @@ MAX_FIGURE_HEIGHT_CM = 17.0
 WIDE_SINGLE_SIZE = (18.0 * CM, 8.8 * CM)
 
 AXIS_LINEWIDTH = 0.6
+BAR_EDGE_COLOR = "#222222"
 BAR_EDGE_LINEWIDTH = 0.55
 DATA_LINEWIDTH = 0.8
 TICK_LABEL_SIZE = 6.0
-AXIS_LABEL_SIZE = 7.0
+AXIS_LABEL_SIZE = 8.0
 PANEL_TITLE_SIZE = 7.0
 LEGEND_SIZE = 6.0
 
@@ -60,6 +61,7 @@ PLOT_RC = {
     "hatch.linewidth": AXIS_LINEWIDTH,
     "axes.labelsize": AXIS_LABEL_SIZE,
     "axes.titlesize": PANEL_TITLE_SIZE,
+    "figure.titlesize": PANEL_TITLE_SIZE,
     "xtick.major.width": 0.6,
     "ytick.major.width": 0.6,
     "xtick.major.size": 2.5,
@@ -72,6 +74,7 @@ PLOT_RC = {
     "ytick.labelsize": TICK_LABEL_SIZE,
     "legend.fontsize": LEGEND_SIZE,
     "legend.frameon": False,
+    "savefig.format": "pdf",
     "svg.fonttype": "none",
     "savefig.dpi": 300,
     "savefig.transparent": True,
@@ -82,20 +85,16 @@ READOUT_ORDER = [
     "lr_prostt5",
     "lr_hc_cell",
     "lr_hc_cell_esm",
-    "abmil8_hc_cell",
-    "abmil8",
     "abmil8_pdl_hc_cell",
     "abmil8_pdl_id2_dropout",
 ]
 READOUT_LABELS = {
-    "lr_esm": "Linear probe\nESM2 sequence",
-    "lr_prostt5": "Linear probe\nProstT5 sequence",
-    "lr_hc_cell": "Mean-pool LR\nContextual instances",
-    "lr_hc_cell_esm": "Mean-pool LR\nContextual + ESM2",
-    "abmil8_hc_cell": "ABMIL\nContextual instances",
-    "abmil8": "ABMIL\nContextual + ESM2",
-    "abmil8_pdl_hc_cell": "ABMIL-PDL\nContextual instances",
-    "abmil8_pdl_id2_dropout": "ABMIL-PDL\nContextual + ESM2",
+    "lr_esm": "ESM2",
+    "lr_prostt5": "ProstT5",
+    "lr_hc_cell": "Mean-MIL\nContextual",
+    "lr_hc_cell_esm": "Mean-MIL\nContextual + ESM2",
+    "abmil8_pdl_hc_cell": "ABMIL\nContextual",
+    "abmil8_pdl_id2_dropout": "ABMIL\nContextual + ESM2",
 }
 BASELINES = {"lr_esm", "lr_prostt5"}
 MODEL_ORDER = [
@@ -113,6 +112,8 @@ MODEL_LABELS = {
     "pinnacle_esm2_acm": "Pinnacle-ESM2 (ACM)",
     "gae_att_fixed_do06": "ProtScape-GAE",
     "s2gae_att_k1_fixed_do04_uni": "ProtScape",
+    "s2gae_phuber_uni": "ProtScape (pHuber)",
+    "s2gae_l1_uni": "ProtScape (L1)",
 }
 MODEL_COLORS = {
     "lr_esm": "#222222",
@@ -121,8 +122,33 @@ MODEL_COLORS = {
     "pinnacle_esm_fixed": "#b0b0b0",
     "pinnacle_esm2_acm": "#7a7a7a",
     "gae_att_fixed_do06": "#1f77b4",
-    "s2gae_att_k1_fixed_do04_uni": "#e6550d",
+    "s2gae_att_k1_fixed_do04_uni": "#e6550e",
+    "s2gae_phuber_uni": "#ff1529",
+    "s2gae_l1_uni": "#9200bf",
 }
+
+LOSS_MODEL_ORDER = [
+    "s2gae_att_k1_fixed_do04_uni",
+    "s2gae_phuber_uni",
+    "s2gae_l1_uni",
+]
+LOSS_MODEL_LABELS = {
+    "s2gae_att_k1_fixed_do04_uni": "BCE",
+    "s2gae_phuber_uni": "pHuber",
+    "s2gae_l1_uni": "L1",
+}
+LOSS_READOUT_ORDER = [
+    "lr_hc_cell",
+    "lr_hc_cell_esm",
+    "abmil8_pdl_id2_dropout",
+]
+LOSS_READOUT_LABELS = {
+    "lr_hc_cell": "Mean-MIL\n(1)",
+    "lr_hc_cell_esm": "Mean-MIL\n(2)",
+    "abmil8_pdl_id2_dropout": "ABMIL\n(2)",
+}
+LOSS_CONTEXT_NOTE = "(1) Contextual     (2) Contextual + ESM2"
+N_DISEASES = 15
 
 
 def figure_size(width_cm: float, height_cm: float) -> tuple[float, float]:
@@ -191,21 +217,26 @@ def plot_average_legend(rows: pd.DataFrame, output: Path) -> None:
 
 
 def plot_average_metric(rows: pd.DataFrame, metric: str, output: Path) -> None:
-    sub = rows.loc[rows["metric"].eq(metric)].copy()
+    sub = rows.loc[
+        rows["metric"].eq(metric)
+        & rows["inference_key"].isin([*BASELINES, *MODEL_ORDER])
+    ].copy()
     readouts = [key for key in READOUT_ORDER if key in set(sub["readout_key"])]
     inference_order = [key for key in MODEL_ORDER if key in set(sub["inference_key"])]
+    bar_width = 0.25
+    group_widths = {
+        key: bar_width if key in BASELINES else bar_width * len(inference_order)
+        for key in readouts
+    }
     x_positions = [0.0]
     for previous, current in zip(readouts[:-1], readouts[1:]):
-        if previous in BASELINES and current in BASELINES:
-            gap = 0.62
-        elif previous in BASELINES:
-            gap = 1.34
-        else:
-            gap = 0.98
+        gap = (
+            group_widths[previous] + group_widths[current]
+        ) / 2.0 + bar_width * 1.3
         x_positions.append(x_positions[-1] + gap)
     x = np.asarray(x_positions)
-    bar_width = min(0.15, 0.72 / max(len(inference_order), 1))
-    fig, ax = plt.subplots(figsize=WIDE_SINGLE_SIZE)
+    figure_width_cm = DOUBLE_COLUMN_WIDTH_CM * (0.40 + bar_width * 0.7)
+    fig, ax = plt.subplots(figsize=figure_size(figure_width_cm, 5.5))
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
 
@@ -254,7 +285,7 @@ def plot_average_metric(rows: pd.DataFrame, metric: str, output: Path) -> None:
             heights,
             width=bar_width,
             color=MODEL_COLORS[model],
-            edgecolor="white",
+            edgecolor=BAR_EDGE_COLOR,
             linewidth=BAR_EDGE_LINEWIDTH,
             zorder=3,
         )
@@ -268,20 +299,192 @@ def plot_average_metric(rows: pd.DataFrame, metric: str, output: Path) -> None:
             linewidth=DATA_LINEWIDTH,
             zorder=5,
         )
-    ax.set_ylim(0.0, 100.0)
-    ax.set_yticks(np.arange(0.0, 101.0, 20.0))
-    ax.set_ylabel(f"Mean test {metric.upper()}", fontsize=AXIS_LABEL_SIZE)
+    y_max = float(np.nanmax(sub["score_percent"].to_numpy(dtype=float)))
+    y_top = min(100.0, np.ceil((y_max + 2.0) / 5.0) * 5.0)
+    y_min = 10.0
+    ax.set_ylim(y_min, max(y_top, y_min))
+    ax.set_yticks(np.asarray([10.0, 30.0, 50.0, 70.0]))
+    metric_label = "macro F1" if metric == "f1" else metric.upper()
+    ax.set_ylabel(
+        f"Mean {metric_label} across diseases (%)",
+        fontsize=AXIS_LABEL_SIZE,
+    )
     ax.set_xticks(x)
     ax.set_xticklabels(
         [READOUT_LABELS[key] for key in readouts],
         fontsize=TICK_LABEL_SIZE,
-        rotation=25,
-        ha="right",
+        rotation=0,
+        ha="center",
     )
-    ax.set_xlim(x[0] - 0.46, x[-1] + 0.48)
+    left_margin = group_widths[readouts[0]] / 2.0 + bar_width * 0.3
+    right_margin = group_widths[readouts[-1]] / 2.0 + bar_width * 0.3
+    ax.set_xlim(x[0] - left_margin, x[-1] + right_margin)
     clean_axes(ax)
-    fig.subplots_adjust(left=0.09, right=0.985, bottom=0.33, top=0.97)
+    fig.subplots_adjust(left=0.08, right=0.98, bottom=0.34, top=0.97)
     save_figure(fig, output, f"tt_average_{metric}_core")
+
+
+def loss_rows(rows: pd.DataFrame, metric: str) -> pd.DataFrame:
+    sub = rows.loc[
+        rows["metric"].eq(metric)
+        & rows["inference_key"].isin(LOSS_MODEL_ORDER)
+        & rows["readout_key"].isin(LOSS_READOUT_ORDER)
+    ].copy()
+    expected = pd.MultiIndex.from_product(
+        [LOSS_READOUT_ORDER, LOSS_MODEL_ORDER],
+        names=["readout_key", "inference_key"],
+    )
+    coverage = sub.set_index(["readout_key", "inference_key"])["n_tasks"].reindex(
+        expected
+    )
+    incomplete = coverage[coverage.ne(N_DISEASES)]
+    if not incomplete.empty:
+        raise ValueError(
+            f"The {metric.upper()} loss benchmark requires all {N_DISEASES} diseases:\n"
+            + incomplete.to_string()
+        )
+    return sub
+
+
+def add_loss_legend(ax: plt.Axes) -> None:
+    handles = [
+        Patch(
+            facecolor=MODEL_COLORS[key],
+            edgecolor=BAR_EDGE_COLOR,
+            linewidth=BAR_EDGE_LINEWIDTH,
+            label=LOSS_MODEL_LABELS[key],
+        )
+        for key in LOSS_MODEL_ORDER
+    ]
+    ax.legend(
+        handles=handles,
+        frameon=False,
+        fontsize=LEGEND_SIZE,
+        title="(1) Contextual\n(2) Contextual + ESM2",
+        title_fontsize=LEGEND_SIZE,
+        loc="upper left",
+        bbox_to_anchor=(1.01, 1.0),
+    )
+
+
+def plot_loss_metric(
+    rows: pd.DataFrame,
+    metric: str,
+    output: Path,
+    *,
+    include_legend: bool = False,
+) -> None:
+    sub = loss_rows(rows, metric)
+    bar_width = 0.25
+    group_width = bar_width * len(LOSS_MODEL_ORDER)
+    x_positions = [0.0]
+    for _ in LOSS_READOUT_ORDER[1:]:
+        x_positions.append(x_positions[-1] + group_width + bar_width * 1.3)
+    x = np.asarray(x_positions)
+
+    margin = group_width / 2.0 + bar_width * 0.3
+    loss_axis_span = (x[-1] - x[0]) + 2.0 * margin
+    main_axis_span = 7.275
+    main_width_cm = DOUBLE_COLUMN_WIDTH_CM * (0.40 + bar_width * 0.7)
+    figure_width_cm = main_width_cm * loss_axis_span / main_axis_span
+    if include_legend:
+        figure_width_cm *= (0.98 - 0.08) / (0.72 - 0.08)
+
+    fig, ax = plt.subplots(figsize=figure_size(figure_width_cm, 5.5))
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    for index, model in enumerate(LOSS_MODEL_ORDER):
+        offset = (index - (len(LOSS_MODEL_ORDER) - 1) / 2.0) * bar_width
+        values = sub.loc[sub["inference_key"].eq(model)].set_index("readout_key")
+        values = values.reindex(LOSS_READOUT_ORDER)
+        heights = values["score_percent"].to_numpy(dtype=float)
+        errors = values["sem_percent"].to_numpy(dtype=float)
+        ax.bar(
+            x + offset,
+            heights,
+            width=bar_width,
+            color=MODEL_COLORS[model],
+            edgecolor=BAR_EDGE_COLOR,
+            linewidth=BAR_EDGE_LINEWIDTH,
+            zorder=3,
+        )
+        ax.errorbar(
+            x + offset,
+            heights,
+            yerr=errors,
+            fmt="none",
+            ecolor="#333333",
+            capsize=2.0,
+            linewidth=DATA_LINEWIDTH,
+            zorder=5,
+        )
+
+    upper_values = sub["score_percent"] + sub["sem_percent"].fillna(0.0)
+    y_top = max(80.0, np.ceil((float(upper_values.max()) + 1.0) / 5.0) * 5.0)
+    y_top = min(100.0, y_top)
+    ax.set_ylim(0.0, y_top)
+    ax.set_yticks(np.arange(0.0, y_top + 0.1, 20.0))
+    metric_label = "macro F1" if metric == "f1" else metric.upper()
+    ax.set_ylabel(
+        f"Mean {metric_label} across diseases (%)",
+        fontsize=AXIS_LABEL_SIZE,
+    )
+    ax.set_xticks(x)
+    ax.set_xticklabels(
+        [LOSS_READOUT_LABELS[key] for key in LOSS_READOUT_ORDER],
+        fontsize=TICK_LABEL_SIZE,
+        rotation=0,
+        ha="center",
+    )
+    ax.set_xlim(x[0] - margin, x[-1] + margin)
+    clean_axes(ax)
+    if include_legend:
+        add_loss_legend(ax)
+        fig.subplots_adjust(left=0.08, right=0.72, bottom=0.34, top=0.97)
+        suffix = "_with_legend"
+    else:
+        fig.subplots_adjust(left=0.08, right=0.98, bottom=0.34, top=0.97)
+        suffix = ""
+    save_figure(
+        fig,
+        output,
+        f"tt_average_{metric}_loss_model_supplement{suffix}",
+    )
+
+
+def plot_loss_legend(output: Path) -> None:
+    handles = [
+        Patch(
+            facecolor=MODEL_COLORS[key],
+            edgecolor=BAR_EDGE_COLOR,
+            linewidth=BAR_EDGE_LINEWIDTH,
+            label=LOSS_MODEL_LABELS[key],
+        )
+        for key in LOSS_MODEL_ORDER
+    ]
+    fig = plt.figure(figsize=figure_size(SINGLE_COLUMN_WIDTH_CM, 1.6))
+    fig.patch.set_facecolor("white")
+    fig.legend(
+        handles=handles,
+        frameon=False,
+        fontsize=LEGEND_SIZE,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.88),
+        ncol=len(handles),
+        handlelength=1.35,
+        columnspacing=1.0,
+        handletextpad=0.4,
+    )
+    fig.text(
+        0.5,
+        0.22,
+        LOSS_CONTEXT_NOTE,
+        ha="center",
+        va="center",
+        fontsize=LEGEND_SIZE,
+    )
+    save_figure(fig, output, "loss_model_supplement_legend")
 
 
 def scatter_models(
@@ -477,7 +680,12 @@ def plot_performance(source: Path, output: Path) -> None:
     with matplotlib.rc_context(PLOT_RC):
         mean = pd.read_csv(source / "mean_performance.csv")
         plot_average_metric(mean, "auprc", output)
+        plot_average_metric(mean, "f1", output)
         plot_average_legend(mean, output)
+        for metric in ("auprc", "f1"):
+            plot_loss_metric(mean, metric, output)
+            plot_loss_metric(mean, metric, output, include_legend=True)
+        plot_loss_legend(output)
         plot_disease_comparisons(
             pd.read_csv(source / "disease_model_comparison.csv"), output
         )

@@ -19,8 +19,9 @@ matplotlib.rcParams["ps.fonttype"] = 42
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.colors import TwoSlopeNorm
+from matplotlib.colors import LinearSegmentedColormap, Normalize, TwoSlopeNorm
 from matplotlib.lines import Line2D
+from scipy.cluster import hierarchy
 
 
 CM = 1 / 2.54
@@ -33,7 +34,7 @@ AXIS_LINEWIDTH = 0.6
 BAR_EDGE_LINEWIDTH = 0.55
 DATA_LINEWIDTH = 0.8
 TICK_LABEL_SIZE = 6.0
-AXIS_LABEL_SIZE = 7.0
+AXIS_LABEL_SIZE = 8.0
 PANEL_TITLE_SIZE = 7.0
 LEGEND_SIZE = 6.0
 
@@ -62,6 +63,7 @@ PLOT_RC = {
     "hatch.linewidth": AXIS_LINEWIDTH,
     "axes.labelsize": AXIS_LABEL_SIZE,
     "axes.titlesize": PANEL_TITLE_SIZE,
+    "figure.titlesize": PANEL_TITLE_SIZE,
     "xtick.major.width": 0.6,
     "ytick.major.width": 0.6,
     "xtick.major.size": 2.5,
@@ -74,6 +76,7 @@ PLOT_RC = {
     "ytick.labelsize": TICK_LABEL_SIZE,
     "legend.fontsize": LEGEND_SIZE,
     "legend.frameon": False,
+    "savefig.format": "pdf",
     "svg.fonttype": "none",
     "savefig.dpi": 300,
     "savefig.transparent": True,
@@ -98,7 +101,7 @@ MODEL_COLORS = {
     "pinnacle_esm_fixed": "#b0b0b0",
     "pinnacle_esm2_acm": "#7a7a7a",
     "gae_att_fixed_do06": "#1f77b4",
-    "s2gae_att_k1_fixed_do04_uni": "#e6550d",
+    "s2gae_att_k1_fixed_do04_uni": "#e6550e",
 }
 
 CELL_CLASSES = [
@@ -130,6 +133,13 @@ CELL_CLASS_COLORS = {
     "Stromal-Epithelial": "#AF7AA1",
     "Pigment": "#555555",
 }
+POSITIVE_LRP_CMAP = "plasma"
+SIGNED_LRP_CMAP = LinearSegmentedColormap.from_list(
+    "protscape_signed_lrp",
+    ["#084594", "#4292C6", "#F7F7F7", "#EF6548", "#A50F15"],
+)
+ROW_Z_LIMIT = 3.0
+SIGNED_LIMIT_PERCENT = 2.5
 
 TASK_ORDER = [
     ("therapeutic_target_mondo_0005180", "Parkinson disease"),
@@ -179,33 +189,34 @@ def save_figure(fig: plt.Figure, output: Path, stem: str) -> None:
     plt.close(fig)
 
 
-def plot_signed_heatmap(matrix: pd.DataFrame, output: Path) -> None:
-    matrix = matrix.set_index("disease").reindex(
-        index=[disease for _, disease in TASK_ORDER], columns=CELL_CLASSES
+def attribution_matrix(values: pd.DataFrame) -> pd.DataFrame:
+    return values.set_index("disease").reindex(
+        index=[disease for _, disease in TASK_ORDER],
+        columns=CELL_CLASSES,
     )
-    fig = plt.figure(figsize=figure_size(DOUBLE_COLUMN_WIDTH_CM, 15.5), facecolor="white")
-    grid = fig.add_gridspec(
-        1,
-        2,
-        width_ratios=(18.0, 0.68),
-        left=0.285,
-        right=0.925,
-        bottom=0.19,
-        top=0.95,
-        wspace=0.08,
+
+
+def row_zscore(matrix: pd.DataFrame) -> pd.DataFrame:
+    values = matrix.to_numpy(dtype=float)
+    means = values.mean(axis=1, keepdims=True)
+    standard_deviations = values.std(axis=1, ddof=0, keepdims=True)
+    if np.any(standard_deviations <= np.finfo(float).eps):
+        raise ValueError("Cannot row-normalize a constant attribution profile")
+    return pd.DataFrame(
+        (values - means) / standard_deviations,
+        index=matrix.index,
+        columns=matrix.columns,
     )
-    ax = fig.add_subplot(grid[0, 0])
-    image = ax.imshow(
-        matrix,
-        cmap="RdBu_r",
-        norm=TwoSlopeNorm(vmin=-2.5, vcenter=0.0, vmax=2.5),
-        aspect="auto",
-        interpolation="nearest",
-    )
+
+
+def style_heatmap_axes(ax: plt.Axes, matrix: pd.DataFrame) -> None:
     ax.set_xticks(np.arange(matrix.shape[1]))
     ax.set_xticklabels(
-        [CELL_CLASS_LABELS.get(value, value) for value in matrix.columns],
-        rotation=42,
+        [
+            CELL_CLASS_LABELS.get(value, value).replace("\n", "")
+            for value in matrix.columns
+        ],
+        rotation=80,
         ha="right",
         rotation_mode="anchor",
         fontsize=TICK_LABEL_SIZE,
@@ -218,10 +229,107 @@ def plot_signed_heatmap(matrix: pd.DataFrame, output: Path) -> None:
     ax.tick_params(which="both", length=0)
     for spine in ax.spines.values():
         spine.set_visible(False)
+
+
+def plot_positive_heatmap(
+    matrix: pd.DataFrame,
+    output: Path,
+    stem: str,
+    colorbar_label: str,
+) -> None:
+    row_z = row_zscore(attribution_matrix(matrix))
+    linkage = hierarchy.linkage(
+        row_z.to_numpy().T,
+        method="average",
+        metric="euclidean",
+        optimal_ordering=True,
+    )
+    order = hierarchy.leaves_list(linkage)[::-1]
+    row_z = row_z.iloc[:, order]
+
+    fig = plt.figure(
+        figsize=figure_size(SINGLE_COLUMN_WIDTH_CM, 9.3),
+        facecolor="white",
+    )
+    grid = fig.add_gridspec(
+        2,
+        2,
+        width_ratios=(18.0, 0.68),
+        height_ratios=(1.35, 5.8),
+        left=0.40,
+        right=0.90,
+        bottom=0.30,
+        top=0.94,
+        hspace=0.04,
+        wspace=0.08,
+    )
+    dendrogram_ax = fig.add_subplot(grid[0, 0])
+    hierarchy.dendrogram(
+        linkage,
+        ax=dendrogram_ax,
+        orientation="top",
+        no_labels=True,
+        color_threshold=0.0,
+        above_threshold_color="#222222",
+        link_color_func=lambda _: "#222222",
+    )
+    for collection in dendrogram_ax.collections:
+        collection.set_linewidth(AXIS_LINEWIDTH)
+    dendrogram_ax.invert_xaxis()
+    dendrogram_ax.axis("off")
+
+    ax = fig.add_subplot(grid[1, 0])
+    image = ax.imshow(
+        row_z,
+        cmap=POSITIVE_LRP_CMAP,
+        norm=Normalize(vmin=-ROW_Z_LIMIT, vmax=ROW_Z_LIMIT),
+        aspect="equal",
+        interpolation="nearest",
+    )
+    style_heatmap_axes(ax, row_z)
+    colorbar_ax = fig.add_subplot(grid[1, 1])
+    colorbar = fig.colorbar(image, cax=colorbar_ax)
+    colorbar.set_label(colorbar_label, fontsize=AXIS_LABEL_SIZE)
+    colorbar.ax.tick_params(labelsize=TICK_LABEL_SIZE, length=2)
+    colorbar.outline.set_linewidth(AXIS_LINEWIDTH)
+    save_figure(fig, output, stem)
+
+
+def plot_signed_heatmap(matrix: pd.DataFrame, output: Path) -> None:
+    matrix = attribution_matrix(matrix)
+    if np.nanmax(np.abs(matrix.to_numpy(dtype=float))) > SIGNED_LIMIT_PERCENT:
+        raise ValueError("Signed attribution exceeds the fixed +/-2.5% scale")
+    fig = plt.figure(
+        figsize=figure_size(SINGLE_COLUMN_WIDTH_CM, 8.5),
+        facecolor="white",
+    )
+    grid = fig.add_gridspec(
+        1,
+        2,
+        width_ratios=(18.0, 0.68),
+        left=0.40,
+        right=0.90,
+        bottom=0.30,
+        top=0.98,
+        wspace=0.08,
+    )
+    ax = fig.add_subplot(grid[0, 0])
+    image = ax.imshow(
+        matrix,
+        cmap=SIGNED_LRP_CMAP,
+        norm=TwoSlopeNorm(
+            vmin=-SIGNED_LIMIT_PERCENT,
+            vcenter=0.0,
+            vmax=SIGNED_LIMIT_PERCENT,
+        ),
+        aspect="equal",
+        interpolation="nearest",
+    )
+    style_heatmap_axes(ax, matrix)
     colorbar_ax = fig.add_subplot(grid[0, 1])
     colorbar = fig.colorbar(image, cax=colorbar_ax)
     colorbar.set_label(
-        "Mean signed contribution per cellular context (% of total |LRP|)",
+        "Mean signed contribution (% total |LRP|)",
         fontsize=AXIS_LABEL_SIZE,
     )
     colorbar.ax.tick_params(labelsize=TICK_LABEL_SIZE, length=2)
@@ -433,9 +541,21 @@ def plot_disease_top_contexts(top: pd.DataFrame, output: Path) -> None:
 def plot_attributions(source: Path, output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
     with matplotlib.rc_context(PLOT_RC):
+        plot_positive_heatmap(
+            pd.read_csv(source / "cell_class_positive_contribution.csv"),
+            output,
+            "test_disease_cell_class_positive_lrp",
+            "Mean positive contribution (row z-score)",
+        )
         plot_signed_heatmap(
             pd.read_csv(source / "cell_class_signed_contribution_percent.csv"),
             output,
+        )
+        plot_positive_heatmap(
+            pd.read_csv(source / "cell_class_max_positive_contribution.csv"),
+            output,
+            "test_disease_cell_class_positive_lrp_max",
+            "Maximum positive contribution (row z-score)",
         )
         plot_focal_targets(
             pd.read_csv(source / "focal_target_top_contexts.csv"), output

@@ -15,6 +15,7 @@ matplotlib.rcParams["pdf.fonttype"] = 42
 matplotlib.rcParams["ps.fonttype"] = 42
 
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
 from matplotlib.patches import Rectangle
@@ -42,24 +43,24 @@ CLASS_LABELS = [
 SENSITIVITY_RC = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
-    "font.family": "sans-serif",
-    "font.sans-serif": ["Arial", "Nimbus Sans", "DejaVu Sans"],
-    "font.size": 9,
-    "mathtext.fontset": "dejavusans",
-    "axes.titlesize": 9,
-    "axes.labelsize": 9,
-    "xtick.labelsize": 8,
-    "ytick.labelsize": 8,
-    "legend.fontsize": 8,
-    "axes.linewidth": 1.0,
-    "xtick.major.width": 1.0,
-    "ytick.major.width": 1.0,
-    "xtick.major.size": 3.0,
-    "ytick.major.size": 3.0,
-    "xtick.minor.width": 0.8,
-    "ytick.minor.width": 0.8,
-    "xtick.minor.size": 1.8,
-    "ytick.minor.size": 1.8,
+    "font.family": "Arial",
+    "font.sans-serif": ["Arial"],
+    "font.size": 7,
+    "axes.titlesize": 8,
+    "axes.labelsize": 8,
+    "xtick.labelsize": 6,
+    "ytick.labelsize": 6,
+    "legend.fontsize": 6,
+    "figure.titlesize": 8,
+    "axes.linewidth": 0.6,
+    "xtick.major.width": 0.6,
+    "ytick.major.width": 0.6,
+    "xtick.major.size": 2.5,
+    "ytick.major.size": 2.5,
+    "xtick.minor.width": 0.5,
+    "ytick.minor.width": 0.5,
+    "xtick.minor.size": 1.5,
+    "ytick.minor.size": 1.5,
     "lines.linewidth": 1.3,
     "lines.markeredgewidth": 1.0,
     "patch.linewidth": 1.0,
@@ -72,8 +73,12 @@ SENSITIVITY_RC = {
     "ytick.color": "#111111",
     "figure.dpi": 100,
     "savefig.dpi": 300,
-    "savefig.transparent": False,
+    "savefig.transparent": True,
 }
+
+TITLE_FONT_SIZE = SENSITIVITY_RC["axes.titlesize"]
+AXIS_LABEL_FONT_SIZE = SENSITIVITY_RC["axes.labelsize"]
+TICK_FONT_SIZE = SENSITIVITY_RC["xtick.labelsize"]
 
 
 def read_table(source: Path, filename: str) -> pd.DataFrame:
@@ -100,7 +105,12 @@ def style_string_axis(ax: plt.Axes) -> None:
     ax.spines["left"].set_linewidth(1.0)
     ax.spines["bottom"].set_linewidth(1.0)
     ax.tick_params(
-        axis="both", which="major", labelsize=8, width=1.0, length=3.0, pad=3
+        axis="both",
+        which="major",
+        labelsize=TICK_FONT_SIZE,
+        width=1.0,
+        length=3.0,
+        pad=3,
     )
 
 
@@ -114,10 +124,16 @@ def string_count_label(value: float) -> str:
     return f"{value:.0f}"
 
 
+POSITIVE_CLASS_CMAP = matplotlib.colors.LinearSegmentedColormap.from_list(
+    "positive_class", ["#fdd0a2", "#a63603"]
+)
+POSITIVE_CLASS_COLORS = [
+    mcolors.to_hex(POSITIVE_CLASS_CMAP(position)) for position in (0.0, 0.5, 1.0)
+]
 STRING_BANDS = [
-    ("low", "0 < score < 0.4", "#D8B365"),
-    ("medium", "0.4 <= score < 0.8", "#80CDC1"),
-    ("high", "score >= 0.8", "#A1D99B"),
+    ("low", "0 < score < 0.4", POSITIVE_CLASS_COLORS[0]),
+    ("medium", "0.4 <= score < 0.8", POSITIVE_CLASS_COLORS[1]),
+    ("high", "score >= 0.8", POSITIVE_CLASS_COLORS[2]),
 ]
 
 
@@ -130,7 +146,7 @@ def string_class_order(label: str) -> tuple[list[str], list[str]]:
 def draw_string_coverage_axis(
     ax: plt.Axes, score_bands: pd.DataFrame, label: str, *, show_ylabel: bool
 ) -> None:
-    class_names, _ = string_class_order(label)
+    class_names, class_labels = string_class_order(label)
     table = score_bands[score_bands["label"] == label]
     counts = table.groupby("loss_class").first().reindex(class_names)
     total = counts["n_unique_pairs"].fillna(0).to_numpy(dtype=float)
@@ -142,7 +158,7 @@ def draw_string_coverage_axis(
         x,
         coverage,
         facecolor="white",
-        edgecolor="#006D2C",
+        edgecolor="black",
         linewidth=1.0,
         hatch="////",
         width=0.55,
@@ -154,16 +170,18 @@ def draw_string_coverage_axis(
             string_count_label(count),
             ha="center",
             va="bottom",
-            fontsize=8,
+            fontsize=TICK_FONT_SIZE,
             color="#111111",
         )
     title = "Labelled positives" if label == "Labelled positive" else "Labelled negatives"
-    ax.set_title(title, fontsize=9)
+    ax.set_title(title, fontsize=TITLE_FONT_SIZE)
+    ax.set_xticks(x)
+    ax.set_xticklabels(class_labels, fontsize=TICK_FONT_SIZE, fontweight="bold")
     ax.set_ylim(0, 115)
     ax.set_yticks([0, 50, 100])
-    ax.tick_params(axis="x", bottom=False, labelbottom=False)
+    ax.tick_params(axis="x", bottom=True, labelbottom=True)
     if show_ylabel:
-        ax.set_ylabel("STRING edge coverage (%)", fontsize=9)
+        ax.set_ylabel("STRING edge coverage (%)", fontsize=AXIS_LABEL_FONT_SIZE)
     else:
         ax.tick_params(axis="y", labelleft=False)
     style_string_axis(ax)
@@ -216,36 +234,46 @@ def draw_string_score_band_panel(
             string_count_label(float(count)),
             ha="center",
             va="bottom",
-            fontsize=8,
+            fontsize=TICK_FONT_SIZE,
             color="#111111",
         )
+    title = "Labelled positives" if label == "Labelled positive" else "Labelled negatives"
+    ax.set_title(title, fontsize=TITLE_FONT_SIZE)
     ax.set_xticks(x)
-    ax.set_xticklabels(class_labels, fontsize=8, fontweight="bold")
+    ax.set_xticklabels(class_labels, fontsize=TICK_FONT_SIZE, fontweight="bold")
     ax.set_ylim(0, 110)
     style_string_axis(ax)
 
 
-def make_string_support_figure(score_bands: pd.DataFrame) -> tuple[plt.Figure, np.ndarray]:
-    fig, axes = plt.subplots(
-        2,
-        2,
-        figsize=(18.0 * CM, 11.2 * CM),
-        sharex="col",
-        sharey="row",
-        gridspec_kw={"height_ratios": [0.42, 1.0]},
-    )
+def plot_string_coverage_by_label(
+    score_bands: pd.DataFrame, output: Path, stem: str
+) -> None:
+    fig, axes = plt.subplots(1, 2, figsize=(8 * CM, 4.5 * CM), sharey=True)
     for column, label in enumerate(["Labelled positive", "Labelled negative"]):
-        draw_string_coverage_axis(axes[0, column], score_bands, label, show_ylabel=column == 0)
-        draw_string_score_band_panel(axes[1, column], score_bands, label)
-    axes[1, 0].set_ylabel("STRING edges (%)", fontsize=9)
-    return fig, axes
+        draw_string_coverage_axis(
+            axes[column], score_bands, label, show_ylabel=column == 0
+        )
+    fig.subplots_adjust(left=0.08, right=0.98, bottom=0.18, top=0.88, wspace=0.12)
+    save_sensitivity_figure(fig, output, stem)
+
+
+def plot_string_score_distribution_by_label(
+    score_bands: pd.DataFrame, output: Path, stem: str
+) -> None:
+    fig, axes = plt.subplots(1, 2, figsize=(8 * CM, 4.5 * CM), sharey=True)
+    for column, label in enumerate(["Labelled positive", "Labelled negative"]):
+        draw_string_score_band_panel(axes[column], score_bands, label)
+    axes[0].set_ylabel("STRING edges (%)", fontsize=AXIS_LABEL_FONT_SIZE)
+    fig.subplots_adjust(left=0.08, right=0.98, bottom=0.18, top=0.88, wspace=0.12)
+    save_sensitivity_figure(fig, output, stem)
 
 
 def plot_string_support(score_bands: pd.DataFrame, output: Path) -> None:
     stem = "string_combined_string_supported_unique_edge_score_band_distribution_by_loss_class"
-    fig, _ = make_string_support_figure(score_bands)
-    fig.subplots_adjust(left=0.08, right=0.98, bottom=0.22, top=0.90, wspace=0.12, hspace=0.32)
-    save_sensitivity_figure(fig, output, stem)
+    plot_string_coverage_by_label(score_bands, output, f"{stem}_coverage")
+    plot_string_score_distribution_by_label(
+        score_bands, output, f"{stem}_distribution"
+    )
 
 
 def plot_string(source: str | Path, output: str | Path) -> None:
@@ -255,4 +283,3 @@ def plot_string(source: str | Path, output: str | Path) -> None:
     score_bands = read_table(source, "string_score_bands.csv")
     with plt.rc_context(SENSITIVITY_RC):
         plot_string_support(score_bands, output)
-

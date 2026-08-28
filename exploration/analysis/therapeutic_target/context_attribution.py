@@ -202,7 +202,16 @@ def calculate_cell_class_metrics(values: pd.DataFrame) -> pd.DataFrame:
     return metrics
 
 
-def prot_scape_lrp_tables(metadata: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def prot_scape_lrp_tables(
+    metadata: pd.DataFrame,
+) -> tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+]:
     frames = []
     for task, _, disease in TASKS:
         values = read_positive_lrp(
@@ -240,17 +249,63 @@ def prot_scape_lrp_tables(metadata: pd.DataFrame) -> tuple[pd.DataFrame, pd.Data
         mean_signed_contribution_per_observed_context=("mean_signed_contribution_per_observed_context", "mean"),
     )
     disease = target.groupby(["task", "disease", "cell_class"], as_index=False).agg(
-        mean_signed_contribution_per_observed_context=("mean_signed_contribution_per_observed_context", "mean"),
+        mean_positive_contribution_per_observed_context=(
+            "mean_positive_contribution_per_observed_context",
+            "mean",
+        ),
+        mean_signed_contribution_per_observed_context=(
+            "mean_signed_contribution_per_observed_context",
+            "mean",
+        ),
         n_contributing_targets=("gene", "nunique"),
     )
+    strongest = target.sort_values(
+        [
+            "task",
+            "disease",
+            "cell_class",
+            "mean_positive_contribution_per_observed_context",
+            "gene",
+        ],
+        ascending=[True, True, True, False, True],
+    ).drop_duplicates(["task", "disease", "cell_class"])
+
     order = [disease for _, _, disease in TASKS]
-    matrix = 100.0 * disease.pivot(
-        index="disease", columns="cell_class", values="mean_signed_contribution_per_observed_context"
-    ).reindex(index=order, columns=CELL_CLASSES)
-    if matrix.isna().any().any():
-        raise RuntimeError("Incomplete disease-by-cell-class attribution matrix")
-    matrix = matrix.rename_axis(index="disease", columns="cell_class").reset_index()
-    return data, cohort, matrix
+
+    def matrix(values: pd.DataFrame, metric: str, scale: float = 1.0) -> pd.DataFrame:
+        result = scale * values.pivot(
+            index="disease",
+            columns="cell_class",
+            values=metric,
+        ).reindex(index=order, columns=CELL_CLASSES)
+        if result.shape != (len(TASKS), len(CELL_CLASSES)) or result.isna().any().any():
+            raise RuntimeError(f"Incomplete disease matrix for {metric}")
+        return result.rename_axis(
+            index="disease",
+            columns="cell_class",
+        ).reset_index()
+
+    positive_matrix = matrix(
+        disease,
+        "mean_positive_contribution_per_observed_context",
+    )
+    signed_matrix = matrix(
+        disease,
+        "mean_signed_contribution_per_observed_context",
+        scale=100.0,
+    )
+    max_positive_matrix = matrix(
+        strongest,
+        "mean_positive_contribution_per_observed_context",
+    )
+    return (
+        data,
+        cohort,
+        positive_matrix,
+        signed_matrix,
+        max_positive_matrix,
+        strongest,
+    )
 
 
 def disease_top_contexts(

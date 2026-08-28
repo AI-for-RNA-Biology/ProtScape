@@ -134,8 +134,9 @@ PLOT_RC = {
     "lines.linewidth": DATA_LINEWIDTH,
     "lines.markeredgewidth": AXIS_LINEWIDTH,
     "patch.linewidth": AXIS_LINEWIDTH,
-    "axes.labelsize": 7.0,
+    "axes.labelsize": 8.0,
     "axes.titlesize": PANEL_TITLE_SIZE,
+    "figure.titlesize": PANEL_TITLE_SIZE,
     "xtick.major.width": 0.6,
     "ytick.major.width": 0.6,
     "xtick.major.size": 2.5,
@@ -148,6 +149,7 @@ PLOT_RC = {
     "ytick.labelsize": TICK_LABEL_SIZE,
     "legend.fontsize": TICK_LABEL_SIZE,
     "legend.frameon": False,
+    "savefig.format": "pdf",
     "savefig.dpi": 300,
     "savefig.transparent": True,
 }

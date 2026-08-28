@@ -22,15 +22,15 @@ from matplotlib.patches import Patch
 
 CM = 1 / 2.54
 AXIS_LINEWIDTH = 0.6
+BAR_EDGE_COLOR = "#222222"
 BAR_EDGE_LINEWIDTH = 0.55
 DATA_LINEWIDTH = 0.8
 TICK_LABEL_SIZE = 6.0
-AXIS_LABEL_SIZE = 7.0
+AXIS_LABEL_SIZE = 8.0
 PANEL_TITLE_SIZE = 7.0
 LEGEND_SIZE = 6.0
 SINGLE_COLUMN_WIDTH_CM = 8.8
 DOUBLE_COLUMN_WIDTH_CM = 18.0
-COMPACT_SINGLE_SIZE = (SINGLE_COLUMN_WIDTH_CM * CM, 6.6 * CM)
 
 PLOT_RC = {
     "pdf.fonttype": 42,
@@ -57,6 +57,7 @@ PLOT_RC = {
     "hatch.linewidth": AXIS_LINEWIDTH,
     "axes.labelsize": AXIS_LABEL_SIZE,
     "axes.titlesize": PANEL_TITLE_SIZE,
+    "figure.titlesize": PANEL_TITLE_SIZE,
     "xtick.major.width": 0.6,
     "ytick.major.width": 0.6,
     "xtick.major.size": 2.5,
@@ -69,6 +70,7 @@ PLOT_RC = {
     "ytick.labelsize": TICK_LABEL_SIZE,
     "legend.fontsize": LEGEND_SIZE,
     "legend.frameon": False,
+    "savefig.format": "pdf",
     "svg.fonttype": "none",
     "savefig.dpi": 300,
     "savefig.transparent": True,
@@ -79,20 +81,16 @@ READOUT_ORDER = [
     "lr_prostt5",
     "lr_hc_cell",
     "lr_hc_cell_esm",
-    "abmil8_hc_cell",
-    "abmil8",
     "abmil8_pdl_hc_cell",
     "abmil8_pdl_id2_dropout",
 ]
 READOUT_LABELS = {
-    "lr_esm": "Linear probe\nESM2 sequence",
-    "lr_prostt5": "Linear probe\nProstT5 sequence",
-    "lr_hc_cell": "Mean-pool LR\nContextual instances",
-    "lr_hc_cell_esm": "Mean-pool LR\nContextual + ESM2",
-    "abmil8_hc_cell": "ABMIL\nContextual instances",
-    "abmil8": "ABMIL\nContextual + ESM2",
-    "abmil8_pdl_hc_cell": "ABMIL-PDL\nContextual instances",
-    "abmil8_pdl_id2_dropout": "ABMIL-PDL\nContextual + ESM2",
+    "lr_esm": "ESM2",
+    "lr_prostt5": "ProstT5",
+    "lr_hc_cell": "Mean-MIL\nContextual",
+    "lr_hc_cell_esm": "Mean-MIL\nContextual + ESM2",
+    "abmil8_pdl_hc_cell": "ABMIL\nContextual",
+    "abmil8_pdl_id2_dropout": "ABMIL\nContextual + ESM2",
 }
 MAIN_CONTEXT_MODEL_ORDER = [
     "pinnacle_random",
@@ -126,9 +124,9 @@ MODEL_COLORS = {
     "pinnacle_esm": "#b0b0b0",
     "pinnacle_acm": "#7a7a7a",
     "gae_bce": "#1f77b4",
-    "s2gae_bce_uni": "#e6550d",
-    "s2gae_phuber_uni": "#b85c00",
-    "s2gae_l1_uni": "#54278f",
+    "s2gae_bce_uni": "#e6550e",
+    "s2gae_phuber_uni": "#ff1529",
+    "s2gae_l1_uni": "#9200bf",
 }
 
 
@@ -179,7 +177,7 @@ def plot_complex_size_distribution(
     y = distribution["n_complexes"].to_numpy(dtype=float)
     median_members = float(np.median(np.repeat(x, y.astype(int))))
 
-    fig, ax = plt.subplots(figsize=COMPACT_SINGLE_SIZE)
+    fig, ax = plt.subplots(figsize=figure_size(6.0, 5.0))
     ax.bar(
         x,
         y,
@@ -230,7 +228,7 @@ def plot_complexes_per_protein_distribution(
     ).fillna(0)
     label_x = distribution["complexes_per_protein"].to_numpy(dtype=int)
 
-    fig, ax = plt.subplots(figsize=COMPACT_SINGLE_SIZE)
+    fig, ax = plt.subplots(figsize=figure_size(6.0, 5.0))
     ax.bar(
         label_x,
         distribution["n_proteins"],
@@ -281,7 +279,7 @@ def plot_performance_legend(
     ]
     if include_baselines and "lr_esm" in set(rows["readout_key"]):
         handles.append(
-            Patch(facecolor="white", edgecolor="#222222", hatch="////", label="ESM2")
+            Patch(facecolor="white", edgecolor="#222222", label="ESM2")
         )
     if include_baselines and "lr_prostt5" in set(rows["readout_key"]):
         handles.append(
@@ -317,17 +315,25 @@ def plot_performance_metric(
     sub = rows[rows["metric"] == metric].copy()
     readouts = [key for key in READOUT_ORDER if key in set(sub["readout_key"])]
     model_order = present_models(sub, model_order)
-    x = [0.0]
+    bar_width = 0.25
+    group_widths = {
+        key: bar_width if key in BASELINE_MODELS else bar_width * len(model_order)
+        for key in readouts
+    }
+    x_positions = [0.0]
     for index in range(1, len(readouts)):
         previous, current = readouts[index - 1], readouts[index]
-        spacing = 0.62 if previous in BASELINE_MODELS and current in BASELINE_MODELS else 1.34 if previous in BASELINE_MODELS else 0.98
-        x.append(x[-1] + spacing)
-    x = np.asarray(x, dtype=float)
-    bar_width = min(0.15, 0.72 / max(len(model_order), 1))
+        gap = (
+            (group_widths[previous] + group_widths[current]) / 2.0
+            + bar_width * 1.3
+        )
+        x_positions.append(x_positions[-1] + gap)
+    x = np.asarray(x_positions, dtype=float)
 
-    fig, ax = plt.subplots(figsize=figure_size(DOUBLE_COLUMN_WIDTH_CM, 7.6))
+    plot_width = DOUBLE_COLUMN_WIDTH_CM * max(0.45, 0.40 + bar_width * 0.7)
+    fig, ax = plt.subplots(figsize=figure_size(plot_width, 5.5))
     baseline_styles = {
-        "lr_esm": {"facecolor": "white", "edgecolor": "#222222", "hatch": "////"},
+        "lr_esm": {"facecolor": "white", "edgecolor": "#222222"},
         "lr_prostt5": {
             "facecolor": "#f2f2f2",
             "edgecolor": "#666666",
@@ -365,23 +371,29 @@ def plot_performance_metric(
             heights,
             width=bar_width,
             color=MODEL_COLORS[model_key],
-            edgecolor="white",
+            edgecolor=BAR_EDGE_COLOR,
             linewidth=BAR_EDGE_LINEWIDTH,
             zorder=3,
         )
 
-    ax.set_ylim(0.0, 100.0)
-    ax.set_yticks(np.arange(0.0, 101.0, 20.0))
-    ax.set_ylabel("Test AUPRC" if metric == "auprc" else "Test F1")
+    if metric == "auprc":
+        ax.set_ylim(0.0, 80.0)
+        ax.set_yticks(np.arange(0.0, 81.0, 20.0))
+    elif metric == "f1":
+        ax.set_ylim(0.0, 60.0)
+        ax.set_yticks(np.arange(0.0, 61.0, 20.0))
+    ax.set_ylabel("AUPRC (%)" if metric == "auprc" else f"{metric.upper()} (%)")
     ax.set_xticks(x)
     ax.set_xticklabels(
         [READOUT_LABELS[key] for key in readouts],
         fontsize=TICK_LABEL_SIZE,
-        rotation=25,
-        ha="right",
+        rotation=0,
+        ha="center",
     )
     if len(x):
-        ax.set_xlim(x[0] - 0.42, x[-1] + 0.42)
+        left_margin = group_widths[readouts[0]] / 2.0 + bar_width * 0.3
+        right_margin = group_widths[readouts[-1]] / 2.0 + bar_width * 0.3
+        ax.set_xlim(x[0] - left_margin, x[-1] + right_margin)
     clean_axes(ax)
     fig.subplots_adjust(left=0.08, right=0.98, bottom=0.34, top=0.97)
     save_figure(fig, output, stem)

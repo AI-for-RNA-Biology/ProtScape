@@ -59,8 +59,8 @@ LOSS_LABELS = {
 }
 LOSS_COLORS = {
     "s2gae_att_k1_uni": "#e6550d",
-    "s2gae_att_k1_l1_do00": "#54278f",
-    "s2gae_att_k1_phuber": "#b85c00",
+    "s2gae_att_k1_l1_do00": "#9200bf",
+    "s2gae_att_k1_phuber": "#d31529",
 }
 
 
@@ -68,21 +68,13 @@ PRETRAINING_RC = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
     "font.family": "Arial",
-    "font.sans-serif": ["Arial"],
-    "mathtext.fontset": "custom",
-    "mathtext.rm": "Arial",
-    "mathtext.it": "Arial:italic",
-    "mathtext.bf": "Arial:bold",
-    "mathtext.cal": "Arial:italic",
-    "mathtext.sf": "Arial",
-    "mathtext.tt": "Arial",
-    "axes.labelsize": 7.0,
+    "axes.labelsize": 8.0,
     "xtick.labelsize": 6.0,
     "ytick.labelsize": 6.0,
     "font.size": 7.0,
-    "axes.titlesize": 7.0,
+    "axes.titlesize": 8.0,
     "legend.fontsize": 6.0,
-    "figure.titlesize": 7.0,
+    "figure.titlesize": 8.0,
     "axes.linewidth": 0.6,
     "xtick.major.width": 0.6,
     "ytick.major.width": 0.6,
@@ -94,7 +86,6 @@ PRETRAINING_RC = {
     "ytick.minor.size": 1.5,
     "savefig.format": "pdf",
     "savefig.transparent": True,
-    "svg.fonttype": "none",
 }
 
 
@@ -103,8 +94,10 @@ def read_table(source: Path, filename: str) -> pd.DataFrame:
 
 
 def save_pretraining_figure(fig: plt.Figure, output: Path, stem: str) -> None:
-    fig.savefig(output / f"{stem}.pdf", dpi=300, bbox_inches="tight")
-    fig.savefig(output / f"{stem}.png", dpi=300, bbox_inches="tight")
+    options = {"dpi": 300, "bbox_inches": "tight", "transparent": True}
+    fig.savefig(output / f"{stem}.svg", **options)
+    fig.savefig(output / f"{stem}.pdf", **options)
+    fig.savefig(output / f"{stem}.png", **options)
     plt.close(fig)
 
 
@@ -114,12 +107,23 @@ def clean_pretraining_axis(ax: plt.Axes) -> None:
     ax.grid(False)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.spines["left"].set_color("#222222")
-    ax.spines["bottom"].set_color("#222222")
-    ax.spines["left"].set_linewidth(1.5)
-    ax.spines["bottom"].set_linewidth(1.5)
-    ax.tick_params(axis="both", which="major", labelsize=11, width=1.5, length=6, pad=5)
-    ax.tick_params(axis="both", which="minor", width=1.2, length=3)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color("#222222")
+        ax.spines[side].set_linewidth(matplotlib.rcParams["axes.linewidth"])
+    ax.tick_params(
+        axis="both",
+        which="major",
+        labelsize=matplotlib.rcParams["xtick.labelsize"],
+        width=matplotlib.rcParams["xtick.major.width"],
+        length=matplotlib.rcParams["xtick.major.size"],
+        pad=matplotlib.rcParams["xtick.major.pad"],
+    )
+    ax.tick_params(
+        axis="both",
+        which="minor",
+        width=matplotlib.rcParams["xtick.minor.width"],
+        length=matplotlib.rcParams["xtick.minor.size"],
+    )
 
 
 def percent_limits(values: pd.Series | np.ndarray) -> tuple[float, float]:
@@ -171,13 +175,13 @@ def draw_curve(
 
     ax.set_xscale("log")
     ax.set_xticks([1, 10, 50, 100, 500])
-    ax.set_xticklabels(["1", "10", "50", "100", "500"], fontsize=11)
-    ax.set_xlabel("Negatives per positive edge", fontsize=13)
-    ax.set_ylabel(ylabel, fontsize=13)
+    ax.set_xticklabels(["1", "10", "50", "100", "500"])
+    ax.set_xlabel("Negatives per positive edge")
+    ax.set_ylabel(ylabel)
     ax.set_ylim(*percent_limits(table["score_percent"]))
     if yticks is not None:
         ax.set_yticks(yticks)
-        ax.set_yticklabels([str(value) for value in yticks], fontsize=11)
+        ax.set_yticklabels([str(value) for value in yticks])
     clean_pretraining_axis(ax)
 
 
@@ -191,7 +195,7 @@ def plot_curve(
     ylabel: str,
     yticks: list[int] | None,
 ) -> None:
-    fig, ax = plt.subplots(figsize=(4, 3))
+    fig, ax = plt.subplots(figsize=(5.0 * CM, 5.5 * CM))
     draw_curve(
         ax,
         table,
@@ -206,7 +210,7 @@ def plot_curve(
 
 
 def plot_core_model_legend(output: Path) -> None:
-    fig, ax = plt.subplots(figsize=(6.8, 0.45))
+    fig, ax = plt.subplots(figsize=(6.8 * CM, 4.5 * CM))
     ax.axis("off")
     ax.legend(
         model_handles(CORE_MODEL_ORDER, MODEL_COLORS, 2.5),
@@ -214,7 +218,6 @@ def plot_core_model_legend(output: Path) -> None:
         frameon=False,
         loc="center",
         ncol=len(CORE_MODEL_ORDER),
-        fontsize=11,
         handlelength=1.8,
     )
     save_pretraining_figure(fig, output, "core_model_legend")
@@ -224,7 +227,7 @@ def plot_metagraph_barplot(table: pd.DataFrame, output: Path, stem: str) -> None
     rows = table.set_index("model_key").reindex(CORE_MODEL_ORDER)
     values = rows["metagraph_percent"].to_numpy(dtype=float)
     x = np.arange(len(rows))
-    fig, ax = plt.subplots(figsize=(2.5, 3.0))
+    fig, ax = plt.subplots(figsize=(3.75 * CM, 5.5 * CM))
     ax.bar(
         x,
         values,
@@ -235,9 +238,9 @@ def plot_metagraph_barplot(table: pd.DataFrame, output: Path, stem: str) -> None
         zorder=3,
     )
     ax.set_xticks(x)
-    ax.set_xticklabels([""] * len(rows), fontsize=11)
-    ax.set_xlabel("Models", fontsize=13)
-    ax.set_ylabel("Metagraph AUPRC", fontsize=13)
+    ax.set_xticklabels([""] * len(rows))
+    ax.set_xlabel("Models")
+    ax.set_ylabel("Metagraph AUPRC")
     y_min = max(0, float(values.min()) - 5)
     y_max = min(100, float(values.max()) + 5)
     ax.set_ylim(y_min, y_max)
@@ -248,10 +251,40 @@ def plot_metagraph_barplot(table: pd.DataFrame, output: Path, stem: str) -> None
             f"{value:.1f}",
             ha="center",
             va="bottom",
-            fontsize=9,
+            fontsize=matplotlib.rcParams["xtick.labelsize"],
         )
     clean_pretraining_axis(ax)
     plt.tight_layout()
+    save_pretraining_figure(fig, output, stem)
+
+
+def plot_metagraph_metric_scatter(
+    table: pd.DataFrame,
+    output: Path,
+    stem: str,
+) -> None:
+    """Plot metagraph F1 against metagraph AUPRC for the released models."""
+    pivot = (
+        table[table["metric"].isin(["ap", "f1"])]
+        .pivot(index="model_key", columns="metric", values="metagraph_score")
+        .reindex(CORE_MODEL_ORDER)
+    )
+    values = 100.0 * pivot[["ap", "f1"]]
+
+    fig, ax = plt.subplots(figsize=(4.5 * CM, 5 * CM))
+    for key in CORE_MODEL_ORDER:
+        x = values.loc[key, "f1"]
+        y = values.loc[key, "ap"]
+        if np.isfinite(x) and np.isfinite(y):
+            ax.scatter(x, y, s=70, color=MODEL_COLORS[key], linewidths=0)
+
+    ax.set_xlabel("1:1 F1 (%)")
+    ax.set_ylabel("1:1 AUPRC (%)")
+    ax.set_xlim(*percent_limits(values["f1"]))
+    ax.set_ylim(*percent_limits(values["ap"]))
+    ax.set_xticks([84, 88, 92, 96])
+    clean_pretraining_axis(ax)
+    fig.subplots_adjust(left=0.12, right=0.96, bottom=0.16, top=0.96)
     save_pretraining_figure(fig, output, stem)
 
 
@@ -259,7 +292,7 @@ def plot_parameter_counts(table: pd.DataFrame, output: Path, stem: str) -> None:
     rows = table.set_index("model_key").reindex(CORE_MODEL_ORDER)
     values = rows["parameter_count"].to_numpy(dtype=float)
     x = np.arange(len(rows))
-    fig, ax = plt.subplots(figsize=(2.5, 3.0))
+    fig, ax = plt.subplots(figsize=(3.75 * CM, 5.5 * CM))
     ax.bar(
         x,
         values,
@@ -270,28 +303,21 @@ def plot_parameter_counts(table: pd.DataFrame, output: Path, stem: str) -> None:
         zorder=3,
     )
     ax.set_xticks(x)
-    ax.set_xticklabels([""] * len(rows), fontsize=13)
-    ax.set_xlabel("Models", fontsize=13)
+    ax.set_xticklabels([""] * len(rows))
+    ax.set_xlabel("Models")
     ax.set_yscale("log")
-    for index, value in enumerate(values):
-        ax.text(
-            index,
-            value * 1.12,
-            f"{int(value / 1e6)}M",
-            ha="center",
-            va="bottom",
-            fontsize=9,
-        )
-    ax.set_ylabel("Trainable parameters", fontsize=13)
+    ax.set_ylabel("Trainable parameters")
     ax.set_ylim(max(1e7, float(values.min()) / 2), float(values.max()) * 1.85)
     ax.set_yticks([1e7, 1e8, 1e9])
     ax.yaxis.set_major_formatter(LogFormatterMathtext(base=10))
+    ax.set_xlim(x[0] - 0.4, x[-1] + 0.4)
     clean_pretraining_axis(ax)
+    plt.tight_layout()
     save_pretraining_figure(fig, output, stem)
 
 
 def plot_loss_legend(output: Path) -> None:
-    fig, ax = plt.subplots(figsize=(5.4, 0.45))
+    fig, ax = plt.subplots(figsize=(5.4 * CM, 4.5 * CM))
     ax.axis("off")
     handles = model_handles(LOSS_MODEL_ORDER, LOSS_COLORS, 2.5)
     handles.append(Line2D([0], [0], color="#222222", linestyle="--", linewidth=1.25))
@@ -302,7 +328,6 @@ def plot_loss_legend(output: Path) -> None:
         frameon=False,
         loc="center",
         ncol=len(labels),
-        fontsize=11,
         handlelength=1.8,
     )
     save_pretraining_figure(fig, output, "loss_sensitivity_legend")
@@ -315,6 +340,7 @@ def plot_pretraining(source: str | Path, output: str | Path) -> None:
     panel_a_auprc = read_table(source, "robust_ppi_auprc.csv")
     panel_a_f1 = read_table(source, "robust_ppi_f1.csv")
     panel_b = read_table(source, "metagraph_auprc.csv")
+    metagraph_metrics = read_table(source, "metagraph_metrics.csv")
     panel_c = read_table(source, "parameter_counts.csv")
     panel_d_auprc = read_table(source, "loss_sensitivity_auprc.csv")
     panel_d_f1 = read_table(source, "loss_sensitivity_f1.csv")
@@ -343,6 +369,11 @@ def plot_pretraining(source: str | Path, output: str | Path) -> None:
         plot_core_model_legend(output)
 
         plot_metagraph_barplot(panel_b, output, "metagraph_barplot_auprc")
+        plot_metagraph_metric_scatter(
+            metagraph_metrics,
+            output,
+            "core_metagraph_f1_vs_ap",
+        )
         plot_parameter_counts(panel_c, output, "core_parameter_counts")
 
         plot_curve(
@@ -366,4 +397,3 @@ def plot_pretraining(source: str | Path, output: str | Path) -> None:
             None,
         )
         plot_loss_legend(output)
-

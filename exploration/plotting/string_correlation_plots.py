@@ -22,21 +22,13 @@ SOURCE_STYLE = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
     "font.family": "Arial",
-    "font.sans-serif": ["Arial"],
-    "mathtext.fontset": "custom",
-    "mathtext.rm": "Arial",
-    "mathtext.it": "Arial:italic",
-    "mathtext.bf": "Arial:bold",
-    "mathtext.cal": "Arial:italic",
-    "mathtext.sf": "Arial",
-    "mathtext.tt": "Arial",
-    "axes.labelsize": 7.0,
+    "axes.labelsize": 8.0,
     "xtick.labelsize": 6.0,
     "ytick.labelsize": 6.0,
     "font.size": 7.0,
-    "axes.titlesize": 7.0,
+    "axes.titlesize": 8.0,
     "legend.fontsize": 6.0,
-    "figure.titlesize": 7.0,
+    "figure.titlesize": 8.0,
     "axes.linewidth": 0.6,
     "xtick.major.width": 0.6,
     "ytick.major.width": 0.6,
@@ -110,6 +102,59 @@ def plot_string_correlations(ax, table):
     ax.spines["right"].set_visible(False)
 
 
+def plot_loss_correlation_scatter(ax: plt.Axes, table: pd.DataFrame) -> None:
+    combinations = ["BCE", "pHuber", "L1", "BCE+pHuber+L1"]
+    labels = ["BCE", "pHuber", "L1", "Combined"]
+    colors = {
+        "BCE": "#a63603",
+        "pHuber": "#d31529",
+        "L1": "#9200bf",
+        "Combined": "#222222",
+    }
+    rows = table.set_index("loss_combination").reindex(combinations).copy()
+    if rows[["pearson", "spearman"]].isna().any().any():
+        raise ValueError("Missing a loss combination required for the STRING scatter")
+    rows["label"] = labels
+    rows["pearson_percent"] = rows["pearson"] * 100.0
+    rows["spearman_percent"] = rows["spearman"] * 100.0
+
+    for row in rows.itertuples():
+        ax.scatter(
+            row.pearson_percent,
+            row.spearman_percent,
+            s=40,
+            color=colors[row.label],
+            edgecolor="#222222",
+            linewidth=0.5,
+            zorder=3,
+        )
+        ax.text(
+            row.pearson_percent + 0.4,
+            row.spearman_percent + 0.4,
+            row.label,
+            fontsize=7,
+            ha="left",
+            va="bottom",
+            color="#222222",
+        )
+
+    ax.set_xlim(
+        rows["pearson_percent"].min() - 2,
+        rows["pearson_percent"].max() + 2,
+    )
+    ax.set_ylim(
+        rows["spearman_percent"].min() - 2,
+        rows["spearman_percent"].max() + 2,
+    )
+    ax.set_xlabel("P (loss, STRING) (%)")
+    ax.set_ylabel(r"$\rho$ (loss, STRING) (%)")
+    ax.grid(False)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color("#222222")
+    ax.spines["bottom"].set_color("#222222")
+
+
 def plot_string(source, output):
     """Render STRING-validation correlations."""
     source, output = Path(source), Path(output)
@@ -146,3 +191,6 @@ def plot_string(source, output):
             pad_inches=0.03,
         )
 
+    scatter_fig, scatter_ax = plt.subplots(figsize=(4.0 * CM, 5.5 * CM))
+    plot_loss_correlation_scatter(scatter_ax, string_correlations)
+    save_original(scatter_fig, output, "loss_vs_string_correlations_scatter")

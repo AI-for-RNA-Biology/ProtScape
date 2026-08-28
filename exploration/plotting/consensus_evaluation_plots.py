@@ -43,24 +43,24 @@ CLASS_LABELS = [
 SENSITIVITY_RC = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
-    "font.family": "sans-serif",
-    "font.sans-serif": ["Arial", "Nimbus Sans", "DejaVu Sans"],
-    "font.size": 9,
-    "mathtext.fontset": "dejavusans",
-    "axes.titlesize": 9,
-    "axes.labelsize": 9,
-    "xtick.labelsize": 8,
-    "ytick.labelsize": 8,
-    "legend.fontsize": 8,
-    "axes.linewidth": 1.0,
-    "xtick.major.width": 1.0,
-    "ytick.major.width": 1.0,
-    "xtick.major.size": 3.0,
-    "ytick.major.size": 3.0,
-    "xtick.minor.width": 0.8,
-    "ytick.minor.width": 0.8,
-    "xtick.minor.size": 1.8,
-    "ytick.minor.size": 1.8,
+    "font.family": "Arial",
+    "font.sans-serif": ["Arial"],
+    "font.size": 7,
+    "axes.titlesize": 8,
+    "axes.labelsize": 8,
+    "xtick.labelsize": 6,
+    "ytick.labelsize": 6,
+    "legend.fontsize": 6,
+    "figure.titlesize": 8,
+    "axes.linewidth": 0.6,
+    "xtick.major.width": 0.6,
+    "ytick.major.width": 0.6,
+    "xtick.major.size": 2.5,
+    "ytick.major.size": 2.5,
+    "xtick.minor.width": 0.5,
+    "ytick.minor.width": 0.5,
+    "xtick.minor.size": 1.5,
+    "ytick.minor.size": 1.5,
     "lines.linewidth": 1.3,
     "lines.markeredgewidth": 1.0,
     "patch.linewidth": 1.0,
@@ -73,8 +73,13 @@ SENSITIVITY_RC = {
     "ytick.color": "#111111",
     "figure.dpi": 100,
     "savefig.dpi": 300,
-    "savefig.transparent": False,
+    "savefig.transparent": True,
 }
+
+HEATMAP_CMAP = "plasma"
+TITLE_FONT_SIZE = SENSITIVITY_RC["axes.titlesize"]
+AXIS_LABEL_FONT_SIZE = SENSITIVITY_RC["axes.labelsize"]
+TICK_FONT_SIZE = SENSITIVITY_RC["xtick.labelsize"]
 
 
 def read_table(source: Path, filename: str) -> pd.DataFrame:
@@ -105,7 +110,7 @@ def short_count(value: float) -> str:
 
 
 def heatmap_text_color(value: float, norm: LogNorm) -> str:
-    red, green, blue, _ = plt.get_cmap("viridis")(norm(value))
+    red, green, blue, _ = plt.get_cmap(HEATMAP_CMAP)(norm(value))
     luminance = 0.299 * red + 0.587 * green + 0.114 * blue
     return "#111111" if luminance > 0.55 else "white"
 
@@ -118,6 +123,7 @@ def plot_split_count_heatmap(
     log_floor: int,
     *,
     reverse_x: bool,
+    set_ax_labels: bool = False,
 ) -> None:
     matrix = (
         table.set_index("context_independent_consensus_class")
@@ -130,16 +136,23 @@ def plot_split_count_heatmap(
     values = matrix.astype(float) + 1
     norm = LogNorm(vmin=log_floor, vmax=max(log_floor + 1, float(values.max())))
 
-    fig, ax = plt.subplots(figsize=(8.8 * CM, 8.0 * CM), constrained_layout=False)
+    fig, ax = plt.subplots(figsize=(6 * CM, 6 * CM), constrained_layout=False)
     fig.subplots_adjust(left=0.24, right=0.84, bottom=0.22, top=0.86)
-    image = ax.imshow(values, cmap="viridis", norm=norm)
-    ax.set_title(title, fontsize=9)
-    ax.set_xlabel("Context-specific edge class", fontsize=9)
-    ax.set_ylabel("Edge majority class across contexts", fontsize=9)
+    image = ax.imshow(values, cmap=HEATMAP_CMAP, norm=norm)
+    ax.set_title(title, fontsize=TITLE_FONT_SIZE)
+    if set_ax_labels:
+        ax.set_xlabel("Context-specific class", fontsize=AXIS_LABEL_FONT_SIZE)
+        ax.set_ylabel("Majority class", fontsize=AXIS_LABEL_FONT_SIZE)
     ax.set_xticks(np.arange(len(CLASS_NAMES)))
     ax.set_yticks(np.arange(len(CLASS_NAMES)))
-    ax.set_xticklabels(x_labels, rotation=30, ha="right", fontsize=8, fontweight="bold")
-    ax.set_yticklabels(CLASS_LABELS, fontsize=8, fontweight="bold")
+    ax.set_xticklabels(
+        x_labels,
+        rotation=0,
+        ha="center",
+        fontsize=TICK_FONT_SIZE,
+        fontweight="bold",
+    )
+    ax.set_yticklabels(CLASS_LABELS, fontsize=TICK_FONT_SIZE, fontweight="bold")
     ax.tick_params(axis="both", which="major", width=1.0, length=3.0, pad=3)
     for spine in ax.spines.values():
         spine.set_visible(False)
@@ -151,7 +164,7 @@ def plot_split_count_heatmap(
                 short_count(matrix[row, column]),
                 ha="center",
                 va="center",
-                fontsize=8,
+                fontsize=5,
                 color=heatmap_text_color(values[row, column], norm),
             )
 
@@ -166,8 +179,7 @@ def plot_split_count_heatmap(
     )
     colorbar = fig.colorbar(image, cax=color_ax)
     colorbar.outline.set_visible(False)
-    colorbar.ax.tick_params(labelsize=8, width=1.0, length=3.0)
-    colorbar.set_label("Edge-context count, log scale", fontsize=9, labelpad=2)
+    colorbar.ax.tick_params(labelsize=TICK_FONT_SIZE, width=1.0, length=3.0)
     save_sensitivity_figure(fig, output, stem)
 
 
@@ -177,7 +189,13 @@ def style_sensitivity_axis(ax: plt.Axes) -> None:
     ax.spines["right"].set_visible(False)
     ax.spines["left"].set_linewidth(1.0)
     ax.spines["bottom"].set_linewidth(1.0)
-    ax.tick_params(axis="both", which="major", labelsize=8, width=1.0, length=3.0)
+    ax.tick_params(
+        axis="both",
+        which="major",
+        labelsize=TICK_FONT_SIZE,
+        width=1.0,
+        length=3.0,
+    )
 
 
 def stability_count_label(value: float) -> str:
@@ -205,13 +223,13 @@ def draw_stability_panel(ax: plt.Axes, table: pd.DataFrame, label: str) -> None:
             stability_count_label(count),
             ha="center",
             va="bottom",
-            fontsize=8,
+            fontsize=5,
             color="#111111",
         )
     title = "Labelled positives" if label == "Labelled positive" else "Labelled negatives"
-    ax.set_title(title, fontsize=9)
+    ax.set_title(title, fontsize=TITLE_FONT_SIZE)
     ax.set_xticks(x)
-    ax.set_xticklabels(class_labels, fontsize=8, fontweight="bold")
+    ax.set_xticklabels(class_labels, fontsize=TICK_FONT_SIZE, fontweight="bold")
     ax.set_ylim(0, 110)
     style_sensitivity_axis(ax)
 
@@ -228,9 +246,8 @@ def plot_stability_outputs(table: pd.DataFrame, output: Path) -> None:
         ("Labelled positive", "positive"),
         ("Labelled negative", "negative"),
     ]:
-        fig, ax = plt.subplots(figsize=(8.8 * CM, 7.9 * CM))
+        fig, ax = plt.subplots(figsize=(4 * CM, 5 * CM))
         draw_stability_panel(ax, table, label)
-        ax.set_ylabel("Unique edges (%)")
         fig.subplots_adjust(left=0.20, right=0.98, bottom=0.34, top=0.88)
         stem = f"unique_edge_stable_unstable_labelled_{slug}_by_majority_class"
         save_sensitivity_figure(fig, output, stem)
@@ -262,4 +279,3 @@ def plot_consensus(source: str | Path, output: str | Path) -> None:
             reverse_x=True,
         )
         plot_stability_outputs(stability, output)
-

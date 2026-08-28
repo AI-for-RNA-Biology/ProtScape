@@ -23,21 +23,13 @@ SOURCE_STYLE = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
     "font.family": "Arial",
-    "font.sans-serif": ["Arial"],
-    "mathtext.fontset": "custom",
-    "mathtext.rm": "Arial",
-    "mathtext.it": "Arial:italic",
-    "mathtext.bf": "Arial:bold",
-    "mathtext.cal": "Arial:italic",
-    "mathtext.sf": "Arial",
-    "mathtext.tt": "Arial",
-    "axes.labelsize": 7.0,
+    "axes.labelsize": 8.0,
     "xtick.labelsize": 6.0,
     "ytick.labelsize": 6.0,
     "font.size": 7.0,
-    "axes.titlesize": 7.0,
+    "axes.titlesize": 8.0,
     "legend.fontsize": 6.0,
-    "figure.titlesize": 7.0,
+    "figure.titlesize": 8.0,
     "axes.linewidth": 0.6,
     "xtick.major.width": 0.6,
     "ytick.major.width": 0.6,
@@ -100,6 +92,7 @@ def save_original(
     kwargs = {"bbox_inches": "tight", "transparent": True}
     if pad_inches is not None:
         kwargs["pad_inches"] = pad_inches
+    fig.savefig(output / f"{stem}.svg", dpi=300, **kwargs)
     fig.savefig(output / f"{stem}.pdf", dpi=pdf_dpi, **kwargs)
     fig.savefig(output / f"{stem}.png", dpi=300, **kwargs)
     plt.close(fig)
@@ -140,14 +133,13 @@ def plot_contextwise_boxplots(legend_ax, axes, auprc, f1):
         ncol=len(legend_order),
         loc="center",
         frameon=False,
-        fontsize=11,
         handlelength=1.8,
     )
 
     for ax, table, ylabel, yticks in zip(
         axes,
         [auprc, f1],
-        ["AUPRC 1:1 (%)", "F1 1:1 (%)"],
+        ["[1:1]  AUPRC (%)", "[1:1]  F1 (%)"],
         [[50, 60, 70, 80, 90], [40, 50, 60, 70, 80]],
     ):
         values = [
@@ -220,7 +212,7 @@ def plot_pooling(legend_ax, ax, table):
     ax.set_yticks([55, 70, 85, 100])
     ax.set_xticks(range(4))
     ax.set_xticklabels(["AUPRC", "F1", "AUPRC", "F1"])
-    ax.set_ylabel("Score 1:1 (%)")
+    ax.set_ylabel("[1:1] Score (%)")
     ax.text(0.25, 1.03, "PPI", transform=ax.transAxes, ha="center", va="bottom")
     ax.text(0.75, 1.03, "Metagraph", transform=ax.transAxes, ha="center", va="bottom")
     clean_2d_axis(ax)
@@ -234,9 +226,9 @@ def plot_pretraining(source, output):
     f1 = pd.read_csv(source / "contextwise_ppi_f1.csv")
     pooling = pd.read_csv(source / "pooling_sensitivity.csv")
 
-    a_legend_fig, a_legend_ax = plt.subplots(figsize=(6.8, 0.45))
-    a_auprc_fig, a_auprc_ax = plt.subplots(figsize=(5.5 * CM, 4.5 * CM))
-    a_f1_fig, a_f1_ax = plt.subplots(figsize=(5.5 * CM, 4.5 * CM))
+    a_legend_fig, a_legend_ax = plt.subplots(figsize=(6.8 * CM, 4.5 * CM))
+    a_auprc_fig, a_auprc_ax = plt.subplots(figsize=(3.5 * CM, 4.5 * CM))
+    a_f1_fig, a_f1_ax = plt.subplots(figsize=(3.5 * CM, 4.5 * CM))
     plot_contextwise_boxplots(
         a_legend_ax, [a_auprc_ax, a_f1_ax], auprc, f1
     )
@@ -245,7 +237,7 @@ def plot_pretraining(source, output):
     save_original(a_f1_fig, output, "contextwise_ppi_f1")
 
     b_legend_fig, b_legend_ax = plt.subplots(figsize=(7 * CM, 2.2 * CM))
-    b_fig, b_ax = plt.subplots(figsize=(7 * CM, 4.5 * CM))
+    b_fig, b_ax = plt.subplots(figsize=(5 * CM, 4.5 * CM))
     plot_pooling(b_legend_ax, b_ax, pooling)
     b_fig.subplots_adjust(left=0.10, right=0.98, bottom=0.18, top=0.86)
     save_original(b_legend_fig, output, "pooling_sensitivity_legend")

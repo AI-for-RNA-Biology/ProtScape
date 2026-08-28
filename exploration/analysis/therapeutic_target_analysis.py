@@ -52,10 +52,29 @@ def main() -> None:
 
     generate_checkpoint_lrp()
     metadata = load_cell_metadata()
-    lrp_data, cohort, signed_matrix = prot_scape_lrp_tables(metadata)
+    (
+        lrp_data,
+        cohort,
+        positive_matrix,
+        signed_matrix,
+        max_positive_matrix,
+        max_positive_targets,
+    ) = prot_scape_lrp_tables(metadata)
     cohort.to_csv(ANALYSIS_DIR / "target_recovery_cohort.csv", index=False)
+    positive_matrix.to_csv(
+        ANALYSIS_DIR / "cell_class_positive_contribution.csv",
+        index=False,
+    )
     signed_matrix.to_csv(
         ANALYSIS_DIR / "cell_class_signed_contribution_percent.csv", index=False
+    )
+    max_positive_matrix.to_csv(
+        ANALYSIS_DIR / "cell_class_max_positive_contribution.csv",
+        index=False,
+    )
+    max_positive_targets.to_csv(
+        ANALYSIS_DIR / "cell_class_max_positive_targets.csv",
+        index=False,
     )
     disease_top_contexts(lrp_data, cohort, metadata).to_csv(
         ANALYSIS_DIR / "disease_top_contexts.csv", index=False
