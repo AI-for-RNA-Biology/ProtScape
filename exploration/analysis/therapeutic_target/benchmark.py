@@ -65,8 +65,14 @@ def dataset_statistics() -> pd.DataFrame:
                 "task_type": "therapeutic_target_prediction",
                 "disease_id": disease_id,
                 "disease": disease,
-                "positive_label_source": "Open Targets phase >=3 or completed phase 2 evidence over root and descendants",
-                "negative_label_source": "approved-human DrugBank targets without a non-literature Open Targets association for the root query",
+                "positive_label_source": (
+                    "Open Targets 24.03 phase >=3 or completed phase 2 "
+                    "evidence over root and descendants"
+                ),
+                "negative_label_source": (
+                    "October 2022 approved-human DrugBank targets without a "
+                    "non-literature historical Open Targets association"
+                ),
                 "label_file": path.name,
                 "positive": positives,
                 "negative": negatives,

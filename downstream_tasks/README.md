@@ -43,9 +43,9 @@ python -m downstream_tasks.data_processing.therapeutic_target_processing
 
 By default, the rebuilt labels are written below `<output_root>/downstream_tasks/data/`. Update `corum_dataset_dir` and `therapeutic_target_dataset_dir` to those generated directories before training.
 
-The therapeutic-target builder performs no live API calls. It reads the frozen Open Targets 24.03 disease hierarchy, target symbols and indirect associations, and maps ChEMBL evidence through the same release. Parquet and JSON archives are both supported; Parquet is substantially smaller.
+The therapeutic-target builder performs no live API calls and uses Open Targets 24.03 for the evidence, disease hierarchy, target symbols and indirect associations. Among single-release reconstructions, 24.03 is closest to the paper labels: the mean protein-set Jaccard is 0.993 for positives and 0.871 for negatives across the 15 tasks. Parkinson retains all 107 paper positives; its negative-set Jaccard is 0.887.
 
-The fully static 24.03 reconstruction is not identical to the historical paper benchmark because the original negative labels were generated in several batches using the then-live Open Targets association API. The current API no longer resolves 11 of the 15 historical identifiers. Do not overwrite the released paper-label CSVs when reproducing the paper; write static reconstruction audits to a separate `--output-dir`.
+The static reconstruction is not identical to the historical benchmark because the original workflow combined frozen 24.03 evidence with then-live lookup APIs. Use the released paper-label CSVs for the reported experiments, and write reconstruction audits to a separate `--output-dir`.
 
 ## Training
 
