@@ -8,7 +8,7 @@
 #SBATCH --gpus-per-task=1
 #SBATCH --exclusive
 #SBATCH --mem=450G
-#SBATCH --time=12:00:00
+#SBATCH --time=01:00:00
 #SBATCH --output=/iopsstor/scratch/cscs/aloistho/protscape/logs/%x_%A_%a.out
 
 set -euo pipefail
