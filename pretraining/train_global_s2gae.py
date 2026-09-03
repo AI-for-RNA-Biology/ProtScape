@@ -10,6 +10,7 @@ import json
 import os
 import random
 import resource
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -54,6 +55,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
+        "--extend-completed",
+        action="store_true",
+        help="Continue a completed shorter run without replaying finished epochs.",
+    )
+    parser.add_argument(
         "--wandb-mode", choices=("disabled", "offline", "online"), default="disabled"
     )
     parser.add_argument("--wandb-entity", default="cedricvincentcuaz")
@@ -84,9 +90,11 @@ def restore_rng_state(state: dict | None) -> None:
         return
     random.setstate(state["python"])
     np.random.set_state(state["numpy"])
-    torch.set_rng_state(state["torch"])
+    torch.set_rng_state(state["torch"].detach().cpu())
     if torch.cuda.is_available() and state.get("torch_cuda") is not None:
-        torch.cuda.set_rng_state_all(state["torch_cuda"])
+        torch.cuda.set_rng_state_all(
+            [value.detach().cpu() for value in state["torch_cuda"]]
+        )
 
 
 def cpu_state_dict(model: torch.nn.Module) -> dict[str, torch.Tensor]:
@@ -185,6 +193,7 @@ def checkpoint_payload(
     best_global_val_ap: float,
     val_metrics: dict,
     optimizer=None,
+    tracking: dict | None = None,
 ) -> dict:
     payload = {
         "format_version": 3,
@@ -193,7 +202,9 @@ def checkpoint_payload(
         "model_config": model.model_config,
         "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
         "training_config": training_config(args),
-        "wandb": tracking_config(args, run_name(args), data, model.model_config),
+        "wandb": tracking
+        if tracking is not None
+        else tracking_config(args, run_name(args), data, model.model_config),
         "model_state_dict": cpu_state_dict(model),
         "epoch": epoch,
         "best_epoch": best_epoch,
@@ -209,14 +220,91 @@ def checkpoint_payload(
         "protocol": protocol_metadata(),
         "git_commit": os.environ.get("PROTSCAPE_GIT_COMMIT", "uncommitted"),
     }
+    continuations = getattr(args, "continuations", None)
+    if continuations:
+        payload["continuations"] = continuations
     if optimizer is not None:
         payload["optimizer_state_dict"] = optimizer.state_dict()
         payload["rng_state"] = capture_rng_state()
     return payload
 
 
+def validate_completed_extension(
+    checkpoint: dict,
+    completion: dict,
+    previous_config: dict,
+    current_training: dict,
+    current_git_commit: str,
+) -> dict:
+    """Validate and describe a continuation of a completed shorter run."""
+    previous_epochs = int(completion["completed_epochs"])
+    if int(completion["last_epoch"]) != previous_epochs - 1:
+        raise ValueError("Cannot extend: completion has an invalid last epoch.")
+    if int(checkpoint["epoch"]) + 1 != previous_epochs:
+        raise ValueError("Cannot extend: latest checkpoint is not the completed epoch.")
+    if int(current_training["epochs"]) <= previous_epochs:
+        raise ValueError("Cannot extend: target epochs must exceed completed epochs.")
+    for key, value in current_training.items():
+        if key != "epochs" and checkpoint["training_config"][key] != value:
+            raise ValueError(f"Cannot extend: training parameter {key} changed.")
+    if int(checkpoint["training_config"]["epochs"]) != previous_epochs:
+        raise ValueError("Cannot extend: checkpoint epoch budget is inconsistent.")
+    if int(previous_config["epochs"]) != previous_epochs:
+        raise ValueError("Cannot extend: config epoch budget is inconsistent.")
+
+    if checkpoint["git_commit"] != completion["git_commit"]:
+        raise ValueError("Cannot extend: completion/checkpoint commit mismatch.")
+    if previous_config["git_commit"] != checkpoint["git_commit"]:
+        raise ValueError("Cannot extend: config/checkpoint commit mismatch.")
+    if completion["protocol"] != checkpoint["protocol"]:
+        raise ValueError("Cannot extend: completion/checkpoint protocol mismatch.")
+    if previous_config["protocol"] != checkpoint["protocol"]:
+        raise ValueError("Cannot extend: config/checkpoint protocol mismatch.")
+    for key in ("graph_fingerprint", "feature_fingerprint", "split_fingerprint"):
+        if completion[key] != checkpoint[key] or previous_config[key] != checkpoint[key]:
+            raise ValueError(f"Cannot extend: {key} provenance mismatch.")
+    if int(completion["best_epoch"]) != int(checkpoint["best_epoch"]):
+        raise ValueError("Cannot extend: completion/checkpoint best epoch mismatch.")
+    if float(completion["best_global_val_ap"]) != float(
+        checkpoint["best_global_val_ap"]
+    ):
+        raise ValueError("Cannot extend: completion/checkpoint best metric mismatch.")
+
+    return {
+        "from_completed_epochs": previous_epochs,
+        "to_epochs": int(current_training["epochs"]),
+        "from_git_commit": checkpoint["git_commit"],
+        "to_git_commit": current_git_commit,
+    }
+
+
+def validate_archived_best(best: dict, latest: dict) -> None:
+    """Ensure the prior best artifact agrees with the completed latest state."""
+    if best.get("format_version") != 3:
+        raise ValueError("Cannot extend: unsupported best-checkpoint format.")
+    for key in (
+        "experiment_role",
+        "model_config",
+        "training_config",
+        "wandb",
+        "graph_fingerprint",
+        "feature_fingerprint",
+        "split_fingerprint",
+        "protocol",
+        "git_commit",
+        "best_epoch",
+        "best_global_val_ap",
+    ):
+        if best[key] != latest[key]:
+            raise ValueError(f"Cannot extend: best/latest {key} mismatch.")
+    if int(best["epoch"]) != int(best["best_epoch"]):
+        raise ValueError("Cannot extend: best artifact is not from the best epoch.")
+
+
 def main() -> None:
     args = parse_args()
+    if args.extend_completed and not args.resume:
+        raise ValueError("--extend-completed requires --resume.")
     if args.hidden_dim <= 0 or args.num_layers <= 0:
         raise ValueError("hidden_dim and num_layers must be positive.")
     if args.decode_channels <= 0 or args.decoder_layers < 2:
@@ -267,12 +355,18 @@ def main() -> None:
     run_dir = output_root / name
     latest_path = run_dir / "latest_checkpoint.pt"
     best_path = run_dir / "best_model_state_dict.pt"
+    completed_path = run_dir / "completed.json"
     if run_dir.exists() and not args.resume:
         raise FileExistsError(f"Run directory already exists: {run_dir}")
     if args.resume and not latest_path.is_file():
         raise FileNotFoundError(f"No resumable checkpoint at {latest_path}")
-    if args.resume and (run_dir / "completed.json").is_file():
+    if args.resume and completed_path.is_file() and not args.extend_completed:
         raise RuntimeError(f"Run is already complete: {run_dir}")
+    if args.extend_completed and not completed_path.is_file():
+        raise FileNotFoundError(
+            f"--extend-completed requires {completed_path}; use ordinary --resume "
+            "after an interrupted extension."
+        )
 
     set_seed(args.seed)
     data = load_global_ppi_data(
@@ -305,6 +399,25 @@ def main() -> None:
     if not args.resume:
         run_dir.mkdir(parents=False, exist_ok=False)
 
+    config_path = run_dir / "config.json"
+    previous_config = None
+    if args.resume:
+        with config_path.open(encoding="utf-8") as handle:
+            previous_config = json.load(handle)
+
+    if previous_config is None:
+        tracking = tracking_config(args, name, data, model.model_config)
+    else:
+        for key in ("wandb_entity", "wandb_project", "wandb_group"):
+            if previous_config[key] != getattr(args, key):
+                raise ValueError(f"Cannot resume: {key} changed.")
+        tracking = {
+            "entity": args.wandb_entity,
+            "project": args.wandb_project,
+            "group": args.wandb_group,
+            "run_id": previous_config["wandb_run_id"],
+        }
+
     config = {
         **vars(args),
         "networks_dir": str(args.networks_dir),
@@ -319,21 +432,16 @@ def main() -> None:
         "protocol": protocol_metadata(),
         "git_commit": os.environ.get("PROTSCAPE_GIT_COMMIT", "uncommitted"),
     }
-    wandb_run_id = tracking_config(args, name, data, model.model_config)["run_id"]
+    wandb_run_id = tracking["run_id"]
     config["wandb_run_id"] = wandb_run_id
-    config_path = run_dir / "config.json"
-    if args.resume:
-        with config_path.open(encoding="utf-8") as handle:
-            previous_config = json.load(handle)
-        if previous_config["wandb_run_id"] != wandb_run_id:
-            raise ValueError("Cannot resume: W&B run identity changed.")
-    else:
+    if not args.resume:
         write_json(config_path, config)
 
     start_epoch = 0
     best_epoch = -1
     best_global_val_ap = -np.inf
     history = []
+    continuation = None
     if args.resume:
         checkpoint = torch.load(latest_path, map_location=device, weights_only=False)
         if checkpoint.get("format_version") != 3:
@@ -350,14 +458,34 @@ def main() -> None:
             raise ValueError("Cannot resume: ESM2 feature scales changed.")
         if checkpoint["protocol"] != protocol_metadata():
             raise ValueError("Cannot resume: evaluation protocol changed.")
-        if checkpoint["git_commit"] != config["git_commit"]:
-            raise ValueError("Cannot resume: Git commit changed.")
         if checkpoint["experiment_role"] != args.experiment_role:
             raise ValueError("Cannot resume: experiment role changed.")
         if checkpoint["model_config"] != model.model_config:
             raise ValueError("Cannot resume: model configuration changed.")
-        if checkpoint["training_config"] != training_config(args):
-            raise ValueError("Cannot resume: training configuration changed.")
+        current_training = training_config(args)
+        if args.extend_completed:
+            with completed_path.open(encoding="utf-8") as handle:
+                previous_completion = json.load(handle)
+            continuation = validate_completed_extension(
+                checkpoint,
+                previous_completion,
+                previous_config,
+                current_training,
+                config["git_commit"],
+            )
+            prior_best = torch.load(
+                best_path,
+                map_location="cpu",
+                weights_only=False,
+            )
+            validate_archived_best(prior_best, checkpoint)
+        else:
+            if checkpoint["git_commit"] != config["git_commit"]:
+                raise ValueError("Cannot resume: Git commit changed.")
+            if checkpoint["training_config"] != current_training:
+                raise ValueError("Cannot resume: training configuration changed.")
+        if checkpoint["wandb"]["run_id"] != wandb_run_id:
+            raise ValueError("Cannot resume: W&B run identity changed.")
         model.load_state_dict(checkpoint["model_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         restore_rng_state(checkpoint.get("rng_state"))
@@ -372,6 +500,41 @@ def main() -> None:
                 row for row in history if int(row["epoch"]) <= int(checkpoint["epoch"])
             ]
             write_history(history_path, history)
+
+        if continuation is not None:
+            archive_suffix = f"epoch{continuation['from_completed_epochs']}"
+            archives = {
+                completed_path: run_dir / f"completed_{archive_suffix}.json",
+                config_path: run_dir / f"config_{archive_suffix}.json",
+                best_path: run_dir / f"best_model_state_dict_{archive_suffix}.pt",
+            }
+            existing = [str(path) for path in archives.values() if path.exists()]
+            if existing:
+                raise FileExistsError(
+                    "Cannot extend: provenance archive already exists: "
+                    + ", ".join(existing)
+                )
+            shutil.copy2(config_path, archives[config_path])
+            shutil.copy2(best_path, archives[best_path])
+            os.replace(completed_path, archives[completed_path])
+
+            prior_continuations = list(checkpoint.get("continuations", []))
+            args.continuations = [*prior_continuations, continuation]
+            for checkpoint_path in (latest_path, best_path):
+                saved = torch.load(
+                    checkpoint_path,
+                    map_location="cpu",
+                    weights_only=False,
+                )
+                saved["training_config"] = current_training
+                saved["git_commit"] = config["git_commit"]
+                saved["wandb"] = tracking
+                saved["continuations"] = args.continuations
+                save_checkpoint(checkpoint_path, saved)
+            config["continuations"] = args.continuations
+            write_json(config_path, config)
+        elif previous_config is not None:
+            args.continuations = list(previous_config.get("continuations", []))
     else:
         save_checkpoint(
             latest_path,
@@ -384,6 +547,7 @@ def main() -> None:
                 best_global_val_ap=-np.inf,
                 val_metrics={},
                 optimizer=optimizer,
+                tracking=tracking,
             ),
         )
 
@@ -397,7 +561,7 @@ def main() -> None:
         group=args.wandb_group,
         name=name,
         id=wandb_run_id,
-        config=config,
+        config=None if args.resume else config,
         mode=args.wandb_mode,
         dir=str(run_dir),
         resume=(
@@ -418,6 +582,8 @@ def main() -> None:
         ],
         settings=wandb.Settings(_disable_stats=True),
     )
+    if args.resume:
+        tracker.config.update(config, allow_val_change=True)
 
     data.features = data.features.to(device)
 
@@ -494,6 +660,7 @@ def main() -> None:
                     best_epoch=best_epoch,
                     best_global_val_ap=best_global_val_ap,
                     val_metrics=val_metrics,
+                    tracking=tracking,
                 ),
             )
 
@@ -508,6 +675,7 @@ def main() -> None:
                 best_global_val_ap=best_global_val_ap,
                 val_metrics=val_metrics,
                 optimizer=optimizer,
+                tracking=tracking,
             ),
         )
         tracker.log(
@@ -538,6 +706,8 @@ def main() -> None:
         "protocol": protocol_metadata(),
         "git_commit": config["git_commit"],
     }
+    if getattr(args, "continuations", None):
+        completion["continuations"] = args.continuations
     tracker.summary["best_global_val_ap"] = best_global_val_ap
     tracker.summary["best_epoch"] = best_epoch
     tracker.summary["best_checkpoint"] = str(best_path)

@@ -15,14 +15,15 @@
 set -euo pipefail
 
 REPO_ROOT="${PROTSCAPE_ROOT:-/users/aloistho/projects/ProtScape}"
+PROJECTS_ROOT="$(dirname "${REPO_ROOT}")"
 CONDA_ENV="${PROTSCAPE_CONDA_ENV:-/iopsstor/scratch/cscs/aloistho/protscape/conda-protscape-downstream}"
 PYTHON="${CONDA_ENV}/bin/python"
 DATA_ROOT="${PROTSCAPE_DATA:-/iopsstor/scratch/cscs/aloistho/protscape/release-data}"
 DOWNSTREAM_DATA_ROOT="${PROTSCAPE_DOWNSTREAM_DATA:-/iopsstor/scratch/cscs/aloistho/protscape/downstream-data}"
-INFERENCE_ROOT="${PROTSCAPE_INFERENCE:-/capstor/scratch/cscs/aloistho/protscape/global-s2gae/inference}"
-INFERENCE_MODEL="${PROTSCAPE_INFERENCE_MODEL:-global_s2gae_full_reference}"
+INFERENCE_ROOT="${PROTSCAPE_INFERENCE:-/capstor/scratch/cscs/aloistho/protscape/global-s2gae-grid500/inference}"
+INFERENCE_MODEL="${PROTSCAPE_INFERENCE_MODEL:-global_s2gae_grid500_full_reference}"
 GLOBAL_INFERENCE="${INFERENCE_ROOT}/${INFERENCE_MODEL}"
-OUTPUT_ROOT="${PROTSCAPE_DOWNSTREAM_OUTPUT:-/capstor/scratch/cscs/aloistho/protscape/global-s2gae/downstream_tasks}"
+OUTPUT_ROOT="${PROTSCAPE_DOWNSTREAM_OUTPUT:-${PROJECTS_ROOT}/outputs/global_s2gae_grid500/downstream_tasks}"
 LOG_ROOT="${PROTSCAPE_LOGS:-/iopsstor/scratch/cscs/aloistho/protscape/logs}"
 ESM2_EMBEDDINGS="${DATA_ROOT}/sequence_embeddings/gene_protein_embeddings_esm2_3B_layer33.plk"
 PPI_EDGELISTS="${DATA_ROOT}/networks_bulk/ppi_edgelists"

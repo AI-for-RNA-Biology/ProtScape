@@ -1,18 +1,29 @@
-"""Evaluate the selected context-free model on unique global PPI test pairs."""
+"""Evaluate the selected context-free model on global and contextual PPI tests."""
 
 from __future__ import annotations
 
 import argparse
 import csv
+import io
 import json
 import os
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+import numpy as np
 import torch
 
+from .contextwise_ppi import (
+    CONTEXTWISE_NEGATIVE_BANK_SIZE,
+    aggregate_context_metrics,
+    metrics_from_pos_neg,
+    sample_structured_negatives,
+)
+from .data_handler.generate_input import read_data
 from .global_s2gae import (
     GLOBAL_K_VALUES,
     GlobalS2GAE,
+    _canonical_keys,
     evaluate_global_edges,
     load_global_ppi_data,
     protocol_metadata,
@@ -230,10 +241,10 @@ def write_rows(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def metric_rows(metrics: dict[int, dict]) -> list[dict]:
+def metric_rows(metrics: dict[int, dict], scope: str) -> list[dict]:
     return [
         {
-            "scope": "global_unique_pairs",
+            "scope": scope,
             "k_negatives": k,
             "pos_neg_ratio": f"1:{k}",
             "chance_ap": 1.0 / (1.0 + k),
@@ -241,6 +252,232 @@ def metric_rows(metrics: dict[int, dict]) -> list[dict]:
         }
         for k, values in sorted(metrics.items())
     ]
+
+
+def contextwise_protocol_metadata() -> dict:
+    """Protocol shared with the contextual ProtScape/PINNACLE PPI curves."""
+    return {
+        "version": "context_ppi_macro_v1",
+        "evaluation_unit": "directed_edge_context_occurrence",
+        "symmetric_edge_representation": True,
+        "negative_scope": "within_cell_ppi_nonedge",
+        "negative_sampling": "structured_target_corruption",
+        "negative_seed": "cell_id",
+        "negative_bank_size": CONTEXTWISE_NEGATIVE_BANK_SIZE,
+        "aggregation": "unweighted_macro_across_contexts",
+        "message_topology": "global_train_plus_validation",
+        "reported_k_values": list(GLOBAL_K_VALUES),
+    }
+
+
+def load_context_graphs(
+    networks_dir: Path,
+    esm2_embeddings: Path,
+    *,
+    seed: int,
+) -> tuple[dict, list[str], dict[int, str]]:
+    """Load the exact Cell-PPI targets used by the contextual evaluator."""
+    networks_dir = Path(networks_dir).expanduser()
+    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        loaded = read_data(
+            networks_dir / "global_ppi_edgelist.txt",
+            networks_dir / "ppi_edgelists",
+            networks_dir / "mg_edgelist.txt",
+            get_CT_map=True,
+            ppi_feat_dir=Path(esm2_embeddings).expanduser(),
+            symmetric_ppi=True,
+            dataset_mode="bulk",
+            split_mode="global",
+            count_edge_path=networks_dir / "count_edge_dict.pkl",
+            weighted_ppi_loss=False,
+            defer_ppi_features=True,
+            seed=seed,
+            verbose=False,
+        )
+    contexts, metagraph, _, celltype_map, _, _, _, _ = loaded
+    protein_names = [str(name) for name in metagraph.global_protein_names]
+    id_to_name = {int(cell_id): str(name) for name, cell_id in celltype_map.items()}
+    return contexts, protein_names, id_to_name
+
+
+def _score_context_edges(
+    model: GlobalS2GAE,
+    layer_embeddings: list[torch.Tensor],
+    edge_index: torch.Tensor,
+    device: torch.device,
+    *,
+    chunk_size: int = 100_000,
+) -> np.ndarray:
+    # The global decoder is symmetric and context-independent. Reuse scores for
+    # duplicate/reversed pairs without changing the occurrence-level metrics.
+    canonical = torch.stack(
+        [
+            torch.minimum(edge_index[0], edge_index[1]),
+            torch.maximum(edge_index[0], edge_index[1]),
+        ],
+        dim=1,
+    )
+    unique_edges, inverse = torch.unique(
+        canonical,
+        dim=0,
+        sorted=True,
+        return_inverse=True,
+    )
+    unique_edges = unique_edges.t().contiguous()
+    scores = []
+    for start in range(0, unique_edges.size(1), chunk_size):
+        edges = unique_edges[:, start : start + chunk_size].to(device)
+        logits = model.score_edges(layer_embeddings, edges)
+        scores.append(torch.sigmoid(logits).cpu().numpy())
+    if not scores:
+        return np.empty(0, dtype=np.float32)
+    unique_scores = np.concatenate(scores)
+    return unique_scores[inverse.numpy()]
+
+
+@torch.no_grad()
+def evaluate_contextwise_edges(
+    model: GlobalS2GAE,
+    data,
+    contexts: dict,
+    id_to_name: dict[int, str],
+    *,
+    k_values: list[int],
+    device: torch.device,
+) -> tuple[dict[int, dict], list[dict], dict, list[dict]]:
+    """Score frozen global representations on the paper's Cell-PPI test banks."""
+    values = sorted({int(k) for k in k_values})
+    if values != list(GLOBAL_K_VALUES):
+        raise ValueError(f"k_values must be exactly {GLOBAL_K_VALUES}.")
+    if len(contexts) != int(data.source_context_count):
+        raise ValueError("Context count differs from the global split source.")
+
+    model.eval()
+    _, layers = model.encode(
+        data.features.to(device),
+        data.train_val_edge_index.to(device),
+    )
+    metrics_by_k = {k: [] for k in values}
+    context_rows = []
+    pair_contexts: dict[int, set[int]] = {}
+    directed_positive_occurrences = 0
+    pair_context_occurrences = 0
+    global_test_keys = torch.unique(
+        _canonical_keys(data.test_edge_index, data.features.size(0))
+    )
+
+    for context_index, (cell_id, graph) in enumerate(contexts.items(), start=1):
+        cell_id = int(cell_id)
+        local_to_global = graph.feature_index.detach().cpu().long()
+        positive_local = graph.edge_index[:, graph.test_mask].detach().cpu().long()
+        if positive_local.size(1) == 0:
+            raise ValueError(f"Cell-PPI {cell_id} has no test-positive edges.")
+        positive_global = local_to_global[positive_local]
+        positive_keys = _canonical_keys(positive_global, data.features.size(0))
+        if not torch.isin(positive_keys, global_test_keys).all():
+            raise ValueError(
+                f"Cell-PPI {cell_id} contains a test pair outside the global test split."
+            )
+        unique_positive_keys = torch.unique(positive_keys)
+        directed_positive_occurrences += int(positive_keys.numel())
+        pair_context_occurrences += int(unique_positive_keys.numel())
+        for key in unique_positive_keys.tolist():
+            pair_contexts.setdefault(int(key), set()).add(cell_id)
+
+        np.random.seed(cell_id)
+        negative_local = sample_structured_negatives(
+            positive_local,
+            graph.edge_index.detach().cpu(),
+            int(graph.num_nodes),
+            CONTEXTWISE_NEGATIVE_BANK_SIZE,
+        ).reshape(2, positive_local.size(1), CONTEXTWISE_NEGATIVE_BANK_SIZE)
+        negative_global = local_to_global[negative_local]
+
+        positive_scores = _score_context_edges(
+            model,
+            layers,
+            positive_global,
+            device,
+        )
+        negative_scores = _score_context_edges(
+            model,
+            layers,
+            negative_global.reshape(2, -1),
+            device,
+        ).reshape(positive_local.size(1), CONTEXTWISE_NEGATIVE_BANK_SIZE)
+
+        for k in values:
+            metrics = metrics_from_pos_neg(
+                positive_scores,
+                negative_scores[:, :k].reshape(-1),
+            )
+            metrics_by_k[k].append(metrics)
+            context_rows.append(
+                {
+                    "scope": "cell_ppi",
+                    "cell_id": cell_id,
+                    "edgelist": id_to_name[cell_id],
+                    "k_negatives": k,
+                    "pos_neg_ratio": f"1:{k}",
+                    "chance_ap": 1.0 / (1.0 + k),
+                    **metrics,
+                }
+            )
+        if context_index % 25 == 0 or context_index == len(contexts):
+            print(
+                f"context-free model: scored {context_index}/{len(contexts)} "
+                "Cell-PPIs",
+                flush=True,
+            )
+
+    observed_keys = torch.tensor(sorted(pair_contexts), dtype=torch.long)
+    if not torch.equal(observed_keys, torch.sort(global_test_keys).values):
+        raise ValueError(
+            "Context-specific targets do not cover the complete global test split."
+        )
+
+    num_nodes = int(data.features.size(0))
+    multiplicity_rows = []
+    for key, cell_ids in sorted(pair_contexts.items()):
+        source_index, target_index = divmod(key, num_nodes)
+        multiplicity_rows.append(
+            {
+                "global_source_index": source_index,
+                "global_target_index": target_index,
+                "source_protein": data.protein_names[source_index],
+                "target_protein": data.protein_names[target_index],
+                "n_contexts": len(cell_ids),
+            }
+        )
+    multiplicities = np.asarray(
+        [row["n_contexts"] for row in multiplicity_rows], dtype=np.int64
+    )
+    repeated = int((multiplicities > 1).sum())
+    diagnostics = {
+        "directed_positive_occurrences_scored": directed_positive_occurrences,
+        "unique_pair_context_occurrences": pair_context_occurrences,
+        "unique_global_test_pairs_observed": len(multiplicity_rows),
+        "unique_global_test_pairs_total": int(global_test_keys.numel()),
+        "pairs_observed_in_multiple_contexts": repeated,
+        "fraction_observed_pairs_in_multiple_contexts": (
+            float(repeated / multiplicities.size) if multiplicities.size else 0.0
+        ),
+        "mean_contexts_per_observed_pair": (
+            float(multiplicities.mean()) if multiplicities.size else 0.0
+        ),
+        "median_contexts_per_observed_pair": (
+            float(np.median(multiplicities)) if multiplicities.size else 0.0
+        ),
+        "max_contexts_per_observed_pair": (
+            int(multiplicities.max()) if multiplicities.size else 0
+        ),
+    }
+    return (
+        aggregate_context_metrics(metrics_by_k),
+        context_rows,
+        diagnostics,
+        multiplicity_rows,
+    )
 
 
 def build_model(checkpoint: dict, device: torch.device) -> GlobalS2GAE:
@@ -268,6 +505,9 @@ def update_wandb_summary(checkpoint: dict, summary: dict) -> None:
     for k, values in summary["global_test"].items():
         for metric, value in values.items():
             run.summary[f"test/global_{metric}_k{k}"] = value
+    for k, values in summary["context_ppi_macro_test"].items():
+        for metric, value in values.items():
+            run.summary[f"test/context_macro_{metric}_k{k}"] = value
     run.update()
 
 
@@ -278,6 +518,27 @@ def _validate_complete_summary(summary: dict) -> None:
         GLOBAL_K_VALUES
     ):
         raise ValueError("Existing evaluation does not contain every required K value.")
+    if sorted(int(k) for k in summary.get("context_ppi_macro_test", {})) != list(
+        GLOBAL_K_VALUES
+    ):
+        raise ValueError(
+            "Existing evaluation does not contain every context-specific K value."
+        )
+    if summary.get("context_ppi_protocol") != contextwise_protocol_metadata():
+        raise ValueError("Existing context-specific evaluation protocol is incompatible.")
+    required_multiplicity = {
+        "directed_positive_occurrences_scored",
+        "unique_pair_context_occurrences",
+        "unique_global_test_pairs_observed",
+        "unique_global_test_pairs_total",
+        "pairs_observed_in_multiple_contexts",
+        "fraction_observed_pairs_in_multiple_contexts",
+        "mean_contexts_per_observed_pair",
+        "median_contexts_per_observed_pair",
+        "max_contexts_per_observed_pair",
+    }
+    if set(summary.get("context_ppi_multiplicity", {})) != required_multiplicity:
+        raise ValueError("Existing context-specific multiplicity audit is incomplete.")
 
 
 def main() -> None:
@@ -356,6 +617,26 @@ def main() -> None:
         device=device,
         seed=split_seed,
     )
+    contexts, context_protein_names, id_to_name = load_context_graphs(
+        args.networks_dir,
+        args.esm2_embeddings,
+        seed=split_seed,
+    )
+    if context_protein_names != data.protein_names:
+        raise ValueError("Context and global loaders produced different protein ordering.")
+    (
+        context_test_metrics,
+        context_rows,
+        context_diagnostics,
+        multiplicity_rows,
+    ) = evaluate_contextwise_edges(
+        model,
+        data,
+        contexts,
+        id_to_name,
+        k_values=k_values,
+        device=device,
+    )
 
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     work_dir = output_dir.with_name(
@@ -376,7 +657,16 @@ def main() -> None:
                 indent=2,
                 sort_keys=True,
             )
-    write_rows(work_dir / "global_test_metrics.csv", metric_rows(test_metrics))
+    write_rows(
+        work_dir / "global_test_metrics.csv",
+        metric_rows(test_metrics, "global_unique_pairs"),
+    )
+    write_rows(
+        work_dir / "context_ppi_macro_test_metrics.csv",
+        metric_rows(context_test_metrics, "cell_ppi_macro"),
+    )
+    write_rows(work_dir / "context_ppi_per_cell_test_metrics.csv", context_rows)
+    write_rows(work_dir / "context_ppi_pair_multiplicity.csv", multiplicity_rows)
 
     summary = {
         "checkpoint": str(checkpoint_path),
@@ -398,8 +688,11 @@ def main() -> None:
         "evaluation_unit": "unique_undirected_global_pair",
         "mask_type": checkpoint["training_config"]["mask_type"],
         "protocol": checkpoint["protocol"],
+        "context_ppi_protocol": contextwise_protocol_metadata(),
         "git_commit": checkpoint["git_commit"],
         "global_test": test_metrics,
+        "context_ppi_macro_test": context_test_metrics,
+        "context_ppi_multiplicity": context_diagnostics,
     }
     with (work_dir / "summary.json").open("w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2, sort_keys=True)
@@ -409,6 +702,7 @@ def main() -> None:
                 "checkpoint": str(checkpoint_path),
                 "protocol": checkpoint["protocol"],
                 "test_evaluated": True,
+                "context_ppi_test_evaluated": True,
                 "git_commit": checkpoint["git_commit"],
                 "graph_fingerprint": data.graph_fingerprint,
                 "feature_fingerprint": data.feature_fingerprint,

@@ -36,10 +36,8 @@ The pretraining and downstream entry points run the required generator when a co
 ## Training
 
 The context-free global-interactome S2GAE ablation, including its released
-leakage-controlled split, unique-pair evaluation, ACM sweep, and CSCS launchers,
-is documented in [`GLOBAL_S2GAE.md`](GLOBAL_S2GAE.md). This experiment is limited
-to global PPI pretraining and link prediction; it does not run context-wise or
-downstream evaluations.
+leakage-controlled split, 54-point ACM sweep, matched Cell-PPI evaluation, and
+CSCS launchers, is documented in [`GLOBAL_S2GAE.md`](GLOBAL_S2GAE.md).
 
 From the repository root, run the main ProtScape configuration with:
 

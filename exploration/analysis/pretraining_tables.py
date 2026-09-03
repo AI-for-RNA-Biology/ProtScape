@@ -18,6 +18,59 @@ from exploration.analysis.pretraining_model_specs import (
 )
 
 
+CONTEXT_FREE_MODEL_KEY = "context_free_protscape"
+
+
+def add_context_free_curve(
+    table: pd.DataFrame,
+    metrics_path: str | Path,
+    metric: str,
+) -> pd.DataFrame:
+    """Append context-free scores measured with the shared Cell-PPI protocol."""
+    metrics_path = Path(metrics_path)
+    metrics = pd.read_csv(metrics_path)
+    required = {"scope", "k_negatives", metric}
+    missing = required.difference(metrics.columns)
+    if missing:
+        raise ValueError(
+            f"{metrics_path} is missing required columns: {sorted(missing)}"
+        )
+
+    scopes = set(metrics["scope"].dropna().astype(str))
+    if scopes != {"cell_ppi_macro"}:
+        raise ValueError(
+            f"{metrics_path} has scope={sorted(scopes)}; expected cell_ppi_macro"
+        )
+
+    expected_k = {1, 10, 50, 100, 500}
+    k_values = pd.to_numeric(metrics["k_negatives"], errors="raise")
+    if not np.equal(k_values, k_values.astype(int)).all():
+        raise ValueError(f"{metrics_path}:k_negatives must contain integers.")
+    k_values = k_values.astype(int)
+    if k_values.duplicated().any():
+        duplicates = sorted(set(k_values[k_values.duplicated(keep=False)]))
+        raise ValueError(f"{metrics_path} has duplicate k rows: {duplicates}")
+    observed_k = set(k_values)
+    if observed_k != expected_k:
+        raise ValueError(
+            f"{metrics_path} has k={sorted(observed_k)}; expected {sorted(expected_k)}"
+        )
+
+    values = pd.to_numeric(metrics[metric], errors="raise")
+    if not values.between(0.0, 1.0).all():
+        raise ValueError(f"{metrics_path}:{metric} must contain values in [0, 1].")
+
+    context_free = pd.DataFrame(
+        {
+            "model_key": CONTEXT_FREE_MODEL_KEY,
+            "k_negatives": k_values,
+            "pos_neg_ratio": k_values.map(lambda k: f"1:{k}"),
+            "score_percent": 100.0 * values,
+        }
+    ).sort_values("k_negatives")
+    return pd.concat([table, context_free], ignore_index=True, sort=False)
+
+
 def add_context_metadata(table: pd.DataFrame, mapping_path: Path) -> pd.DataFrame:
     mapping = pd.read_csv(mapping_path)
     frequent = mapping["cell_type_class"].value_counts()

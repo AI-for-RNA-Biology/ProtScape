@@ -12,11 +12,12 @@
 set -euo pipefail
 
 REPO_ROOT="${PROTSCAPE_ROOT:-/users/aloistho/projects/ProtScape}"
+PROJECTS_ROOT="$(dirname "${REPO_ROOT}")"
 CONDA_ENV="${PROTSCAPE_CONDA_ENV:-/iopsstor/scratch/cscs/aloistho/protscape/conda-global-s2gae}"
 PYTHON="${CONDA_ENV}/bin/python"
 DATA_ROOT="${PROTSCAPE_DATA:-/iopsstor/scratch/cscs/aloistho/protscape/release-data}"
-RUNS_ROOT="${PROTSCAPE_OUTPUT:-/capstor/scratch/cscs/aloistho/protscape/global-s2gae/runs}"
-EVAL_DIR="${PROTSCAPE_EVAL:-/capstor/scratch/cscs/aloistho/protscape/global-s2gae/evaluation}"
+RUNS_ROOT="${PROTSCAPE_OUTPUT:-/capstor/scratch/cscs/aloistho/protscape/global-s2gae-grid500/runs}"
+EVAL_DIR="${PROTSCAPE_EVAL:-${PROJECTS_ROOT}/outputs/global_s2gae_grid500/evaluation}"
 SWEEP_CONFIG="${PROTSCAPE_SWEEP:-${REPO_ROOT}/configs/global_s2gae_sweep.yaml}"
 LOG_ROOT="${PROTSCAPE_LOGS:-/iopsstor/scratch/cscs/aloistho/protscape/logs}"
 
@@ -53,7 +54,9 @@ with (output_dir / "completed.json").open(encoding="utf-8") as handle:
     completion = json.load(handle)
 with (output_dir / "summary.json").open(encoding="utf-8") as handle:
     summary = json.load(handle)
-if not completion.get("test_evaluated"):
+if not completion.get("test_evaluated") or not completion.get(
+    "context_ppi_test_evaluated"
+):
     raise SystemExit("Existing evaluation is not marked complete.")
 if completion.get("git_commit") != expected_commit:
     raise SystemExit("Existing evaluation used another Git commit.")

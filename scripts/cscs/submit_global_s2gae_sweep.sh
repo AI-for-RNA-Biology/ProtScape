@@ -7,6 +7,8 @@ REPO_ROOT="${PROTSCAPE_ROOT:-/users/aloistho/projects/ProtScape}"
 DATA_ROOT="${PROTSCAPE_DATA:-/iopsstor/scratch/cscs/aloistho/protscape/release-data}"
 SWEEP_CONFIG="${PROTSCAPE_SWEEP:-${REPO_ROOT}/configs/global_s2gae_sweep.yaml}"
 LOG_ROOT="${PROTSCAPE_LOGS:-/iopsstor/scratch/cscs/aloistho/protscape/logs}"
+OUTPUT_ROOT="${PROTSCAPE_OUTPUT:-/capstor/scratch/cscs/aloistho/protscape/global-s2gae-grid500/runs}"
+REUSE_ROOT="${PROTSCAPE_REUSE_OUTPUT:-/capstor/scratch/cscs/aloistho/protscape/global-s2gae/runs}"
 
 test -x "${PYTHON}"
 unset PYTHONPATH PYTHONHOME PYTHONUSERBASE
@@ -47,6 +49,11 @@ fi
 LAST_PACK=$(((RUN_COUNT - 1) / 4))
 GIT_COMMIT="$(git rev-parse HEAD)"
 
+"${PYTHON}" -m pretraining.prepare_global_s2gae_sweep \
+    --config "${SWEEP_CONFIG}" \
+    --source-root "${REUSE_ROOT}" \
+    --output-root "${OUTPUT_ROOT}"
+
 "${PYTHON}" - <<'PY'
 import wandb
 
@@ -59,5 +66,5 @@ PY
 
 sbatch --parsable \
     --array="0-${LAST_PACK}" \
-    --export="ALL,PROTSCAPE_N_RUNS=${RUN_COUNT},PROTSCAPE_GIT_COMMIT=${GIT_COMMIT}" \
+    --export="ALL,PROTSCAPE_N_RUNS=${RUN_COUNT},PROTSCAPE_GIT_COMMIT=${GIT_COMMIT},PROTSCAPE_OUTPUT=${OUTPUT_ROOT}" \
     scripts/cscs/run_global_s2gae_sweep.sbatch

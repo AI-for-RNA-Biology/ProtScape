@@ -46,3 +46,8 @@ python -m exploration.analysis.ALS_rewiring_analysis
 ```
 
 The bulk-network step requires the complete `<output_root>/data_processing_bulk/` directory. Pretraining analyses use `checkpoint_root`; downstream analyses use the selected runs below `<output_root>/downstream_tasks/`. Outputs are written below `<output_root>/analysis/`.
+
+The PPI 1:k plots can also overlay context-free ProtScape in red. Its frozen
+global representation is scored on the same per-context positives, fixed
+cell-seeded negative banks, and unweighted Cell-PPI macro aggregation as the
+context-specific models, so all curves in the plot use the same test protocol.

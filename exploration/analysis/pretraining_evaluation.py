@@ -26,6 +26,13 @@ from pretraining.checkpoints import load_pinnacle_model, load_protscape_model
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PATHS_FILE = REPO_ROOT / "configs" / "paths.yaml"
+CONTEXT_FREE_PPI_METRICS = (
+    REPO_ROOT.parent
+    / "outputs"
+    / "global_s2gae_grid500"
+    / "evaluation"
+    / "context_ppi_macro_test_metrics.csv"
+)
 
 
 def load_paths() -> dict:
@@ -142,7 +149,11 @@ def main() -> None:
         plot_pretraining as plot_model_diagnostics,
     )
 
-    plot_model_evaluation(output_dir, output_dir)
+    plot_model_evaluation(
+        output_dir,
+        output_dir,
+        context_free_metrics=CONTEXT_FREE_PPI_METRICS,
+    )
     plot_model_diagnostics(output_dir, output_dir)
 
 

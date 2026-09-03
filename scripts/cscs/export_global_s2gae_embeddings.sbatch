@@ -14,12 +14,13 @@
 set -euo pipefail
 
 REPO_ROOT="${PROTSCAPE_ROOT:-/users/aloistho/projects/ProtScape}"
+PROJECTS_ROOT="$(dirname "${REPO_ROOT}")"
 CONDA_ENV="${PROTSCAPE_CONDA_ENV:-/iopsstor/scratch/cscs/aloistho/protscape/conda-global-s2gae}"
 PYTHON="${CONDA_ENV}/bin/python"
 DATA_ROOT="${PROTSCAPE_DATA:-/iopsstor/scratch/cscs/aloistho/protscape/release-data}"
-EVAL_DIR="${PROTSCAPE_EVAL:-/capstor/scratch/cscs/aloistho/protscape/global-s2gae/evaluation}"
-INFERENCE_ROOT="${PROTSCAPE_INFERENCE:-/capstor/scratch/cscs/aloistho/protscape/global-s2gae/inference}"
-INFERENCE_MODEL="${PROTSCAPE_INFERENCE_MODEL:-global_s2gae_full_reference}"
+EVAL_DIR="${PROTSCAPE_EVAL:-${PROJECTS_ROOT}/outputs/global_s2gae_grid500/evaluation}"
+INFERENCE_ROOT="${PROTSCAPE_INFERENCE:-/capstor/scratch/cscs/aloistho/protscape/global-s2gae-grid500/inference}"
+INFERENCE_MODEL="${PROTSCAPE_INFERENCE_MODEL:-global_s2gae_grid500_full_reference}"
 OUTPUT_DIR="${INFERENCE_ROOT}/${INFERENCE_MODEL}"
 LOG_ROOT="${PROTSCAPE_LOGS:-/iopsstor/scratch/cscs/aloistho/protscape/logs}"
 ESM2_EMBEDDINGS="${DATA_ROOT}/sequence_embeddings/gene_protein_embeddings_esm2_3B_layer33.plk"
@@ -59,7 +60,9 @@ with (evaluation / "summary.json").open(encoding="utf-8") as handle:
     summary = json.load(handle)
 with (evaluation / "completed.json").open(encoding="utf-8") as handle:
     completion = json.load(handle)
-if not completion.get("test_evaluated"):
+if not completion.get("test_evaluated") or not completion.get(
+    "context_ppi_test_evaluated"
+):
     raise SystemExit("The selected-checkpoint evaluation is not complete.")
 if completion.get("checkpoint") != summary.get("checkpoint"):
     raise SystemExit("Evaluation completion and summary select different checkpoints.")

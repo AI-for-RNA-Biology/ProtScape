@@ -99,7 +99,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument(
         "--inference-model",
-        default="global_s2gae_full_reference",
+        default="global_s2gae_grid500_full_reference",
     )
     parser.add_argument("--summary-dir", type=Path)
     return parser.parse_args()

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 import matplotlib
@@ -20,6 +21,10 @@ import pandas as pd
 from matplotlib.lines import Line2D
 from matplotlib.ticker import LogFormatterMathtext
 
+from exploration.analysis.pretraining_tables import (
+    CONTEXT_FREE_MODEL_KEY,
+    add_context_free_curve,
+)
 
 
 CM = 1 / 2.54
@@ -37,6 +42,7 @@ MODEL_LABELS = {
     "pinnacle_esm2": "Pinnacle-ESM (GAT)",
     "gae_att": "ProtScape-GAE",
     "s2gae_att_k1_uni": "ProtScape",
+    CONTEXT_FREE_MODEL_KEY: "Context-free ProtScape",
 }
 MODEL_COLORS = {
     "pinnacle_random": "#2b2b2b",
@@ -44,6 +50,7 @@ MODEL_COLORS = {
     "pinnacle_esm2": "#b0b0b0",
     "gae_att": "#1f77b4",
     "s2gae_att_k1_uni": "#e6550d",
+    CONTEXT_FREE_MODEL_KEY: "#d31529",
 }
 
 # This is the order in the original loss-sensitivity output tables and legend.
@@ -99,10 +106,6 @@ def save_pretraining_figure(fig: plt.Figure, output: Path, stem: str) -> None:
     fig.savefig(output / f"{stem}.pdf", **options)
     fig.savefig(output / f"{stem}.png", **options)
     plt.close(fig)
-
-
-
-
 def clean_pretraining_axis(ax: plt.Axes) -> None:
     ax.grid(False)
     ax.spines["top"].set_visible(False)
@@ -209,15 +212,15 @@ def plot_curve(
     save_pretraining_figure(fig, output, stem)
 
 
-def plot_core_model_legend(output: Path) -> None:
+def plot_core_model_legend(output: Path, order: list[str]) -> None:
     fig, ax = plt.subplots(figsize=(6.8 * CM, 4.5 * CM))
     ax.axis("off")
     ax.legend(
-        model_handles(CORE_MODEL_ORDER, MODEL_COLORS, 2.5),
-        [MODEL_LABELS[key] for key in CORE_MODEL_ORDER],
+        model_handles(order, MODEL_COLORS, 2.5),
+        [MODEL_LABELS[key] for key in order],
         frameon=False,
         loc="center",
-        ncol=len(CORE_MODEL_ORDER),
+        ncol=len(order),
         handlelength=1.8,
     )
     save_pretraining_figure(fig, output, "core_model_legend")
@@ -333,12 +336,23 @@ def plot_loss_legend(output: Path) -> None:
     save_pretraining_figure(fig, output, "loss_sensitivity_legend")
 
 
-def plot_pretraining(source: str | Path, output: str | Path) -> None:
+def plot_pretraining(
+    source: str | Path,
+    output: str | Path,
+    context_free_metrics: str | Path | None = None,
+) -> None:
     """Render the main pretraining evaluation plots."""
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     panel_a_auprc = read_table(source, "robust_ppi_auprc.csv")
     panel_a_f1 = read_table(source, "robust_ppi_f1.csv")
+    core_ppi_model_order = list(CORE_MODEL_ORDER)
+    if context_free_metrics is not None:
+        panel_a_auprc = add_context_free_curve(
+            panel_a_auprc, context_free_metrics, "ap"
+        )
+        panel_a_f1 = add_context_free_curve(panel_a_f1, context_free_metrics, "f1")
+        core_ppi_model_order.append(CONTEXT_FREE_MODEL_KEY)
     panel_b = read_table(source, "metagraph_auprc.csv")
     metagraph_metrics = read_table(source, "metagraph_metrics.csv")
     panel_c = read_table(source, "parameter_counts.csv")
@@ -350,7 +364,7 @@ def plot_pretraining(source: str | Path, output: str | Path) -> None:
             panel_a_auprc,
             output,
             "core_robust_ppi_auprc",
-            CORE_MODEL_ORDER,
+            core_ppi_model_order,
             MODEL_COLORS,
             MODEL_LABELS,
             "AUPRC",
@@ -360,13 +374,13 @@ def plot_pretraining(source: str | Path, output: str | Path) -> None:
             panel_a_f1,
             output,
             "core_robust_ppi_f1",
-            CORE_MODEL_ORDER,
+            core_ppi_model_order,
             MODEL_COLORS,
             MODEL_LABELS,
             "F1",
             [0, 20, 40, 60, 80],
         )
-        plot_core_model_legend(output)
+        plot_core_model_legend(output, core_ppi_model_order)
 
         plot_metagraph_barplot(panel_b, output, "metagraph_barplot_auprc")
         plot_metagraph_metric_scatter(
@@ -397,3 +411,24 @@ def plot_pretraining(source: str | Path, output: str | Path) -> None:
             None,
         )
         plot_loss_legend(output)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--context-free-metrics", type=Path)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    plot_pretraining(
+        args.source,
+        args.output,
+        context_free_metrics=args.context_free_metrics,
+    )
+
+
+if __name__ == "__main__":
+    main()

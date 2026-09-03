@@ -127,8 +127,8 @@ runs with:
 
 ```bash
 python -m downstream_tasks.aggregate_global_s2gae_results \
-  --output-root /capstor/scratch/cscs/aloistho/protscape/global-s2gae/downstream_tasks \
-  --inference-model global_s2gae_full_reference
+  --output-root /users/aloistho/projects/outputs/global_s2gae_grid500/downstream_tasks \
+  --inference-model global_s2gae_grid500_full_reference
 ```
 
 ## Selected configurations

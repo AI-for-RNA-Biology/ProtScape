@@ -17,8 +17,9 @@ not present.
 
 The loader uses the released global interactome, Cell-PPI files, cross-context
 edge-count dictionary, and ESM-2 matrix. It does not regenerate networks or
-sequence embeddings. The Cell-PPI files are used only to recover ProtScape's
-leakage-controlled split; they are never model inputs and are not evaluated.
+sequence embeddings. The Cell-PPI files recover ProtScape's leakage-controlled
+split and supply targets for the matched contextual evaluation; they are never
+inputs to the context-free model.
 
 After applying released ESM-2 coverage, the global graph contains 15,020 proteins
 and 204,038 unique undirected reference interactions. Each of the 200,137 pairs
@@ -49,10 +50,15 @@ sensitivity and is never eligible for primary selection.
 
 ## Sweep and execution
 
-`configs/global_s2gae_sweep.yaml` defines ten primary ACM configurations over
-hidden width, depth, and dropout. It also defines two non-selection sensitivities:
-undirected masking at seed 0 and the anchor configuration at seed 1. Four
-independent training runs are packed onto each four-GPU Clariden node.
+`configs/global_s2gae_sweep.yaml` defines the complete 54-point seed-0 encoder
+grid: hidden width `{128, 256, 512}`, depth `{2, 3, 4}`, and dropout
+`{0, 0.1, 0.2, 0.3, 0.4, 0.5}`. Every run uses 500 epochs; decoder, masking,
+negative-sampling, optimizer, and split settings remain fixed. Four independent
+training runs are packed onto each four-GPU Clariden node.
+
+The submission helper copies the nine compatible 300-epoch runs from the old
+run root into the isolated grid-500 run root and resumes them from epoch 301.
+The old artifacts remain unchanged. The other 45 grid points start normally.
 
 Production training logs to `cedricvincentcuaz/pinnacle`, group
 `protscape_global_ppi_baseline`. Debug and unit-test runs keep W&B disabled and do
@@ -72,20 +78,30 @@ Then submit the sweep from a clean reviewed commit:
 bash scripts/cscs/submit_global_s2gae_sweep.sh
 ```
 
-The wrapper verifies the released inputs, sweep manifest, Git state, W&B access,
-and absence of another active sweep. Each run checkpoints every epoch and uses a
-deterministic W&B run ID for safe resume.
+The wrapper verifies the released inputs, sweep manifest, reusable-run
+compatibility, Git state, W&B access, and absence of another active sweep. Each
+run checkpoints every epoch and uses a deterministic W&B run ID for safe resume.
 
-After all ten primary runs complete, evaluate the validation-selected checkpoint:
+After all 54 runs complete, evaluate the validation-selected checkpoint:
 
 ```bash
 sbatch scripts/cscs/evaluate_global_s2gae.sbatch
 ```
 
-The evaluator requires every primary completion manifest, ranks runs by
-`global_val_ap`, fixes the selected checkpoint before accessing test targets, and
-writes the unique-global test results atomically. Test pairs are evaluated once;
-there is no context macro, context sharding, or downstream embedding export.
+The evaluator requires every completion manifest, ranks runs by `global_val_ap`,
+and fixes the selected checkpoint before accessing test targets. It writes two
+atomic evaluations below `projects/outputs/global_s2gae_grid500/evaluation/`:
+
+- the unique-global diagnostic, where each held-out pair is scored once against
+  global non-edges;
+- the directly comparable Cell-PPI evaluation, using the same directed
+  edge-context positives, cell-seeded nested negative banks, and unweighted
+  macro average as the contextual ProtScape and PINNACLE curves.
+
+The context-free encoder runs once on the global train-plus-validation topology;
+its embeddings and decoder are frozen for every Cell-PPI target. The evaluator
+also writes `context_ppi_pair_multiplicity.csv` and summary statistics to
+quantify how often the same held-out pair appears across contexts.
 
 After verifying the local evaluation, update the selected existing W&B run
 without creating a new run:
@@ -96,9 +112,8 @@ bash scripts/cscs/update_global_s2gae_wandb.sh
 
 ## Comparison with ProtScape
 
-The unique-global result weights every held-out protein pair once. Published
-ProtScape PPI numbers instead score occurrences within individual Cell-PPIs and
-macro-average across contexts. Those values are not directly comparable. A fair
-numerical comparison requires evaluating the released ProtScape checkpoints on
-this same unique-global split, topology, and negative bank; otherwise the global
-baseline must be reported as a separate pretraining diagnostic.
+Use `context_ppi_macro_test_metrics.csv` for the cross-model 1:k plot: it matches
+the contextual models' test targets, negative sampling, and aggregation. The
+unique-global table remains useful for measuring context-free link prediction,
+but it answers a different question and must not be overlaid as a comparable
+model curve.
