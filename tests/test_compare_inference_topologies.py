@@ -1,5 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor
-
 import numpy as np
 import torch
 from torch_geometric.data import Data
@@ -54,13 +52,12 @@ def test_declared_orders_cover_three_models_and_splits():
     assert SPLIT_ORDER == ("train", "validation", "test")
 
 
-def test_parallel_score_bank_metrics_keep_the_shared_first_negative():
+def test_score_bank_metrics_keep_the_shared_first_negative():
     scores = {
         key: np.array([0.9, 0.8, 0.1, 0.2, 0.3, 0.4], dtype=np.float32)
         for key in INFERENCE_ORDER
     }
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        metrics, paired = evaluate_score_banks(scores, 2, 2, (1, 2), executor)
+    metrics, paired = evaluate_score_banks(scores, 2, 2, (1, 2))
 
     assert set(metrics) == {(key, k) for key in INFERENCE_ORDER for k in (1, 2)}
     for key in INFERENCE_ORDER:

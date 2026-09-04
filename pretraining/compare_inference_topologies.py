@@ -10,20 +10,18 @@ import io
 import json
 import os
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 import numpy as np
 import torch
 from scipy.stats import pearsonr, spearmanr
+from sklearn.metrics import average_precision_score
 from torch_geometric.data import Data
 
 from pretraining.checkpoints import load_protscape_model
 from pretraining.contextwise_ppi import (
     CONTEXTWISE_K_VALUES,
-    aggregate_context_metrics,
-    metrics_from_pos_neg,
     sample_structured_negatives,
 )
 from pretraining.data_handler.generate_input import read_data
@@ -69,7 +67,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--decoder-chunk-size", type=int, default=100_000)
-    parser.add_argument("--metric-workers", type=int, default=12)
     parser.add_argument("--plot-samples-per-class-cell", type=int, default=250)
     return parser.parse_args()
 
@@ -307,27 +304,40 @@ def add_plot_sample(
         )
 
 
+def auprc_from_pos_neg(positive: np.ndarray, negative: np.ndarray) -> dict:
+    scores = np.concatenate([positive, negative])
+    labels = np.concatenate(
+        [
+            np.ones(positive.size, dtype=np.int8),
+            np.zeros(negative.size, dtype=np.int8),
+        ]
+    )
+    return {
+        "ap": float(average_precision_score(labels, scores)),
+        "n_pos": int(positive.size),
+        "n_neg": int(negative.size),
+    }
+
+
 def evaluate_score_banks(
     scores: dict[str, np.ndarray],
     n_pos: int,
     max_k: int,
     k_values: tuple[int, ...],
-    executor: ThreadPoolExecutor,
 ) -> tuple[dict[tuple[str, int], dict], dict[str, np.ndarray]]:
-    """Evaluate independent model/ratio banks concurrently on CPU."""
-    futures = {}
+    """Evaluate each model on nested prefixes of its shared negative bank."""
+    metrics = {}
     paired_scores = {}
     for inference_key in INFERENCE_ORDER:
         positive = scores[inference_key][:n_pos]
         negative = scores[inference_key][n_pos:].reshape(n_pos, max_k)
         paired_scores[inference_key] = np.concatenate([positive, negative[:, 0]])
         for k in k_values:
-            futures[(inference_key, k)] = executor.submit(
-                metrics_from_pos_neg,
+            metrics[(inference_key, k)] = auprc_from_pos_neg(
                 positive,
                 negative[:, :k].reshape(-1),
             )
-    return {key: future.result() for key, future in futures.items()}, paired_scores
+    return metrics, paired_scores
 
 
 def metric_rows(per_cell: list[dict]) -> list[dict]:
@@ -339,9 +349,7 @@ def metric_rows(per_cell: list[dict]) -> list[dict]:
         for split in SPLIT_ORDER:
             k_values = CONTEXTWISE_K_VALUES if split == "test" else (1,)
             for k in k_values:
-                aggregate = aggregate_context_metrics(
-                    {k: grouped[(inference_key, split, k)]}
-                )[k]
+                rows = grouped[(inference_key, split, k)]
                 output.append(
                     {
                         "inference_key": inference_key,
@@ -349,13 +357,11 @@ def metric_rows(per_cell: list[dict]) -> list[dict]:
                         "split": split,
                         "k_negatives": k,
                         "pos_neg_ratio": f"1:{k}",
-                        "auprc_percent": 100.0 * aggregate["ap"],
-                        "roc_auc_percent": 100.0 * aggregate["roc"],
-                        "f1_percent": 100.0 * aggregate["f1"],
-                        "accuracy_percent": 100.0 * aggregate["acc"],
-                        "n_pos": aggregate["n_pos"],
-                        "n_neg": aggregate["n_neg"],
-                        "n_cells": aggregate["n_cells"],
+                        "auprc_percent": 100.0
+                        * float(np.mean([row["ap"] for row in rows])),
+                        "n_pos": sum(row["n_pos"] for row in rows),
+                        "n_neg": sum(row["n_neg"] for row in rows),
+                        "n_cells": len(rows),
                         "targets_in_message_graph": split == "train",
                     }
                 )
@@ -537,10 +543,9 @@ def evaluate(args: argparse.Namespace) -> dict:
         raise FileNotFoundError("Missing evaluation input(s): " + ", ".join(missing))
     if (
         args.decoder_chunk_size < 1
-        or args.metric_workers < 1
         or args.plot_samples_per_class_cell < 1
     ):
-        raise ValueError("Chunk, metric-worker, and plot-sample sizes must be positive.")
+        raise ValueError("Chunk and plot-sample sizes must be positive.")
 
     device = torch.device(
         "cuda"
@@ -625,8 +630,6 @@ def evaluate(args: argparse.Namespace) -> dict:
             + global_test_canonical[1]
         ).tolist()
     )
-    metric_executor = ThreadPoolExecutor(max_workers=args.metric_workers)
-
     for context_index, (cell_id, graph) in enumerate(contexts.items(), start=1):
         cell_name = id_to_name[cell_id]
         train_message, _ = split_masks(graph, "validation")
@@ -706,7 +709,7 @@ def evaluate(args: argparse.Namespace) -> dict:
             n_pos = positive_local.size(1)
             k_values = CONTEXTWISE_K_VALUES if split == "test" else (1,)
             results, paired_scores = evaluate_score_banks(
-                scores, n_pos, max_k, k_values, metric_executor
+                scores, n_pos, max_k, k_values
             )
             for inference_key in INFERENCE_ORDER:
                 for k in k_values:
@@ -782,7 +785,6 @@ def evaluate(args: argparse.Namespace) -> dict:
         del protscape_train_layers, protscape_test_layers
         if device.type == "cuda":
             torch.cuda.empty_cache()
-    metric_executor.shutdown()
 
     aggregate_metrics = metric_rows(per_cell_metrics)
     aggregate_agreements = aggregate_agreement(per_cell_agreement)
