@@ -11,7 +11,13 @@ from typing import List, Optional, Set, Tuple
 import numpy as np
 import torch
 
-from .config import DEFAULT_OUTPUT_ROOT, get_hc_embedding_paths, load_config
+from .config import (
+    DEFAULT_OUTPUT_ROOT,
+    EXPLICIT_CSV_TASKS,
+    get_hc_embedding_paths,
+    load_config,
+    resolve_task_csv,
+)
 from .data.global_split import (
     ContextPresence,
     load_context_presence,
@@ -205,6 +211,12 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        "--inference-root",
+        type=Path,
+        default=None,
+        help="Optional root containing the frozen inference embedding directory.",
+    )
+    parser.add_argument(
         "--cell-embedding-file",
         default="cell_embeddings.pt",
         help="Cell representation file within the inference directory.",
@@ -252,7 +264,10 @@ def parse_args():
     parser.add_argument("--readout-label", default="")
     parser.add_argument(
         "--task",
-        help="corum or one of the 15 therapeutic_target_<disease_id> tasks.",
+        help=(
+            "corum, protein_localization, pathway, or one of the 15 "
+            "therapeutic_target_<disease_id> tasks."
+        ),
     )
     parser.add_argument(
         "--task-csv",
@@ -508,14 +523,16 @@ def main():
         embedding_source=args.embedding_source,
         dataset_mode=args.dataset_mode,
     )
-    if args.task not in config.tasks:
-        available = ", ".join(sorted(config.tasks.keys()))
+    if args.task not in config.tasks and args.task not in EXPLICIT_CSV_TASKS:
+        available = ", ".join(sorted(set(config.tasks) | EXPLICIT_CSV_TASKS))
         print(f"[ERROR] Unknown task: {args.task}")
         print(f"[INFO] Available tasks: {available}")
         return 1
 
     if args.output_root is not None:
         config.output_root = args.output_root.expanduser()
+    if args.inference_root is not None:
+        config.inference_root = args.inference_root.expanduser()
     if args.esm2_embeddings is not None:
         config.embeddings.esm = args.esm2_embeddings.expanduser()
 
@@ -668,8 +685,11 @@ def main():
             )
             return 1
 
-    task_config = config.tasks[args.task]
-    task_csv = args.task_csv if args.task_csv is not None else task_config.label_csv
+    try:
+        task_csv = resolve_task_csv(config.tasks, args.task, args.task_csv)
+    except ValueError as error:
+        print(f"[ERROR] {error}")
+        return 1
     if not task_csv.exists():
         print(f"[ERROR] Label CSV not found: {task_csv}")
         return 1

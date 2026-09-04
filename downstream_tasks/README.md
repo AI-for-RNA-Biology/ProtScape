@@ -1,6 +1,8 @@
 # Downstream tasks
 
-The downstream pipeline trains linear, ABMIL and ABMIL-PDL models for CORUM complex prediction and therapeutic-target prediction.
+The downstream pipeline trains linear, ABMIL and ABMIL-PDL models for CORUM
+complex prediction, therapeutic-target prediction, protein localization, and
+pathway prediction.
 
 ## Training inputs
 
@@ -98,6 +100,9 @@ bash scripts/run_downstream_tt.sh s2gae_att_k1_fixed_do04_uni5e6
 ```
 
 The scripts evaluate the sequence-only linear baselines, contextual linear models, ABMIL models across dropout values 0, 0.2, 0.4 and 0.6, and ABMIL-PDL models across `pmax` values 0.2--0.7. Model selection uses validation AUPRC.
+
+Protein localization and pathway tasks require an explicit frozen long-form
+membership CSV through `--task-csv`; no mutable default dataset path is used.
 
 All outputs are written below `<output_root>/downstream_tasks/`. Each run contains the five fold checkpoints, held-out predictions, training histories and summary metrics. Task-level summaries are generated automatically after each sweep.
 

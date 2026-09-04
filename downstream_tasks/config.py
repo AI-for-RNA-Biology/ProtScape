@@ -46,6 +46,10 @@ THERAPEUTIC_TARGET_IDS = (
     "MONDO_0005180",
 )
 
+# These tasks intentionally have no machine-specific default label path.  A
+# frozen membership table must be supplied explicitly on every run.
+EXPLICIT_CSV_TASKS = frozenset({"protein_localization", "pathway"})
+
 
 @dataclass
 class TaskConfig:
@@ -98,6 +102,23 @@ class Config:
 
     def get_inference_path(self) -> Path:
         return self.inference_root / self.inference_model
+
+
+def resolve_task_csv(
+    configured_tasks: Dict[str, TaskConfig],
+    task: str,
+    task_csv: Optional[Path],
+) -> Path:
+    """Resolve a task label table without silently inventing dataset versions."""
+    task = str(task).strip().lower()
+    if task in EXPLICIT_CSV_TASKS:
+        if task_csv is None:
+            raise ValueError(f"Task {task!r} requires --task-csv")
+        return task_csv
+    if task not in configured_tasks:
+        raise ValueError(f"Unknown task: {task}")
+    return task_csv if task_csv is not None else configured_tasks[task].label_csv
+
 
 def get_therapeutic_tasks(dataset_dir: Path) -> Dict[str, TaskConfig]:
     """Return the configured therapeutic-target tasks."""

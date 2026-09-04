@@ -1,4 +1,4 @@
-"""Label loaders for the two downstream tasks."""
+"""Strict label loaders for downstream protein tasks."""
 
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -13,6 +13,68 @@ class BaseTaskLoader:
 
     def load(self) -> Tuple[List[str], np.ndarray, List[str]]:
         raise NotImplementedError
+
+
+class MultiLabelMembershipLoader(BaseTaskLoader):
+    """Load a canonical long-form protein-to-label membership table.
+
+    Accepted columns are ``protein,label`` plus optional ``label_id,source``.
+    ``label_id`` is the stable class identity when present; otherwise the label
+    text itself is used.  Duplicate memberships are harmless, but conflicting
+    ID/name mappings are rejected.
+    """
+
+    REQUIRED_COLUMNS = frozenset({"protein", "label"})
+    OPTIONAL_COLUMNS = frozenset({"label_id", "source"})
+
+    def load(self) -> Tuple[List[str], np.ndarray, List[str]]:
+        table = pd.read_csv(self.label_csv, dtype=str)
+        missing = sorted(self.REQUIRED_COLUMNS.difference(table.columns))
+        if missing:
+            raise ValueError(
+                f"Membership table is missing required column(s): {', '.join(missing)}"
+            )
+        unexpected = sorted(
+            set(table.columns).difference(self.REQUIRED_COLUMNS | self.OPTIONAL_COLUMNS)
+        )
+        if unexpected:
+            raise ValueError(
+                f"Membership table has unexpected column(s): {', '.join(unexpected)}"
+            )
+        if table.empty or table.isna().any(axis=None):
+            raise ValueError(
+                "Membership table is empty or contains missing values: "
+                f"{self.label_csv}"
+            )
+
+        for column in table.columns:
+            table[column] = table[column].str.strip()
+        if (table == "").any(axis=None):
+            raise ValueError(
+                f"Membership table contains missing values: {self.label_csv}"
+            )
+        table["protein"] = table["protein"].str.upper()
+
+        class_column = "label_id" if "label_id" in table.columns else "label"
+        if class_column == "label_id":
+            ids_per_label = table.groupby("label", sort=False)["label_id"].nunique()
+            labels_per_id = table.groupby("label_id", sort=False)["label"].nunique()
+            if (ids_per_label > 1).any() or (labels_per_id > 1).any():
+                raise ValueError("label and label_id must have a one-to-one mapping")
+
+        memberships = table[["protein", class_column]].drop_duplicates()
+        genes = sorted(memberships["protein"].unique())
+        class_names = sorted(memberships[class_column].unique())
+        if not genes or not class_names:
+            raise ValueError(f"Membership table has no usable rows: {self.label_csv}")
+        gene_index = {gene: index for index, gene in enumerate(genes)}
+        class_index = {
+            class_name: index for index, class_name in enumerate(class_names)
+        }
+        labels = np.zeros((len(genes), len(class_names)), dtype=np.float32)
+        for protein, class_name in memberships.itertuples(index=False, name=None):
+            labels[gene_index[protein], class_index[class_name]] = 1.0
+        return genes, labels, class_names
 
 
 class CORUMLoader(BaseTaskLoader):
@@ -136,4 +198,6 @@ def get_task_loader(task: str, label_csv: Path) -> BaseTaskLoader:
         return CORUMLoader(label_csv)
     if task.startswith("therapeutic_target_"):
         return TherapeuticTargetLoader(label_csv)
+    if task in {"protein_localization", "pathway"}:
+        return MultiLabelMembershipLoader(label_csv)
     raise ValueError(f"Unknown downstream task: {task}")
