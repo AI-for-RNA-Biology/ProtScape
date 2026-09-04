@@ -10,6 +10,7 @@ import io
 import json
 import os
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -67,7 +68,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--esm2-embeddings", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", default="auto")
-    parser.add_argument("--decoder-chunk-size", type=int, default=20_000)
+    parser.add_argument("--decoder-chunk-size", type=int, default=100_000)
+    parser.add_argument("--metric-workers", type=int, default=12)
     parser.add_argument("--plot-samples-per-class-cell", type=int, default=250)
     return parser.parse_args()
 
@@ -305,6 +307,29 @@ def add_plot_sample(
         )
 
 
+def evaluate_score_banks(
+    scores: dict[str, np.ndarray],
+    n_pos: int,
+    max_k: int,
+    k_values: tuple[int, ...],
+    executor: ThreadPoolExecutor,
+) -> tuple[dict[tuple[str, int], dict], dict[str, np.ndarray]]:
+    """Evaluate independent model/ratio banks concurrently on CPU."""
+    futures = {}
+    paired_scores = {}
+    for inference_key in INFERENCE_ORDER:
+        positive = scores[inference_key][:n_pos]
+        negative = scores[inference_key][n_pos:].reshape(n_pos, max_k)
+        paired_scores[inference_key] = np.concatenate([positive, negative[:, 0]])
+        for k in k_values:
+            futures[(inference_key, k)] = executor.submit(
+                metrics_from_pos_neg,
+                positive,
+                negative[:, :k].reshape(-1),
+            )
+    return {key: future.result() for key, future in futures.items()}, paired_scores
+
+
 def metric_rows(per_cell: list[dict]) -> list[dict]:
     output = []
     grouped: dict[tuple[str, str, int], list[dict]] = defaultdict(list)
@@ -510,8 +535,12 @@ def evaluate(args: argparse.Namespace) -> dict:
     missing = [str(path) for path in paths if not path.exists()]
     if missing:
         raise FileNotFoundError("Missing evaluation input(s): " + ", ".join(missing))
-    if args.decoder_chunk_size < 1 or args.plot_samples_per_class_cell < 1:
-        raise ValueError("Chunk and plot-sample sizes must be positive.")
+    if (
+        args.decoder_chunk_size < 1
+        or args.metric_workers < 1
+        or args.plot_samples_per_class_cell < 1
+    ):
+        raise ValueError("Chunk, metric-worker, and plot-sample sizes must be positive.")
 
     device = torch.device(
         "cuda"
@@ -596,6 +625,7 @@ def evaluate(args: argparse.Namespace) -> dict:
             + global_test_canonical[1]
         ).tolist()
     )
+    metric_executor = ThreadPoolExecutor(max_workers=args.metric_workers)
 
     for context_index, (cell_id, graph) in enumerate(contexts.items(), start=1):
         cell_name = id_to_name[cell_id]
@@ -675,14 +705,11 @@ def evaluate(args: argparse.Namespace) -> dict:
             }
             n_pos = positive_local.size(1)
             k_values = CONTEXTWISE_K_VALUES if split == "test" else (1,)
-            paired_scores = {}
+            results, paired_scores = evaluate_score_banks(
+                scores, n_pos, max_k, k_values, metric_executor
+            )
             for inference_key in INFERENCE_ORDER:
-                positive = scores[inference_key][:n_pos]
-                negative = scores[inference_key][n_pos:].reshape(n_pos, max_k)
                 for k in k_values:
-                    result = metrics_from_pos_neg(
-                        positive, negative[:, :k].reshape(-1)
-                    )
                     per_cell_metrics.append(
                         {
                             "inference_key": inference_key,
@@ -692,12 +719,9 @@ def evaluate(args: argparse.Namespace) -> dict:
                             "split": split,
                             "k_negatives": k,
                             "pos_neg_ratio": f"1:{k}",
-                            **result,
+                            **results[(inference_key, k)],
                         }
                     )
-                paired_scores[inference_key] = np.concatenate(
-                    [positive, negative[:, 0]]
-                )
 
             for left, right in inference_pairs:
                 per_cell_agreement.append(
@@ -758,6 +782,7 @@ def evaluate(args: argparse.Namespace) -> dict:
         del protscape_train_layers, protscape_test_layers
         if device.type == "cuda":
             torch.cuda.empty_cache()
+    metric_executor.shutdown()
 
     aggregate_metrics = metric_rows(per_cell_metrics)
     aggregate_agreements = aggregate_agreement(per_cell_agreement)
