@@ -263,6 +263,53 @@ def test_three_lr_variants_keep_gene_order_and_expected_feature_blocks(tmp_path)
     )
 
 
+def test_protein_only_abmil_variants_do_not_load_cell_embeddings(tmp_path):
+    class FakeEmbeddingLoader:
+        def load_esm(self):
+            return {
+                "A": np.array([10.0, 11.0], dtype=np.float32),
+                "B": np.array([20.0, 21.0], dtype=np.float32),
+            }
+
+        def load_hc(self, target_genes):
+            assert target_genes == {"A", "B"}
+            return (
+                {
+                    "A": [np.array([1.0, 2.0], dtype=np.float32)],
+                    "B": [np.array([3.0, 4.0], dtype=np.float32)],
+                },
+                {"A": ["cell_a"], "B": ["cell_b"]},
+            )
+
+        def load_hc_with_cell(self, target_genes):
+            raise AssertionError("cell embeddings must not be loaded")
+
+    trainer = Trainer(
+        config=SimpleNamespace(),
+        embedding_loader=FakeEmbeddingLoader(),
+        output_dir=tmp_path,
+        device=torch.device("cpu"),
+    )
+
+    context_only = trainer._build_features(
+        downstream_run.MODEL_VARIANTS["abmil_hc_gated_8"], ["B", "A"]
+    )
+    late_fusion = trainer._build_features(
+        downstream_run.MODEL_VARIANTS["abmil_hc_ext_embed_gated_8_pdl"],
+        ["B", "A"],
+    )
+
+    assert context_only["genes"] == ["B", "A"]
+    assert "esm" not in context_only
+    assert context_only["ctx_bags"][0].shape == (1, 2)
+    assert late_fusion["genes"] == ["B", "A"]
+    np.testing.assert_array_equal(
+        late_fusion["esm"],
+        np.array([[20.0, 21.0], [10.0, 11.0]], dtype=np.float32),
+    )
+    assert late_fusion["ctx_bags"][0].shape == (1, 2)
+
+
 def test_global_split_artifact_records_exact_shared_context_matrix(tmp_path):
     presence = ContextPresence(
         gene_to_contexts={

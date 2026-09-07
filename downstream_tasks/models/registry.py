@@ -69,6 +69,13 @@ MODEL_VARIANTS = {
         attention_type="gated",
         num_heads=8,
     ),
+    "abmil_hc_gated_8": ModelVariant(
+        name="ABMIL contextual protein only",
+        model_type=ModelType.ABMIL,
+        embedding_sources=["hc"],
+        attention_type="gated",
+        num_heads=8,
+    ),
     "abmil_hc_cell_ext_embed_gated_8": ModelVariant(
         name="ABMIL protein + context + sequence",
         model_type=ModelType.ABMIL,
@@ -88,6 +95,14 @@ MODEL_VARIANTS = {
         name="ABMIL+PDL protein + context + sequence",
         model_type=ModelType.ABMIL,
         embedding_sources=["hc", "cell", "ext_embed"],
+        attention_type="gated",
+        num_heads=8,
+        use_pdl=True,
+    ),
+    "abmil_hc_ext_embed_gated_8_pdl": ModelVariant(
+        name="ABMIL+PDL contextual protein + sequence",
+        model_type=ModelType.ABMIL,
+        embedding_sources=["hc", "ext_embed"],
         attention_type="gated",
         num_heads=8,
         use_pdl=True,
