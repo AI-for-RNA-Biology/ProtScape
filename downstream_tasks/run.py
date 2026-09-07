@@ -879,9 +879,13 @@ def main():
         result["hc_protein_embedding_path"] = (
             Path(hc_paths["protein_embed"]).name if hc_paths["protein_embed"] is not None else ""
         )
+        cell_embeddings_used = "cell" in variant.embedding_sources
         result["hc_cell_embedding_path"] = (
-            Path(hc_paths["cell_embed"]).name if hc_paths["cell_embed"] is not None else ""
+            Path(hc_paths["cell_embed"]).name
+            if cell_embeddings_used and hc_paths["cell_embed"] is not None
+            else ""
         )
+        result["cell_embeddings_used"] = cell_embeddings_used
         result["global_embedding_path"] = (
             str(Path(hc_paths["protein_embed"]).resolve())
             if is_global_protocol
