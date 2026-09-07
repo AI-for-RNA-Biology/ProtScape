@@ -9,6 +9,7 @@ PYTHON="${CONDA_ENV}/bin/python"
 cd "${REPO_ROOT}"
 PYTHONDONTWRITEBYTECODE=1 WANDB_MODE=disabled WANDB_DISABLED=true \
     "${PYTHON}" -m pytest -q -p no:cacheprovider \
+    tests/test_deeploc_processing.py \
     tests/test_functional_annotation_processing.py \
     tests/test_multilabel_task_loader.py \
     tests/test_topology_baselines.py
@@ -21,6 +22,7 @@ fingerprint="$({
         downstream_tasks/run.py \
         downstream_tasks/topology_baselines.py \
         downstream_tasks/data \
+        downstream_tasks/data_processing/deeploc_processing.py \
         downstream_tasks/models \
         downstream_tasks/training \
         downstream_tasks/utils \

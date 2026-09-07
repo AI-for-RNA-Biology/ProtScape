@@ -17,13 +17,13 @@ REPO_ROOT="${PROTSCAPE_ROOT:-/users/aloistho/projects/ProtScape}"
 CONDA_ENV="${PROTSCAPE_CONDA_ENV:-/iopsstor/scratch/cscs/aloistho/protscape/conda-global-s2gae}"
 SOURCE_INFERENCE_ROOT="${PROTSCAPE_INFERENCE_ROOT:-/users/aloistho/projects/ProtScape_release/embeddings}"
 SOURCE_ESM="${PROTSCAPE_ESM:-/iopsstor/scratch/cscs/aloistho/protscape/release-data/sequence_embeddings/gene_protein_embeddings_esm2_3B_layer33.plk}"
-LABELS="${PROTSCAPE_TASK_CSV:-/iopsstor/scratch/cscs/aloistho/protscape/topology-baselines/data/processed/hpa_v25_1_localization_per_location_confidence_min50.csv}"
+LABELS="${PROTSCAPE_TASK_CSV:-/iopsstor/scratch/cscs/aloistho/protscape/topology-baselines/data/processed/deeploc2_broad_human_min50.csv}"
 OUTPUT_ROOT="${PROTSCAPE_OUTPUT_ROOT:-/capstor/scratch/cscs/aloistho/protscape/topology-baselines/results/protscape_downstream}"
 LOG_ROOT="${PROTSCAPE_LOG_ROOT:-/iopsstor/scratch/cscs/aloistho/protscape/topology-baselines/logs}"
-RUN_ID="${PROTSCAPE_RUN_ID:-bce_uni_hpa_v25_1_per_location_confidence_min50}"
+RUN_ID="${PROTSCAPE_RUN_ID:-bce_uni_deeploc2_broad_human_min50}"
 RUN_TOPOLOGY="${PROTSCAPE_RUN_TOPOLOGY:-1}"
 MODEL_RESULT_ROOT="${OUTPUT_ROOT}/protein_localization/${RUN_ID}"
-TOPOLOGY_OUTPUT_ROOT="${PROTSCAPE_TOPOLOGY_OUTPUT_ROOT:-/capstor/scratch/cscs/aloistho/protscape/topology-baselines/results/topology/protein_localization/hpa_v25_1_per_location_confidence_min50}"
+TOPOLOGY_OUTPUT_ROOT="${PROTSCAPE_TOPOLOGY_OUTPUT_ROOT:-/capstor/scratch/cscs/aloistho/protscape/topology-baselines/results/topology/protein_localization/deeploc2_broad_human_min50}"
 NETWORK_ROOT="${PROTSCAPE_NETWORK_ROOT:-/iopsstor/scratch/cscs/aloistho/protscape/release-data/networks_bulk}"
 TOPOLOGY_OUTPUT="${TOPOLOGY_OUTPUT_ROOT}/global_binary_k_hop"
 EXPECTED_FINGERPRINT="${PROTSCAPE_CODE_FINGERPRINT:?submit with a reviewed code fingerprint}"
@@ -40,25 +40,29 @@ case "${RUN_TOPOLOGY}" in
 esac
 
 UNIT_IDS=(
-    abmil_do0p0
-    abmil_do0p2
-    abmil_do0p4
-    abmil_do0p6
+    abmil_esm_do0p0
+    abmil_esm_do0p2
+    abmil_esm_do0p4
+    abmil_esm_do0p6
+    abmil_noesm_do0p0
+    abmil_noesm_do0p2
+    abmil_noesm_do0p4
+    abmil_noesm_do0p6
     lr_esm
-    lr_hc_cell
-    lr_hc_cell_esm
 )
 UNIT_MODELS=(
     abmil_hc_cell_ext_embed_gated_8
     abmil_hc_cell_ext_embed_gated_8
     abmil_hc_cell_ext_embed_gated_8
     abmil_hc_cell_ext_embed_gated_8
+    abmil_hc_cell_gated_8
+    abmil_hc_cell_gated_8
+    abmil_hc_cell_gated_8
+    abmil_hc_cell_gated_8
     lr_ext_embed
-    lr_hc_cell
-    lr_hc_cell_ext_embed
 )
-UNIT_DROPOUTS=(0.0 0.2 0.4 0.6 0.0 0.0 0.0)
-if (( ${#UNIT_IDS[@]} != 7 \
+UNIT_DROPOUTS=(0.0 0.2 0.4 0.6 0.0 0.2 0.4 0.6 0.0)
+if (( ${#UNIT_IDS[@]} != 9 \
     || ${#UNIT_MODELS[@]} != ${#UNIT_IDS[@]} \
     || ${#UNIT_DROPOUTS[@]} != ${#UNIT_IDS[@]} )); then
     echo "The localization model-unit manifest is not aligned." >&2
@@ -73,6 +77,7 @@ relevant_files() {
         downstream_tasks/run.py \
         downstream_tasks/topology_baselines.py \
         downstream_tasks/data \
+        downstream_tasks/data_processing/deeploc_processing.py \
         downstream_tasks/models \
         downstream_tasks/training \
         downstream_tasks/utils \
