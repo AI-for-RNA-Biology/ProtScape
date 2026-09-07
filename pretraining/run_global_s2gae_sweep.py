@@ -24,6 +24,8 @@ PARAMETERS = (
     "mask_type",
     "k_negatives",
     "epochs",
+    "early_stopping_patience",
+    "early_stopping_min_delta",
     "lr",
     "seed",
     "split_seed",
@@ -53,7 +55,8 @@ def parse_args() -> argparse.Namespace:
 def load_sweep(path: Path) -> tuple[dict, list[dict]]:
     with path.open(encoding="utf-8") as handle:
         sweep = yaml.safe_load(handle)
-    defaults = sweep["defaults"]
+    defaults = {"early_stopping_patience": 0, "early_stopping_min_delta": 0.0,
+                **sweep["defaults"]}
     runs = list(sweep.get("runs", []))
     grid = sweep.get("grid")
     if grid is not None:
@@ -94,6 +97,30 @@ def load_sweep(path: Path) -> tuple[dict, list[dict]]:
     if len(signatures) != len(set(signatures)):
         raise ValueError("Sweep contains duplicate parameter configurations.")
     return sweep, configurations
+
+
+def validate_completion(completion: dict, config: dict) -> None:
+    """Accept a full budget or a documented validation stop, never a partial run."""
+    completed = int(completion["completed_epochs"])
+    budget = int(config["epochs"])
+    if not 1 <= completed <= budget or int(completion["last_epoch"]) != completed - 1:
+        raise ValueError("Invalid completed epoch count.")
+    reason = completion.get("stop_reason", "max_epochs")
+    if reason == "max_epochs":
+        if completed != budget:
+            raise ValueError("Run did not complete all epochs.")
+    elif reason == "early_stopping":
+        state = completion.get("early_stopping", {})
+        patience = int(config.get("early_stopping_patience", 0))
+        if patience <= 0 or int(completion.get("max_epochs", -1)) != budget:
+            raise ValueError("Early-stopping budget or configuration mismatch.")
+        if state.get("patience") != patience or state.get("min_delta") != config.get("early_stopping_min_delta", 0):
+            raise ValueError("Early-stopping parameters mismatch.")
+        wait = int(state.get("wait_updates", -1))
+        if wait < patience or completed - 1 - int(state["last_improvement_epoch"]) != wait:
+            raise ValueError("Early-stopping patience was not reached.")
+    else:
+        raise ValueError(f"Unknown completion reason: {reason}")
 
 
 def command(
@@ -150,12 +177,13 @@ def main() -> None:
             raise ValueError(
                 f"Completed run exceeds target epoch budget: {config['name']}"
             )
-        if completed_epochs == target_epochs:
+        if completed_epochs == target_epochs or completion.get("stop_reason") == "early_stopping":
+            validate_completion(completion, config)
             config_path = completed_path.parent / "config.json"
             with config_path.open(encoding="utf-8") as handle:
                 saved_config = json.load(handle)
             for key in PARAMETERS:
-                if saved_config.get(key) != config[key]:
+                if saved_config.get(key, 0) != config[key]:
                     raise ValueError(
                         f"Completed run changed {key}: {config['name']}"
                     )

@@ -686,7 +686,8 @@ def test_archived_best_must_match_latest_completion_state():
         )
 
 
-def test_manifest_selection_requires_primaries_but_not_sensitivities(tmp_path):
+@pytest.mark.parametrize("early_stopped", [False, True])
+def test_manifest_selection_requires_primaries_but_not_sensitivities(tmp_path, early_stopped):
     data = tiny_data()
     defaults = {
         "experiment_role": "sweep",
@@ -699,7 +700,9 @@ def test_manifest_selection_requires_primaries_but_not_sensitivities(tmp_path):
         "mask_ratio": 0.5,
         "mask_type": "dm",
         "k_negatives": 1,
-        "epochs": 3,
+        "epochs": 8 if early_stopped else 3,
+        "early_stopping_patience": 2 if early_stopped else 0,
+        "early_stopping_min_delta": 0.01 if early_stopped else 0.0,
         "lr": 0.01,
         "seed": 0,
         "split_seed": 0,
@@ -761,6 +764,10 @@ def test_manifest_selection_requires_primaries_but_not_sensitivities(tmp_path):
                     "experiment_role": "sweep",
                     "completed_epochs": 3,
                     "last_epoch": 2,
+                    "max_epochs": defaults["epochs"],
+                    "stop_reason": "early_stopping" if early_stopped else "max_epochs",
+                    "early_stopping": {"patience": 2, "min_delta": 0.01,
+                                       "last_improvement_epoch": 0, "wait_updates": 2},
                     "best_epoch": 2,
                     "best_global_val_ap": score,
                     "parameter_count": payload["parameter_count"],

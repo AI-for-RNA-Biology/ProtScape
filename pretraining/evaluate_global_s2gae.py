@@ -28,7 +28,7 @@ from .global_s2gae import (
     load_global_ppi_data,
     protocol_metadata,
 )
-from .run_global_s2gae_sweep import load_sweep
+from .run_global_s2gae_sweep import load_sweep, validate_completion
 
 
 def parse_args() -> argparse.Namespace:
@@ -114,10 +114,7 @@ def select_checkpoint(args: argparse.Namespace) -> tuple[Path, dict, list[dict]]
             raise ValueError(f"Checkpoint experiment role mismatch: {path}")
         if completion["experiment_role"] != config["experiment_role"]:
             raise ValueError(f"Completion experiment role mismatch: {completion_path}")
-        if int(completion["completed_epochs"]) != int(config["epochs"]):
-            raise ValueError(f"Run did not complete all epochs: {completion_path}")
-        if int(completion["last_epoch"]) != int(config["epochs"]) - 1:
-            raise ValueError(f"Invalid completion epoch: {completion_path}")
+        validate_completion(completion, config)
         if completion["selection_metric"] != protocol_metadata()["selection_metric"]:
             raise ValueError(f"Invalid selection metric: {completion_path}")
         if float(completion["best_global_val_ap"]) != float(
@@ -151,8 +148,10 @@ def select_checkpoint(args: argparse.Namespace) -> tuple[Path, dict, list[dict]]
             "k_negatives",
             "seed",
             "split_seed",
+            "early_stopping_patience",
+            "early_stopping_min_delta",
         ):
-            if checkpoint["training_config"][key] != config[key]:
+            if checkpoint["training_config"].get(key, 0) != config.get(key, 0):
                 raise ValueError(f"Training parameter {key} mismatch: {path}")
 
         fingerprints = (

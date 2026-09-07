@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from pretraining.run_global_s2gae_sweep import command, load_sweep
+from pretraining.run_global_s2gae_sweep import command, load_sweep, validate_completion
 from pretraining.prepare_global_s2gae_sweep import prepare
 
 
@@ -36,6 +36,34 @@ def test_production_sweep_is_complete_seed_zero_encoder_grid():
         for config in configurations
     }
     assert len(points) == 3 * 3 * 6
+
+
+def test_convergence_grid_changes_only_budget_and_stopping():
+    _, old = load_sweep(REPO_ROOT / "configs/global_s2gae_sweep.yaml")
+    _, new = load_sweep(REPO_ROOT / "configs/global_s2gae_convergence.yaml")
+    assert len(old) == len(new) == 54
+    allowed = {"epochs", "early_stopping_patience", "early_stopping_min_delta"}
+    for previous, extended in zip(old, new):
+        assert {k: v for k, v in previous.items() if k not in allowed} == {
+            k: v for k, v in extended.items() if k not in allowed}
+        assert extended["epochs"] == 5000
+        assert extended["early_stopping_patience"] == 200
+        assert extended["early_stopping_min_delta"] == 0.0005
+
+
+def test_completion_accepts_verified_patience_not_partial_training():
+    config = {"epochs": 5000, "early_stopping_patience": 200,
+              "early_stopping_min_delta": 0.0005}
+    completion = {"completed_epochs": 1300, "last_epoch": 1299,
+        "max_epochs": 5000, "stop_reason": "early_stopping",
+        "early_stopping": {"patience": 200, "min_delta": 0.0005,
+                           "wait_updates": 200, "last_improvement_epoch": 1099}}
+    validate_completion(completion, config)
+    with pytest.raises(ValueError, match="did not complete"):
+        validate_completion({**completion, "stop_reason": "max_epochs"}, config)
+    with pytest.raises(ValueError, match="patience was not reached"):
+        validate_completion({**completion, "early_stopping": {
+            **completion["early_stopping"], "wait_updates": 199}}, config)
 
 
 def test_completed_shorter_run_is_continued_not_restarted(tmp_path, monkeypatch):
@@ -114,7 +142,7 @@ def test_completed_target_run_is_validated_before_skip(tmp_path, monkeypatch):
     run_dir = output_root / target["name"]
     run_dir.mkdir(parents=True)
     (run_dir / "completed.json").write_text(
-        json.dumps({"completed_epochs": 500, "git_commit": "commit"}),
+        json.dumps({"completed_epochs": 500, "last_epoch": 499, "git_commit": "commit"}),
         encoding="utf-8",
     )
     (run_dir / "config.json").write_text(
@@ -157,7 +185,9 @@ def test_command_does_not_mark_new_run_as_resume(tmp_path):
     assert "--extend-completed" not in submitted
 
 
-def test_prepare_reuses_only_compatible_shorter_grid_runs(tmp_path):
+@pytest.mark.parametrize("target_file,target_epochs", [
+    ("global_s2gae_sweep.yaml", 500), ("global_s2gae_convergence.yaml", 5000)])
+def test_prepare_reuses_only_compatible_shorter_grid_runs(tmp_path, target_file, target_epochs):
     _, configs = load_sweep(REPO_ROOT / "configs/global_s2gae_sweep.yaml")
     reusable = configs[0]
     source = tmp_path / "old" / reusable["name"]
@@ -183,7 +213,7 @@ def test_prepare_reuses_only_compatible_shorter_grid_runs(tmp_path):
     )
 
     reused = prepare(
-        REPO_ROOT / "configs/global_s2gae_sweep.yaml",
+        REPO_ROOT / "configs" / target_file,
         tmp_path / "old",
         tmp_path / "new",
     )
@@ -192,7 +222,7 @@ def test_prepare_reuses_only_compatible_shorter_grid_runs(tmp_path):
         {
             "run_name": reusable["name"],
             "from_epochs": 300,
-            "to_epochs": 500,
+            "to_epochs": target_epochs,
         }
     ]
     copied = tmp_path / "new" / reusable["name"]

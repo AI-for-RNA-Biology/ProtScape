@@ -1,0 +1,28 @@
+# Same 54-point encoder grid; only training duration / stopping are extended.
+selection_metric: global_val_ap
+
+defaults:
+  experiment_role: sweep
+  hidden_dim: 512
+  num_layers: 3
+  dropout: 0.4
+  decode_channels: 512
+  decoder_layers: 2
+  decoder_dropout: 0.0
+  mask_ratio: 0.5
+  mask_type: dm
+  k_negatives: 1
+  epochs: 5000
+  early_stopping_patience: 200
+  early_stopping_min_delta: 0.0005
+  lr: 0.01
+  seed: 0
+  split_seed: 0
+  wandb_entity: cedricvincentcuaz
+  wandb_project: pinnacle
+  wandb_group: protscape_global_ppi_baseline
+
+grid:
+  hidden_dim: [128, 256, 512]
+  num_layers: [2, 3, 4]
+  dropout: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]

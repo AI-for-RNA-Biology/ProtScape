@@ -52,7 +52,10 @@ def _validate_reusable(source: Path, target_config: dict) -> int:
     for key, expected in target_config.items():
         if key in {"name", "epochs"}:
             continue
-        if previous.get(key) != expected:
+        if key in {"early_stopping_patience", "early_stopping_min_delta"}:
+            if previous.get("early_stopping_patience", 0) == 0:
+                continue  # A completed fixed-budget run may enable stopping on extension.
+        if previous.get(key, 0) != expected:
             raise ValueError(
                 f"Reusable run {source} changed {key}: "
                 f"{previous.get(key)!r} != {expected!r}"
