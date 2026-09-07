@@ -289,7 +289,7 @@ for unit_index in "${!UNIT_IDS[@]}"; do
     echo "[INFO] dispatch unit=${unit_id} model=${model} dropout=${dropout}"
 
     srun --exclusive --nodes=1 --ntasks=1 \
-        --gpus-per-task=1 \
+        --gpus-per-node=1 --gpus-per-task=1 \
         --cpus-per-gpu=15 --mem=64G \
         --gpu-bind=single:1 \
         --chdir="${CODE_STAGE}" \
