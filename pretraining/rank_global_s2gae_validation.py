@@ -23,6 +23,7 @@ from .evaluate_global_s2gae import (
 )
 from .global_s2gae import (
     GLOBAL_K_VALUES, build_global_negative_bank, evaluate_global_edges, load_global_ppi_data,
+    protocol_metadata,
 )
 from .run_global_s2gae_sweep import load_sweep
 
@@ -43,6 +44,57 @@ def shard_runs(configurations: list[dict], index: int, count: int) -> list[dict]
 def file_hash(path: Path) -> str:
     with path.open("rb") as handle:
         return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+@torch.no_grad()
+def score_snapshot(checkpoint, data, *, features, train_edges, bank, device, split_seed, expected_ap):
+    """Score frozen weights using the process's already-loaded validation inputs."""
+    model = build_model(checkpoint, device).eval()
+    initial_state = state_hash(model)
+    started = perf_counter()
+    embeddings, layers = model.encode(features, train_edges)
+    del embeddings
+    metrics = evaluate_global_edges(
+        model, data, split="val", k_values=GLOBAL_K_VALUES, device=device,
+        seed=split_seed, layer_embeddings=layers, negative_bank=bank,
+    )
+    elapsed = perf_counter() - started
+    observed_ap = float(metrics[1]["ap"])
+    if not np.isclose(observed_ap, expected_ap, rtol=0, atol=BASELINE_AP_TOLERANCE):
+        raise ValueError(
+            "Baseline validation AP does not reproduce checkpoint: "
+            f"observed={observed_ap:.10f}, expected={expected_ap:.10f}."
+        )
+    if state_hash(model) != initial_state:
+        raise RuntimeError("Frozen model parameters or buffers changed.")
+    return metrics, {
+        "baseline_ap_abs_error": abs(observed_ap - expected_ap),
+        "model_state_sha256": initial_state, "model_state_unchanged": True,
+        "elapsed_seconds": elapsed,
+    }
+
+
+def load_reference_checkpoint(path: Path, data, split_seed: int) -> tuple[dict, str]:
+    # These are explicitly supplied, trusted local checkpoints. Latest snapshots
+    # include Python/NumPy RNG state, so weights_only=True cannot load all of them.
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    if checkpoint.get("format_version") != 3 or checkpoint.get("model_type") != "global_s2gae":
+        raise ValueError(f"Invalid global S2GAE reference checkpoint: {path}")
+    if checkpoint.get("protocol") != protocol_metadata():
+        raise ValueError(f"Reference checkpoint protocol mismatch: {path}")
+    if int(checkpoint["training_config"]["split_seed"]) != split_seed:
+        raise ValueError(f"Reference checkpoint split seed mismatch: {path}")
+    validate_checkpoint_data(checkpoint, data)
+    if not 0 <= int(checkpoint["best_epoch"]) <= int(checkpoint["epoch"]):
+        raise ValueError(f"Invalid reference checkpoint update numbers: {path}")
+    latest = "optimizer_state_dict" in checkpoint or "rng_state" in checkpoint
+    if latest and not {"optimizer_state_dict", "rng_state"}.issubset(checkpoint):
+        raise ValueError(f"Latest reference checkpoint lacks Adam or RNG state: {path}")
+    if not latest:
+        _validate_checkpoint(path, checkpoint)
+    if not np.isfinite(float(checkpoint["val_metrics"]["ap"])):
+        raise ValueError(f"Reference checkpoint validation AP is not finite: {path}")
+    return checkpoint, "latest" if latest else "best"
 
 
 @torch.no_grad()
@@ -99,24 +151,13 @@ def run(args: argparse.Namespace) -> dict:
         expected_ap = float(original_rows[config["name"]]["best_global_val_ap"])
         if float(checkpoint["best_global_val_ap"]) != expected_ap:
             raise ValueError(f"Checkpoint changed after sweep preflight: {path}")
-        model = build_model(checkpoint, device).eval()
-        initial_state = state_hash(model)
-        model_started = perf_counter()
-        embeddings, layers = model.encode(features, train_edges)
-        del embeddings
-        metrics = evaluate_global_edges(
-            model, data, split="val", k_values=GLOBAL_K_VALUES, device=device,
-            seed=split_seed, layer_embeddings=layers, negative_bank=bank,
+        metrics, snapshot_audit = score_snapshot(
+            checkpoint, data, features=features, train_edges=train_edges,
+            bank=bank, device=device, split_seed=split_seed, expected_ap=expected_ap,
         )
-        elapsed = perf_counter() - model_started
         observed_ap = float(metrics[1]["ap"])
-        if not np.isclose(observed_ap, expected_ap, rtol=0, atol=BASELINE_AP_TOLERANCE):
-            raise ValueError(
-                f"Baseline validation AP does not reproduce checkpoint {config['name']}: "
-                f"observed={observed_ap:.10f}, expected={expected_ap:.10f}."
-            )
-        if state_hash(model) != initial_state or file_hash(path) != checkpoint_hash:
-            raise RuntimeError(f"Frozen checkpoint or model state changed: {path}")
+        if file_hash(path) != checkpoint_hash:
+            raise RuntimeError(f"Frozen checkpoint file changed: {path}")
         common = {
             "run_name": config["name"], "checkpoint": str(path),
             "checkpoint_sha256": checkpoint_hash,
@@ -129,12 +170,45 @@ def run(args: argparse.Namespace) -> dict:
         run_rows.append({
             **common, **{f"validation_ap_{k}": float(metrics[k]["ap"]) for k in GLOBAL_K_VALUES},
             "exploratory_ap500_rank": None, "rank_status": "pending_all_shard_merge",
-            "baseline_ap_abs_error": abs(observed_ap - expected_ap),
-            "model_state_sha256": initial_state, "model_state_unchanged": True,
-            "elapsed_seconds": elapsed,
+            **snapshot_audit,
         })
-        print(f"{config['name']}: val AP@1={observed_ap:.8f}; AP@500={metrics[500]['ap']:.8f}; {elapsed:.1f}s", flush=True)
-        del layers, model, checkpoint
+        print(f"{config['name']}: val AP@1={observed_ap:.8f}; AP@500={metrics[500]['ap']:.8f}; "
+              f"{snapshot_audit['elapsed_seconds']:.1f}s", flush=True)
+        del checkpoint
+
+    reference_result, reference_rows = None, []
+    if getattr(args, "reference_checkpoint", None) is not None:
+        path = args.reference_checkpoint.expanduser().resolve()
+        checkpoint_hash = file_hash(path)
+        checkpoint, snapshot_kind = load_reference_checkpoint(path, data, split_seed)
+        # A latest snapshot's own AP can differ from its historical best AP.
+        expected_ap = float(checkpoint["val_metrics"]["ap"])
+        metrics, snapshot_audit = score_snapshot(
+            checkpoint, data, features=features, train_edges=train_edges,
+            bank=bank, device=device, split_seed=split_seed, expected_ap=expected_ap,
+        )
+        if file_hash(path) != checkpoint_hash:
+            raise RuntimeError(f"Frozen reference checkpoint file changed: {path}")
+        reference_result = {
+            "checkpoint": str(path), "checkpoint_sha256": checkpoint_hash,
+            "snapshot_kind": snapshot_kind, "actual_update": int(checkpoint["epoch"]) + 1,
+            "best_update": int(checkpoint["best_epoch"]) + 1,
+            "training_commit": checkpoint["git_commit"], "model_config": checkpoint["model_config"],
+            "expected_snapshot_validation_ap": expected_ap,
+            "historical_best_validation_ap": float(checkpoint["best_global_val_ap"]),
+            "included_in_primary_ranking": False,
+            **{f"validation_ap_{k}": float(metrics[k]["ap"]) for k in GLOBAL_K_VALUES},
+            **snapshot_audit,
+        }
+        reference_rows = [{
+            "checkpoint": str(path), "checkpoint_sha256": checkpoint_hash,
+            "snapshot_kind": snapshot_kind, "actual_update": reference_result["actual_update"],
+            "best_update": reference_result["best_update"],
+            "split": "val", "k_negatives": k, **metrics[k],
+        } for k in GLOBAL_K_VALUES]
+        print(f"Separate {snapshot_kind} reference at update {reference_result['actual_update']}: "
+              f"val AP@1={metrics[1]['ap']:.8f}; AP@500={metrics[500]['ap']:.8f}", flush=True)
+        del checkpoint
 
     summary = {
         "status": "complete", "interpretation": INTERPRETATION,
@@ -160,11 +234,13 @@ def run(args: argparse.Namespace) -> dict:
             "snapshot_selection": "retained_global_validation_AP_at_1_to_1_best",
             "original_winner_replaced": False,
         },
-        "audit": audit, "runs": run_rows,
+        "audit": audit, "runs": run_rows, "reference": reference_result,
     }
     output_dir.mkdir(parents=True, exist_ok=False)
     write_rows(output_dir / "metrics.csv", metric_rows)
     write_rows(output_dir / "run_summary.csv", run_rows)
+    if reference_rows:
+        write_rows(output_dir / "reference_metrics.csv", reference_rows)
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     return summary
 
@@ -175,6 +251,8 @@ def parse_args() -> argparse.Namespace:
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--shard-count", type=int, default=1)
+    parser.add_argument("--reference-checkpoint", type=Path,
+                        help="Optional trusted best/latest snapshot; scored separately, never ranked with the 54 runs.")
     parser.add_argument("--device", default="auto")
     return parser.parse_args()
 

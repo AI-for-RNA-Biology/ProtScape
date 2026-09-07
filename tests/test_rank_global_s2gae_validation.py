@@ -2,6 +2,7 @@ from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 
@@ -50,6 +51,8 @@ def fake_sweep(tmp_path, monkeypatch):
            if key not in {"features", "train_edge_index", "val_edge_index"}},
         "best_global_val_ap": 0.9, "training_config": {"split_seed": 0},
         "git_commit": "training-commit", "model_type": "global_s2gae", "best_epoch": 4,
+        "epoch": 4, "format_version": 3, "protocol": ranking.protocol_metadata(),
+        "val_metrics": {"ap": 0.9}, "model_config": {"hidden_dim": 4},
     }
     calls = []
     models = []
@@ -90,8 +93,9 @@ def fake_sweep(tmp_path, monkeypatch):
             return features, [features]
 
     def build_model(observed_checkpoint, device):
-        assert observed_checkpoint is checkpoint and device.type == "cpu"
+        assert observed_checkpoint["model_type"] == "global_s2gae" and device.type == "cpu"
         model = FrozenModel()
+        model.expected_ap = observed_checkpoint["val_metrics"]["ap"]
         models.append(model)
         calls.append("build_model")
         return model
@@ -102,7 +106,7 @@ def fake_sweep(tmp_path, monkeypatch):
         assert kwargs["split"] == "val" and tuple(kwargs["k_values"]) == (1, 10, 50, 100, 500)
         assert not torch.is_grad_enabled() and not model.training
         calls.append("score_val_only")
-        return {k: {"ap": 0.9 if k == 1 else 0.6, "f1": 0.8, "n_pos": 1, "n_neg": k}
+        return {k: {"ap": model.expected_ap if k == 1 else 0.6, "f1": 0.8, "n_pos": 1, "n_neg": k}
                 for k in kwargs["k_values"]}
 
     monkeypatch.setattr(ranking, "select_checkpoint", select)
@@ -149,3 +153,63 @@ def test_incomplete_sweep_is_rejected_before_loading_data(fake_sweep, monkeypatc
     with pytest.raises(ValueError, match="All 54"):
         ranking.run(args)
     assert calls == [] and not args.output_dir.exists()
+
+
+@pytest.mark.parametrize("snapshot_kind", ["best", "latest"])
+def test_reference_best_or_latest_reuses_data_and_is_not_ranked(fake_sweep, monkeypatch, snapshot_kind):
+    args, _, checkpoint, calls, models = fake_sweep
+    reference = dict(checkpoint)
+    if snapshot_kind == "latest":
+        reference.update(
+            epoch=9, val_metrics={"ap": 0.85}, best_global_val_ap=0.95,
+            optimizer_state_dict={"state": {}, "param_groups": []},
+            rng_state={"numpy": np.random.RandomState(0).get_state()},
+        )
+    args.reference_checkpoint = args.output_dir.parent / "reference.pt"
+    torch.save(reference, args.reference_checkpoint)
+    real_load, loads = torch.load, []
+
+    def load_trusted(path, **kwargs):
+        loads.append((path, kwargs))
+        return real_load(path, **kwargs)
+
+    monkeypatch.setattr(ranking.torch, "load", load_trusted)
+    summary = ranking.run(args)
+    result = summary["reference"]
+    assert calls == ["select_all", "load_data", "build_bank"] + [
+        "build_model", "encode_train_only", "score_val_only"] * 3
+    assert len(loads) == 1 and loads[0][1] == {"map_location": "cpu", "weights_only": False}
+    assert len(models) == 3 and summary["n_scored_runs"] == 2
+    assert result["snapshot_kind"] == snapshot_kind
+    assert result["actual_update"] == (10 if snapshot_kind == "latest" else 5)
+    assert result["best_update"] == 5
+    assert result["validation_ap_1"] == reference["val_metrics"]["ap"]
+    assert result["historical_best_validation_ap"] == reference["best_global_val_ap"]
+    assert result["baseline_ap_abs_error"] == 0
+    assert not result["included_in_primary_ranking"]
+    assert result["checkpoint_sha256"] == ranking.file_hash(args.reference_checkpoint)
+    assert result["model_state_unchanged"]
+    assert len((args.output_dir / "reference_metrics.csv").read_text().splitlines()) == 6
+    assert len((args.output_dir / "metrics.csv").read_text().splitlines()) == 11
+    assert [row["run_name"] for row in summary["runs"]] == ["run_0", "run_27"]
+    assert summary["original_selection"]["unchanged"]
+
+
+@pytest.mark.parametrize("corruption", ["protocol", "graph", "split_seed", "missing_rng", "invalid_update"])
+def test_invalid_reference_checkpoint_is_rejected(fake_sweep, corruption):
+    args, data, checkpoint, _, _ = fake_sweep
+    reference = dict(checkpoint)
+    if corruption == "protocol":
+        reference["protocol"] = {"split": "test"}
+    elif corruption == "graph":
+        reference["graph_fingerprint"] = "other-graph"
+    elif corruption == "split_seed":
+        reference["training_config"] = {"split_seed": 10}
+    elif corruption == "missing_rng":
+        reference["optimizer_state_dict"] = {"state": {}}
+    else:
+        reference["epoch"] = 0
+    path = args.output_dir.parent / "bad_reference.pt"
+    torch.save(reference, path)
+    with pytest.raises(ValueError):
+        ranking.load_reference_checkpoint(path, data, 0)
