@@ -11,6 +11,7 @@ import os
 import random
 import resource
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -49,6 +50,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mask-type", choices=("dm", "um"), default="dm")
     parser.add_argument("--k-negatives", type=int, default=1)
     parser.add_argument("--epochs", type=int, default=300)
+    parser.add_argument("--early-stopping-patience", type=int, default=0,
+                        help="Stop after this many updates without meaningful validation AP improvement; 0 disables.")
+    parser.add_argument("--early-stopping-min-delta", type=float, default=0.0,
+                        help="Required validation AP improvement on the 0-to-1 scale.")
     parser.add_argument("--lr", type=float, default=0.01)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--split-seed", type=int, default=0)
@@ -129,6 +134,31 @@ def write_json(path: Path, payload: dict) -> None:
     os.replace(temporary, path)
 
 
+@dataclass
+class EarlyStopping:
+    """Validation-only patience; independent of the absolute-best checkpoint."""
+
+    patience: int = 0
+    min_delta: float = 0.0
+    reference_ap: float = -np.inf
+    last_improvement_epoch: int = -1
+    last_epoch: int = -1
+
+    def observe(self, ap: float, epoch: int) -> None:
+        if not np.isfinite(ap):
+            raise ValueError("Validation AP must be finite.")
+        self.last_epoch = int(epoch)
+        if ap > self.reference_ap + self.min_delta:
+            self.reference_ap = float(ap)
+            self.last_improvement_epoch = int(epoch)
+
+    @property
+    def should_stop(self) -> bool:
+        return self.patience > 0 and (
+            self.last_epoch - self.last_improvement_epoch >= self.patience
+        )
+
+
 def run_name(args: argparse.Namespace) -> str:
     if args.run_name:
         return args.run_name
@@ -140,7 +170,7 @@ def run_name(args: argparse.Namespace) -> str:
 
 
 def training_config(args: argparse.Namespace) -> dict:
-    return {
+    config = {
         "epochs": args.epochs,
         "lr": args.lr,
         "mask_ratio": args.mask_ratio,
@@ -149,6 +179,13 @@ def training_config(args: argparse.Namespace) -> dict:
         "seed": args.seed,
         "split_seed": args.split_seed,
     }
+    # Preserve the schema and tracking identity of existing fixed-budget runs.
+    if getattr(args, "early_stopping_patience", 0) > 0:
+        config.update(
+            early_stopping_patience=args.early_stopping_patience,
+            early_stopping_min_delta=args.early_stopping_min_delta,
+        )
+    return config
 
 
 def tracking_config(
@@ -237,6 +274,8 @@ def validate_completed_extension(
     current_git_commit: str,
 ) -> dict:
     """Validate and describe a continuation of a completed shorter run."""
+    if completion.get("stop_reason") == "early_stopping":
+        raise ValueError("Cannot extend: run already satisfied its early-stopping rule.")
     previous_epochs = int(completion["completed_epochs"])
     if int(completion["last_epoch"]) != previous_epochs - 1:
         raise ValueError("Cannot extend: completion has an invalid last epoch.")
@@ -244,9 +283,15 @@ def validate_completed_extension(
         raise ValueError("Cannot extend: latest checkpoint is not the completed epoch.")
     if int(current_training["epochs"]) <= previous_epochs:
         raise ValueError("Cannot extend: target epochs must exceed completed epochs.")
+    stopping_keys = {"early_stopping_patience", "early_stopping_min_delta"}
+    previous_training = checkpoint["training_config"]
     for key, value in current_training.items():
-        if key != "epochs" and checkpoint["training_config"][key] != value:
+        if key not in {"epochs", *stopping_keys} and previous_training[key] != value:
             raise ValueError(f"Cannot extend: training parameter {key} changed.")
+    if previous_training.get("early_stopping_patience", 0) > 0:
+        for key in stopping_keys:
+            if previous_training.get(key, 0) != current_training.get(key, 0):
+                raise ValueError(f"Cannot extend: stopping parameter {key} changed.")
     if int(checkpoint["training_config"]["epochs"]) != previous_epochs:
         raise ValueError("Cannot extend: checkpoint epoch budget is inconsistent.")
     if int(previous_config["epochs"]) != previous_epochs:
@@ -270,12 +315,19 @@ def validate_completed_extension(
     ):
         raise ValueError("Cannot extend: completion/checkpoint best metric mismatch.")
 
-    return {
+    continuation = {
         "from_completed_epochs": previous_epochs,
         "to_epochs": int(current_training["epochs"]),
         "from_git_commit": checkpoint["git_commit"],
         "to_git_commit": current_git_commit,
     }
+    if current_training.get("early_stopping_patience", 0) > 0:
+        continuation["early_stopping"] = {
+            "patience": current_training["early_stopping_patience"],
+            "min_delta": current_training["early_stopping_min_delta"],
+            "initialization": "full_validation_history",
+        }
+    return continuation
 
 
 def validate_archived_best(best: dict, latest: dict) -> None:
@@ -317,6 +369,12 @@ def main() -> None:
         raise ValueError("k_negatives must be positive.")
     if args.epochs < 1:
         raise ValueError("epochs must be positive.")
+    if args.early_stopping_patience < 0:
+        raise ValueError("early-stopping-patience must be nonnegative.")
+    if not np.isfinite(args.early_stopping_min_delta) or args.early_stopping_min_delta < 0:
+        raise ValueError("early-stopping-min-delta must be finite and nonnegative.")
+    if args.early_stopping_patience == 0 and args.early_stopping_min_delta != 0:
+        raise ValueError("early-stopping-min-delta requires a positive patience.")
     if args.lr <= 0.0:
         raise ValueError("lr must be positive.")
 
@@ -551,6 +609,13 @@ def main() -> None:
             ),
         )
 
+    stopping = EarlyStopping(args.early_stopping_patience, args.early_stopping_min_delta)
+    if stopping.patience > 0:
+        if [int(row["epoch"]) for row in history] != list(range(start_epoch)):
+            raise ValueError("Early stopping requires the complete validation history on resume.")
+        for row in history:
+            stopping.observe(float(row["global_val_ap"]), int(row["epoch"]))
+
     global_val_bank = build_global_negative_bank(
         data, split="val", max_k=1, seed=args.split_seed
     )
@@ -587,7 +652,10 @@ def main() -> None:
 
     data.features = data.features.to(device)
 
+    last_epoch = start_epoch - 1
     for epoch in range(start_epoch, args.epochs):
+        if stopping.should_stop:
+            break
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
         model.train()
@@ -624,6 +692,7 @@ def main() -> None:
             negative_bank=global_val_bank,
         )
         val_metrics = global_val_metrics[1]
+        stopping.observe(float(val_metrics["ap"]), epoch)
         row = {
             "epoch": epoch,
             "train_loss": float(loss.item()),
@@ -690,12 +759,17 @@ def main() -> None:
         )
         del loss, train_logits, train_labels
         del val_layers
+        last_epoch = epoch
 
+    stop_reason = "early_stopping" if stopping.should_stop else "max_epochs"
+    print(f"Training finished after {last_epoch + 1} updates: {stop_reason}", flush=True)
     completion = {
         "run_name": name,
         "experiment_role": args.experiment_role,
-        "completed_epochs": args.epochs,
-        "last_epoch": args.epochs - 1,
+        "completed_epochs": last_epoch + 1,
+        "last_epoch": last_epoch,
+        "max_epochs": args.epochs,
+        "stop_reason": stop_reason,
         "best_epoch": best_epoch,
         "best_global_val_ap": best_global_val_ap,
         "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
@@ -708,6 +782,14 @@ def main() -> None:
     }
     if getattr(args, "continuations", None):
         completion["continuations"] = args.continuations
+    if stopping.patience > 0:
+        completion["early_stopping"] = {
+            "patience": stopping.patience,
+            "min_delta": stopping.min_delta,
+            "reference_ap": stopping.reference_ap,
+            "last_improvement_epoch": stopping.last_improvement_epoch,
+            "wait_updates": stopping.last_epoch - stopping.last_improvement_epoch,
+        }
     tracker.summary["best_global_val_ap"] = best_global_val_ap
     tracker.summary["best_epoch"] = best_epoch
     tracker.summary["best_checkpoint"] = str(best_path)

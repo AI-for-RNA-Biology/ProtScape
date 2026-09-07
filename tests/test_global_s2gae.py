@@ -28,6 +28,7 @@ from pretraining.global_s2gae import (
     validate_masked_targets,
 )
 from pretraining.train_global_s2gae import (
+    EarlyStopping,
     capture_rng_state,
     checkpoint_payload,
     restore_rng_state,
@@ -587,6 +588,79 @@ def test_completed_run_extension_changes_only_epoch_budget_and_code_version():
             {**training, "epochs": 500, "lr": 0.02},
             "new",
         )
+
+    with_stopping = validate_completed_extension(
+        checkpoint, completion, previous_config,
+        {**training, "epochs": 500, "early_stopping_patience": 200,
+         "early_stopping_min_delta": 0.0005}, "new",
+    )
+    assert with_stopping["early_stopping"]["initialization"] == "full_validation_history"
+
+
+def test_early_stopping_accumulates_small_improvements():
+    stopping = EarlyStopping(patience=3, min_delta=0.0005)
+    for epoch, score in enumerate([0.8, 0.8003, 0.8006, 0.8008, 0.8007]):
+        stopping.observe(score, epoch)
+        assert not stopping.should_stop
+    assert stopping.last_improvement_epoch == 2
+    stopping.observe(0.8009, 5)
+    assert stopping.should_stop
+
+
+def test_early_stopping_replays_identically_after_resume():
+    scores = [0.8, 0.801, 0.8012, 0.8011, 0.8013]
+    uninterrupted = EarlyStopping(patience=3, min_delta=0.0005)
+    resumed = EarlyStopping(patience=3, min_delta=0.0005)
+    for epoch, score in enumerate(scores):
+        uninterrupted.observe(score, epoch)
+    for epoch, score in enumerate(scores[:3]):
+        resumed.observe(score, epoch)
+    for epoch, score in enumerate(scores[3:], start=3):
+        resumed.observe(score, epoch)
+    assert resumed == uninterrupted
+    assert resumed.should_stop
+    disabled = EarlyStopping()
+    for epoch in range(1000):
+        disabled.observe(0.8, epoch)
+    assert not disabled.should_stop
+    with pytest.raises(ValueError, match="finite"):
+        disabled.observe(float("nan"), 1000)
+
+
+def test_training_extension_stops_early_and_keeps_absolute_best(tmp_path, monkeypatch):
+    import sys
+    import pretraining.train_global_s2gae as trainer
+
+    monkeypatch.setenv("PROTSCAPE_GIT_COMMIT", "test-commit")
+    torch.set_num_threads(1)
+    data = tiny_data()
+    monkeypatch.setattr(trainer, "load_global_ppi_data", lambda *a, **kw: data)
+    monkeypatch.setattr(trainer.wandb, "init", lambda **kw: SimpleNamespace(
+        config={}, summary={}, log=lambda *a, **kw: None, finish=lambda: None))
+    scores = iter([0.80, 0.83, 0.84, 0.86, 0.865, 0.87])
+    monkeypatch.setattr(trainer, "evaluate_global_edges", lambda *a, **kw: {
+        1: {"ap": next(scores), "f1": 0.5, "roc": 0.5, "acc": 0.5}})
+    argv = ["train_global", "--networks-dir", str(tmp_path), "--esm2-embeddings",
+            str(tmp_path / "unused"), "--output-root", str(tmp_path / "runs"),
+            "--run-name", "tiny", "--hidden-dim", "8", "--num-layers", "2",
+            "--decode-channels", "8", "--dropout", "0", "--device", "cpu"]
+    monkeypatch.setattr(sys, "argv", argv + ["--epochs", "3"])
+    trainer.main()
+    run = tmp_path / "runs/tiny"
+    original_history = (run / "history.csv").read_text().splitlines()
+    monkeypatch.setattr(sys, "argv", argv + ["--epochs", "8", "--resume",
+        "--extend-completed", "--early-stopping-patience", "2",
+        "--early-stopping-min-delta", "0.02"])
+    trainer.main()
+    completion = json.loads((run / "completed.json").read_text())
+    best = torch.load(run / "best_model_state_dict.pt", weights_only=True)
+    assert completion["stop_reason"] == "early_stopping"
+    assert completion["completed_epochs"] == 6
+    assert completion["max_epochs"] == 8
+    assert completion["early_stopping"]["wait_updates"] == 2
+    assert completion["best_global_val_ap"] == best["best_global_val_ap"] == 0.87
+    assert (run / "history.csv").read_text().splitlines()[:4] == original_history
+    assert json.loads((run / "completed_epoch3.json").read_text())["completed_epochs"] == 3
 
 
 def test_archived_best_must_match_latest_completion_state():
