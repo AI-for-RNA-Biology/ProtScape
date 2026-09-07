@@ -1,7 +1,4 @@
-# ProtScape
-
-**Resolving context-specific protein-protein interactomes for
-biological discovery and therapeutic target prioritisation**
+# ProtScape: Resolving context-specific protein-protein interactomes for biological discovery and therapeutic target prioritisation
 
 **Authors:** Alois Thomas, Lisa Fournier, Vincent Jung, Pascal Frossard, Rickie Patani, Raphaëlle Luisier and Cédric Vincent-Cuaz<br>
 **Correspondence:** [Cédric Vincent-Cuaz](mailto:cedric.vincent-cuaz@unibe.ch)<br>
