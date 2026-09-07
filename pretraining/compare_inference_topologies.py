@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from scipy.stats import pearsonr, spearmanr
-from sklearn.metrics import average_precision_score
+from sklearn.metrics import average_precision_score, f1_score
 from torch_geometric.data import Data
 
 from pretraining.checkpoints import load_protscape_model
@@ -304,7 +304,7 @@ def add_plot_sample(
         )
 
 
-def auprc_from_pos_neg(positive: np.ndarray, negative: np.ndarray) -> dict:
+def metrics_from_pos_neg(positive: np.ndarray, negative: np.ndarray) -> dict:
     scores = np.concatenate([positive, negative])
     labels = np.concatenate(
         [
@@ -314,6 +314,15 @@ def auprc_from_pos_neg(positive: np.ndarray, negative: np.ndarray) -> dict:
     )
     return {
         "ap": float(average_precision_score(labels, scores)),
+        "f1": float(
+            f1_score(
+                labels,
+                scores >= 0.5,
+                average="macro",
+                labels=[0, 1],
+                zero_division=0,
+            )
+        ),
         "n_pos": int(positive.size),
         "n_neg": int(negative.size),
     }
@@ -333,7 +342,7 @@ def evaluate_score_banks(
         negative = scores[inference_key][n_pos:].reshape(n_pos, max_k)
         paired_scores[inference_key] = np.concatenate([positive, negative[:, 0]])
         for k in k_values:
-            metrics[(inference_key, k)] = auprc_from_pos_neg(
+            metrics[(inference_key, k)] = metrics_from_pos_neg(
                 positive,
                 negative[:, :k].reshape(-1),
             )
@@ -359,6 +368,8 @@ def metric_rows(per_cell: list[dict]) -> list[dict]:
                         "pos_neg_ratio": f"1:{k}",
                         "auprc_percent": 100.0
                         * float(np.mean([row["ap"] for row in rows])),
+                        "f1_percent": 100.0
+                        * float(np.mean([row["f1"] for row in rows])),
                         "n_pos": sum(row["n_pos"] for row in rows),
                         "n_neg": sum(row["n_neg"] for row in rows),
                         "n_cells": len(rows),
@@ -417,31 +428,35 @@ def plot_results(
 
     with matplotlib.rc_context(PLOT_RC):
         test = [row for row in metrics_rows if row["split"] == "test"]
-        fig, ax = plt.subplots(figsize=(7.2 * CM, 6.0 * CM))
-        for key in INFERENCE_ORDER:
-            rows = sorted(
-                (row for row in test if row["inference_key"] == key),
-                key=lambda row: row["k_negatives"],
-            )
-            ax.plot(
-                [row["k_negatives"] for row in rows],
-                [row["auprc_percent"] for row in rows],
-                marker="o",
-                markersize=3.5,
-                linewidth=2,
-                color=INFERENCE_COLORS[key],
-                label=INFERENCE_LABELS[key],
-            )
-        ax.set_xscale("log")
-        ax.set_xticks(CONTEXTWISE_K_VALUES)
-        ax.set_xticklabels([str(k) for k in CONTEXTWISE_K_VALUES])
-        ax.set_xlabel("Negatives per positive edge")
-        ax.set_ylabel("AUPRC")
-        ax.set_ylim(0, 100)
-        clean_axis(ax)
-        ax.legend(frameon=False, fontsize=5.5)
-        fig.tight_layout()
-        save_figure(fig, "topology_inference_test_auprc")
+        for metric, ylabel, stem in (
+            ("auprc_percent", "AUPRC", "topology_inference_test_auprc"),
+            ("f1_percent", "F1", "topology_inference_test_f1"),
+        ):
+            fig, ax = plt.subplots(figsize=(7.2 * CM, 6.0 * CM))
+            for key in INFERENCE_ORDER:
+                rows = sorted(
+                    (row for row in test if row["inference_key"] == key),
+                    key=lambda row: row["k_negatives"],
+                )
+                ax.plot(
+                    [row["k_negatives"] for row in rows],
+                    [row[metric] for row in rows],
+                    marker="o",
+                    markersize=3.5,
+                    linewidth=2,
+                    color=INFERENCE_COLORS[key],
+                    label=INFERENCE_LABELS[key],
+                )
+            ax.set_xscale("log")
+            ax.set_xticks(CONTEXTWISE_K_VALUES)
+            ax.set_xticklabels([str(k) for k in CONTEXTWISE_K_VALUES])
+            ax.set_xlabel("Negatives per positive edge")
+            ax.set_ylabel(ylabel)
+            ax.set_ylim(0, 100)
+            clean_axis(ax)
+            ax.legend(frameon=False, fontsize=5.5)
+            fig.tight_layout()
+            save_figure(fig, stem)
 
         fig, ax = plt.subplots(figsize=(8.0 * CM, 6.0 * CM))
         x = np.arange(len(SPLIT_ORDER))
@@ -852,7 +867,9 @@ def evaluate(args: argparse.Namespace) -> dict:
     plot_results(aggregate_metrics, plot_samples, variability, work_dir)
 
     summary = {
-        "protocol_version": "paired_topology_inference_v1",
+        "protocol_version": "paired_topology_inference_v2_auprc_f1",
+        "reported_metrics": ["AUPRC", "macro-F1"],
+        "f1_definition": "unweighted binary macro-F1 at sigmoid threshold 0.5",
         "inference_labels": INFERENCE_LABELS,
         "test_k_values": list(CONTEXTWISE_K_VALUES),
         "diagnostic_splits": ["train", "validation"],

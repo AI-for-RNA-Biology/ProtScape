@@ -62,4 +62,5 @@ def test_score_bank_metrics_keep_the_shared_first_negative():
     assert set(metrics) == {(key, k) for key in INFERENCE_ORDER for k in (1, 2)}
     for key in INFERENCE_ORDER:
         assert metrics[(key, 1)]["ap"] == 1.0
+        assert metrics[(key, 1)]["f1"] == 1.0
         assert np.allclose(paired[key], np.array([0.9, 0.8, 0.1, 0.3]))
