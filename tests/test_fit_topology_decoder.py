@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import torch
+import pytest
 
 from pretraining.fit_topology_decoder import (
     CorrectionHead, SETTINGS, VARIANTS, fold_roles, symmetric_structure, fit_fold,
@@ -72,3 +73,27 @@ def test_outer_values_cannot_change_fitted_state_or_stopping(tmp_path, monkeypat
     assert a["selected_updates"] == b["selected_updates"]
     assert all(torch.equal(value, b["state_dict"][key]) for key, value in a["state_dict"].items())
     assert json.loads((left / "completed.json").read_text())["outer_used_for_selection"] is False
+
+
+@pytest.mark.parametrize("keep_inner_state", [True, False])
+def test_continuation_matches_uninterrupted_updates(tmp_path, monkeypatch, keep_inner_state):
+    monkeypatch.setitem(SETTINGS, "max_updates", 4)
+    monkeypatch.setitem(SETTINGS, "eval_every", 2)
+    monkeypatch.setitem(SETTINGS, "batch_size", 32)
+    torch.manual_seed(1)
+    dataset = {"features": torch.randn(3, 9, 501, 11), "context_scores": torch.randn(3, 9, 501),
+               "folds": torch.arange(9) % 3, "cells": torch.zeros(9, dtype=torch.int32),
+               "keys": torch.zeros(3, 9, 501, dtype=torch.long)}
+    parent_args = SimpleNamespace(output_dir=tmp_path / "parent", variant="mlp_context", device="cpu", full_budget=True)
+    fit_fold(parent_args, dataset, 0)
+    if not keep_inner_state:
+        (tmp_path / "parent/mlp_context/fold_0/inner_latest.pt").unlink()
+    monkeypatch.setitem(SETTINGS, "max_updates", 8)
+    for name, parent in (("continued", tmp_path / "parent"), ("fresh", None)):
+        args = SimpleNamespace(output_dir=tmp_path / name, variant="mlp_context", device="cpu", full_budget=True, parent_dir=parent)
+        fit_fold(args, dataset, 0)
+    left = torch.load(tmp_path / "continued/mlp_context/fold_0/inner_latest.pt", weights_only=True)
+    right = torch.load(tmp_path / "fresh/mlp_context/fold_0/inner_latest.pt", weights_only=True)
+    assert left["update"] == right["update"] == 8
+    assert all(torch.equal(value, right["state_dict"][name]) for name, value in left["state_dict"].items())
+    assert torch.equal(left["batch_rng_state"], right["batch_rng_state"])

@@ -81,6 +81,14 @@ def prepare(args):
     args.output_dir.mkdir(parents=True, exist_ok=True)
     if (args.output_dir / "dataset.pt").exists():
         raise FileExistsError("Reuse the existing prepared dataset")
+    if args.parent_dir is not None:
+        protocol = json.loads((args.parent_dir / "protocol.json").read_text())
+        assert protocol["settings"] == SETTINGS
+        (args.output_dir / "dataset.pt").symlink_to((args.parent_dir / "dataset.pt").resolve())
+        protocol.update(source_file_sha256=file_hash(__file__), parent_dir=str(args.parent_dir), full_budget=args.full_budget)
+        (args.output_dir / "protocol.json").write_text(json.dumps(protocol, indent=2) + "\n")
+        print("Reusing prepared dataset; extending saved inner trajectories", flush=True)
+        return
     source_protocol = json.loads((args.source_dir / "protocol.json").read_text())
     cache = torch.load(args.source_dir / "cache.pt", map_location="cpu", weights_only=False)
     data = cache["data"]
@@ -111,7 +119,7 @@ def prepare(args):
     assert torch.isfinite(dataset["features"]).all()
     torch.save(dataset, args.output_dir / "dataset.pt")
     protocol = {"source_dir": str(args.source_dir), "source_protocol": source_protocol,
-                "source_file_sha256": file_hash(__file__),
+                "source_file_sha256": file_hash(__file__), "full_budget": args.full_budget,
                 "source_artifact_hashes": hashes, "settings": SETTINGS, "variants": VARIANTS,
                 "feature_order": ["CF global logit", "global min degree", "global max degree", "global CN", "global RA", "global symmetric PPR",
                                   "local min degree", "local max degree", "local CN", "local RA", "local symmetric PPR"],
@@ -200,7 +208,38 @@ def fit_fold(args, dataset, outer):
     aps, initial = score()
     best_score, patience_score, best_step, patience_step = initial, initial, 0, 0
     history = [{"update": 0, "selection_ap": initial, **aps}]
-    for step in range(1, SETTINGS["max_updates"] + 1):
+    first_step, replayed = 1, 0
+    parent_dir = getattr(args, "parent_dir", None)
+    if parent_dir is not None:
+        parent = parent_dir / args.variant / f"fold_{outer}"
+        history = pd.read_csv(parent / "inner_history.csv").to_dict("records")
+        assert abs(history[0]["selection_ap"] - initial) < 1e-8
+        last_step = int(history[-1]["update"])
+        if (parent / "inner_latest.pt").exists():
+            latest = torch.load(parent / "inner_latest.pt", map_location="cpu", weights_only=True)
+            assert latest["update"] == last_step
+            model.load_state_dict(latest["state_dict"])
+            optimizer.load_state_dict(latest["optimizer_state_dict"])
+            generator.set_state(latest["batch_rng_state"])
+        else:
+            # The initial short pilot retained selected heads, not inner Adam.
+            # Reconstruct its cheap optimizer prefix only, without repeating
+            # graph work or intermediate evaluations; verify stored losses.
+            observed_losses = {int(row["update"]): row.get("loss") for row in history}
+            for replay in range(1, last_step + 1):
+                loss = one_update(model, optimizer, generator, features, targets)
+                if replay in observed_losses:
+                    assert abs(loss - observed_losses[replay]) < 1e-6
+            replayed = last_step
+        _, restored_score = score()
+        assert abs(restored_score - history[-1]["selection_ap"]) < 1e-7
+        best = max(history, key=lambda row: row["selection_ap"])
+        best_score, best_step = best["selection_ap"], int(best["update"])
+        for row in history:
+            if row["selection_ap"] > patience_score + SETTINGS["min_delta"]:
+                patience_score, patience_step = row["selection_ap"], int(row["update"])
+        first_step = last_step + 1
+    for step in range(first_step, SETTINGS["max_updates"] + 1):
         loss = one_update(model, optimizer, generator, features, targets)
         if step % SETTINGS["eval_every"]:
             continue
@@ -209,11 +248,14 @@ def fit_fold(args, dataset, outer):
         pd.DataFrame(history).to_csv(destination / "inner_history.csv", index=False)
         print(json.dumps({"variant": args.variant, "fold": outer, "update": step,
                           "inner_selection_ap": current}), flush=True)
+        torch.save({"state_dict": {name: value.detach().cpu() for name, value in model.state_dict().items()},
+                    "optimizer_state_dict": optimizer.state_dict(), "batch_rng_state": generator.get_state(),
+                    "update": step}, destination / "inner_latest.pt")
         if current > best_score:
             best_score, best_step = current, step
         if current > patience_score + SETTINGS["min_delta"]:
             patience_score, patience_step = current, step
-        if step - patience_step >= SETTINGS["patience_updates"]:
+        if not getattr(args, "full_budget", False) and step - patience_step >= SETTINGS["patience_updates"]:
             break
     pd.DataFrame(history).to_csv(destination / "inner_history.csv", index=False)
     del model, optimizer, features, targets, monitor_values
@@ -245,6 +287,8 @@ def fit_fold(args, dataset, outer):
                  "inner_monitor_positive_occurrences": int(monitor.sum()), "outer_positive_occurrences": int(evaluation.sum()),
                  "selected_updates": best_step, "stopped_update": step, "initial_inner_ap": initial, "selected_inner_ap": best_score,
                  "parameter_count": sum(p.numel() for p in model.parameters()), "elapsed_seconds": perf_counter() - started,
+                 "inner_prefix_updates_reconstructed": replayed,
+                 "full_budget_check": getattr(args, "full_budget", False),
                  "outer_used_for_selection": False}
     (destination / "completed.json").write_text(json.dumps(completed, indent=2) + "\n")
     print(json.dumps(completed), flush=True)
@@ -259,6 +303,8 @@ def fit(args):
         raise ValueError("Prepared protocol settings differ from the code")
     if protocol["source_file_sha256"] != file_hash(__file__):
         raise ValueError("Source changed after data preparation")
+    if protocol.get("full_budget", False) != args.full_budget:
+        raise ValueError("Full-budget setting differs from prepared protocol")
     dataset = torch.load(args.output_dir / "dataset.pt", weights_only=True, mmap=True, map_location="cpu")
     for outer in range(3):
         fit_fold(args, dataset, outer)
@@ -289,6 +335,8 @@ def main():
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--variant", choices=VARIANTS)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--parent-dir", type=Path)
+    parser.add_argument("--full-budget", action="store_true")
     args = parser.parse_args()
     {"prepare": prepare, "fit": fit, "summarize": summarize}[args.stage](args)
 
