@@ -4,14 +4,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import numpy as np
 import pandas as pd
 
 from downstream_tasks.config import PATHS
+from downstream_tasks.data_processing.therapeutic_target_processing import load_druggable_targets
 from exploration.analysis.parkinson_inference import (
     MODEL_LABELS,
-    run_global_inference,
+    load_predictions,
 )
 from exploration.analysis.parkinson_modules import (
     build_leiden_tables,
@@ -27,26 +29,9 @@ from exploration.analysis.parkinson_string import (
 
 
 ANALYSIS_DIR = Path(PATHS["output_root"]) / "analysis/parkinson_target_analysis"
-EXTERNAL_SUPPORT_SNAPSHOT = Path(PATHS["parkinson_external_support"])
-CLINICAL_STAGE_SNAPSHOT = EXTERNAL_SUPPORT_SNAPSHOT.with_name(
-    "parkinson_opentargets_drug_target_stages.csv"
-)
+OPENTARGETS_ASSOCIATIONS = Path(PATHS["parkinson_opentargets_associations"])
+DRUGBANK_TARGETS = Path(PATHS["therapeutic_target_drugbank_targets"])
 PROBABILITY_THRESHOLD = 0.5
-
-CLINICAL_STAGE_RANK = {
-    "UNKNOWN": 0,
-    "PRECLINICAL": 1,
-    "IND": 2,
-    "EARLY_PHASE_1": 3,
-    "PHASE_1": 4,
-    "PHASE_1_2": 5,
-    "PHASE_2": 6,
-    "PHASE_2_3": 7,
-    "PHASE_3": 8,
-    "PHASE_4": 9,
-    "APPROVAL": 10,
-}
-NO_LINKED_CLINICAL_STAGE = "NO_LINKED_CLINICAL_STAGE"
 
 SYNAPTIC_GROUPS = [
     (
@@ -147,28 +132,25 @@ def build_recovery_tables(
 def build_external_support(
     candidates: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    snapshot = pd.read_csv(require_file(EXTERNAL_SUPPORT_SNAPSHOT))
-    snapshot["protein"] = snapshot["protein"].str.upper()
-    if snapshot["protein"].duplicated().any():
-        raise ValueError("External-support snapshot has duplicate proteins")
-    candidate_genes = set(candidates["protein"])
-    if not candidate_genes.issubset(snapshot["protein"]):
-        missing = sorted(candidate_genes - set(snapshot["protein"]))
-        raise ValueError(
-            f"External-support input lacks {len(missing)} rebuilt candidates"
-        )
+    associations = pd.read_csv(require_file(OPENTARGETS_ASSOCIATIONS))
+    datatypes = associations["datatype_scores_json"].map(json.loads)
+    literature_only = datatypes.map(
+        lambda scores: len(scores) == 1 and scores[0]["id"].lower() == "literature"
+    )
+    supported = set(associations.loc[~literature_only, "protein"].str.upper())
+    query_dates = associations["query_utc"].dropna().unique()
+    if len(query_dates) != 1:
+        raise ValueError("Use one dated Open Targets association export.")
+    drugbank = load_druggable_targets(require_file(DRUGBANK_TARGETS))
     displayed_flags = [
         "current_opentargets_parkinson_association_non_literature_only",
         "approved_human_drugbank_target_any_indication",
     ]
-    annotation_flags = [
-        *displayed_flags,
-        "other_opentargets_disease_association",
-    ]
-    annotations = snapshot[["protein", *annotation_flags, "query_utc"]].copy()
-    joined = candidates.merge(
-        annotations, on="protein", how="left", validate="many_to_one"
-    )
+    joined = candidates.copy()
+    symbols = joined["protein"].str.upper()
+    joined[displayed_flags[0]] = symbols.isin(supported)
+    joined[displayed_flags[1]] = symbols.isin(drugbank)
+    joined["query_utc"] = query_dates[0]
     summary_rows = []
     for model, rows in joined.groupby("model", sort=False):
         for flag in displayed_flags:
@@ -187,118 +169,6 @@ def build_external_support(
     return joined, pd.DataFrame(summary_rows)
 
 
-def build_candidate_clinical_stages(
-    support_rows: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Assign each Open Targets-supported candidate its highest Parkinson stage."""
-    snapshot = pd.read_csv(require_file(CLINICAL_STAGE_SNAPSHOT))
-    required = {"protein", "max_clinical_stage", "query_utc"}
-    missing = required - set(snapshot.columns)
-    if missing:
-        raise ValueError(
-            "Clinical-stage snapshot lacks required columns: "
-            + ", ".join(sorted(missing))
-        )
-    if snapshot[["protein", "max_clinical_stage"]].isna().any(axis=None):
-        raise ValueError("Clinical-stage snapshot has missing required values")
-    if "disease_id" in snapshot.columns:
-        disease_ids = set(snapshot["disease_id"].astype(str))
-        if disease_ids != {"MONDO_0005180"}:
-            raise ValueError(
-                "Clinical-stage snapshot is not restricted to exact Parkinson disease"
-            )
-    stage_query_times = sorted(snapshot["query_utc"].dropna().astype(str).unique())
-    if len(stage_query_times) != 1:
-        raise ValueError("Clinical-stage snapshot must have one query timestamp")
-
-    snapshot = snapshot.copy()
-    snapshot["protein"] = snapshot["protein"].astype(str).str.upper()
-    snapshot["max_clinical_stage"] = (
-        snapshot["max_clinical_stage"].astype(str).str.strip().str.upper()
-    )
-    unknown_stages = set(snapshot["max_clinical_stage"]) - set(
-        CLINICAL_STAGE_RANK
-    )
-    if unknown_stages:
-        raise ValueError(
-            "Unrecognized Open Targets clinical stages: "
-            + ", ".join(sorted(unknown_stages))
-        )
-
-    protein_stages = snapshot[
-        ["protein", "max_clinical_stage"]
-    ].drop_duplicates()
-    protein_stages["clinical_stage_rank"] = protein_stages[
-        "max_clinical_stage"
-    ].map(CLINICAL_STAGE_RANK)
-    protein_stages = (
-        protein_stages.sort_values(
-            ["protein", "clinical_stage_rank", "max_clinical_stage"]
-        )
-        .drop_duplicates("protein", keep="last")
-        .rename(columns={"max_clinical_stage": "clinical_stage"})
-    )
-
-    support_flag = (
-        "current_opentargets_parkinson_association_non_literature_only"
-    )
-    candidates = support_rows[support_rows[support_flag].astype(bool)].copy()
-    if candidates.duplicated(["model", "protein"]).any():
-        raise ValueError("Open Targets-supported candidates are not unique per model")
-    candidates = candidates.merge(
-        protein_stages[["protein", "clinical_stage", "clinical_stage_rank"]],
-        on="protein",
-        how="left",
-        validate="many_to_one",
-    )
-    candidates["clinical_stage"] = candidates["clinical_stage"].fillna(
-        NO_LINKED_CLINICAL_STAGE
-    )
-    candidates["clinical_stage_rank"] = candidates[
-        "clinical_stage_rank"
-    ].fillna(-1).astype(int)
-    candidates["has_linked_clinical_stage"] = candidates[
-        "clinical_stage"
-    ].ne(NO_LINKED_CLINICAL_STAGE)
-    candidates["clinical_stage_query_utc"] = stage_query_times[0]
-    candidates["clinical_stage_definition"] = (
-        "maximum exact-Parkinson disease-specific stage across Open Targets drug "
-        "candidates mapped to the protein through drug mechanisms of action"
-    )
-    candidates = candidates.sort_values(
-        ["model", "clinical_stage_rank", "protein"],
-        ascending=[True, False, True],
-        kind="mergesort",
-    )
-
-    summary = (
-        candidates.groupby(
-            ["model", "model_label", "clinical_stage", "clinical_stage_rank"],
-            as_index=False,
-        )
-        .size()
-        .rename(columns={"size": "candidate_count"})
-    )
-    totals = candidates.groupby("model").size().rename("ot_supported_candidates")
-    summary = summary.merge(totals, on="model", validate="many_to_one")
-    summary["candidate_percent"] = (
-        100 * summary["candidate_count"] / summary["ot_supported_candidates"]
-    )
-    summary["cohort_definition"] = (
-        "label-excluded candidates with ensemble probability >=0.5 and a "
-        "non-literature-only Open Targets Parkinson association"
-    )
-    summary["clinical_stage_query_utc"] = stage_query_times[0]
-    summary["clinical_stage_definition"] = (
-        "maximum exact-Parkinson disease-specific stage across Open Targets drug "
-        "candidates mapped to the protein through drug mechanisms of action"
-    )
-    summary = summary.sort_values(
-        ["model", "clinical_stage_rank"],
-        ascending=[True, False],
-        kind="mergesort",
-    )
-    return candidates, summary
 
 
 def build_synaptic_completion(
@@ -326,22 +196,26 @@ def build_synaptic_completion(
             SYNAPTIC_GROUPS
         ):
             selected = ranked[ranked["protein"].isin(members)].copy()
-            if set(selected["protein"]) != set(members):
-                raise ValueError(f"Missing one or more {group} members for {model}")
-            completion = int(selected["discovery_rank"].max())
-            completion_member = selected.loc[
+            missing = set(members) - set(selected["protein"])
+            if missing:
+                print(f"{group} completion undefined for {model}: "
+                      f"members outside the label-excluded cohort: {', '.join(sorted(missing))}")
+            completion = np.nan if missing else int(selected["discovery_rank"].max())
+            completion_member = "" if missing else selected.loc[
                 selected["discovery_rank"].idxmax(), "protein"
             ]
             model_summaries[(group, model)] = {
                 "rank": completion,
                 "member": completion_member,
                 "all_selected": bool(
-                    selected["mean_probability"]
+                    not missing and selected["mean_probability"]
                     .ge(PROBABILITY_THRESHOLD)
                     .all()
                 ),
             }
             for member_order, member in enumerate(members):
+                if member in missing:
+                    continue
                 row = selected[selected["protein"].eq(member)].iloc[0]
                 member_rows.append(
                     {
@@ -460,13 +334,10 @@ def build_statistics(
 
 def main() -> None:
     ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
-    scores, membership = run_global_inference()
+    scores, membership = load_predictions()
     candidates = build_candidates(scores)
     recovery_curve, recovery_summary = build_recovery_tables(scores)
     support_rows, support_summary = build_external_support(candidates)
-    clinical_stage_rows, clinical_stage_summary = (
-        build_candidate_clinical_stages(support_rows)
-    )
     synaptic_members, synaptic_summary = build_synaptic_completion(scores)
 
     mapping = build_string_mapping(sorted(membership["protein"].unique()))
@@ -494,14 +365,11 @@ def main() -> None:
 
     outputs = {
         "parkinson_dataset_statistics.csv": statistics,
-        "parkinson_global_predictions.csv.gz": scores,
         "parkinson_candidate_set.csv": candidates,
         "parkinson_candidate_recovery_curve.csv": recovery_curve,
         "parkinson_candidate_recovery_summary.csv": recovery_summary,
         "parkinson_candidate_external_support_rows.csv": support_rows,
         "parkinson_candidate_external_support.csv": support_summary,
-        "parkinson_candidate_clinical_stage_rows.csv": clinical_stage_rows,
-        "parkinson_candidate_clinical_stage_summary.csv": clinical_stage_summary,
         "parkinson_synaptic_group_members.csv": synaptic_members,
         "parkinson_synaptic_group_completion.csv": synaptic_summary,
         "parkinson_string_mapping.csv": mapping,

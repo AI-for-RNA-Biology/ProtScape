@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 import pandas as pd
@@ -10,19 +9,6 @@ import scanpy as sc
 
 from . import utils
 from .config import HBCA_GENE_METADATA, HBCA_INTERMEDIATE, TABULA_H5AD, TABULA_METADATA
-from .ensembl_to_hgnc_converter import fetch_symbols_from_gprofiler as _fetch_symbols
-
-
-logger = logging.getLogger(__name__)
-
-
-def fetch_symbols_from_gprofiler(gene_ids) -> dict[str, str]:
-    """Query HGNC mappings, returning an empty mapping if the optional client is absent."""
-    try:
-        return _fetch_symbols(gene_ids)
-    except RuntimeError as exc:
-        logger.warning("%s", exc)
-        return {}
 
 
 def load_tabula_sapiens(
@@ -55,7 +41,7 @@ def attach_hbca_gene_symbols(
     *,
     gene_metadata_path: str | None = None,
 ) -> None:
-    """Add ``adata.var['gene_symbol']`` from local metadata or g:Profiler."""
+    """Add ``adata.var['gene_symbol']`` from local or embedded annotations."""
     if "gene_symbol" in adata.var:
         return
 
@@ -91,12 +77,9 @@ def attach_hbca_gene_symbols(
             if names_are_symbols:
                 symbols = pd.Series(names, index=adata.var_names)
             else:
-                lookup = fetch_symbols_from_gprofiler(names)
-                if not lookup:
-                    logger.warning("No HBCA gene-symbol mapping was available")
-                    return
-                symbols = pd.Series(names, index=adata.var_names).map(
-                    lambda gene_id: lookup.get(gene_id) or lookup.get(gene_id.split(".", 1)[0])
+                raise ValueError(
+                    "HBCA gene symbols are missing. Set hbca_gene_metadata to a "
+                    "matching local Ensembl-to-HGNC table or supply embedded gene symbols."
                 )
 
     adata.var["gene_symbol"] = pd.Series(symbols, index=adata.var_names).astype(str)

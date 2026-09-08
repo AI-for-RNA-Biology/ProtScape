@@ -40,8 +40,7 @@ def load_druggable_targets(path: Path) -> Set[str]:
     """Load the October 2022 approved-human DrugBank target symbols."""
     table = pd.read_csv(path)
 
-    # The release may contain the minimal one-column derivative instead of the
-    # full authenticated DrugBank export.
+    # Accept a gene-symbol table or the annotated DrugBank target export.
     if "gene_symbol" in table.columns:
         values = table["gene_symbol"]
     else:

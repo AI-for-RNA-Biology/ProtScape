@@ -88,7 +88,7 @@ MODEL_LABELS = {
     "lr_esm": "ESM2",
     "lr_prostt5": "ProstT5",
     "pinnacle_random": "Pinnacle",
-    "pinnacle_esm": "Pinnacle-ESM2 (GAT)",
+    "pinnacle_esm": "Pinnacle-ESM2 (GATv2)",
     "pinnacle_acm": "Pinnacle-ESM2 (ACM)",
     "gae_bce": "ProtScape-GAE",
     "s2gae_bce_uni": "ProtScape",
@@ -390,7 +390,7 @@ def plot_per_complex_drivers_factored(
         clean_axes(rho_ax)
         place_bar_y_axis_at_zero(rho_ax)
         rho_ax.tick_params(axis="y", labelleft=False)
-        rho_ax.set_xlabel(r"$\rho$ (metric, AUPRC)", fontsize=AXIS_LABEL_SIZE)
+        rho_ax.set_xlabel(r"$100\rho$" + "\n(metric, AUPRC)", fontsize=AXIS_LABEL_SIZE)
 
     fig.subplots_adjust(left=0.15, right=0.975, bottom=0.11, top=0.96)
     save_figure(
@@ -551,7 +551,7 @@ def plot_xmil_summary_factored(
         clean_axes(rho_ax)
         place_bar_y_axis_at_zero(rho_ax)
         rho_ax.tick_params(axis="y", labelleft=False)
-        rho_ax.set_xlabel(r"$\rho$ (metric, AUPRC)", fontsize=AXIS_LABEL_SIZE)
+        rho_ax.set_xlabel(r"$100\rho$" + "\n(coverage, relevance)", fontsize=AXIS_LABEL_SIZE)
 
     fig.subplots_adjust(left=0.15, right=0.975, bottom=0.11, top=0.96)
     save_figure(

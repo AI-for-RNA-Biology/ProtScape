@@ -50,7 +50,6 @@ def compute_reliable_genes_bulk(
     *,
     quantile: float = 0.99,
     min_fraction: float = 0.7,
-    fallback_threshold: float = 0.5,
     context: str | None = None,
     qc_dir: Path | None = None,
 ) -> tuple[list[str], dict[str, float]]:
@@ -64,7 +63,6 @@ def compute_reliable_genes_bulk(
         quantile=quantile,
         min_fraction=min_fraction,
         log_matrix=log_values,
-        fallback_threshold=fallback_threshold,
     )
 
     if context is not None and qc_dir is not None:

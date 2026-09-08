@@ -80,13 +80,14 @@ def curve_table(robust: pd.DataFrame, order, metric, *, chance=False) -> pd.Data
     return table
 
 
-def full_metrics_table(robust: pd.DataFrame, cci: dict) -> pd.DataFrame:
+def full_metrics_table(robust: pd.DataFrame, cci: dict, metagraph: dict) -> pd.DataFrame:
     """Build the complete balanced PPI/CCI metrics table."""
     by_model = robust.set_index(["model_key", "k_negatives"])
     rows = []
     for key in TABLE2_MODEL_ORDER:
         ppi = by_model.loc[(key, 1)]
         cci_metrics = cci[key]
+        higher_level = metagraph[key]
         is_pinnacle = MODELS[key]["kind"] == "pinnacle"
         rows.append(
             {
@@ -119,6 +120,16 @@ def full_metrics_table(robust: pd.DataFrame, cci: dict) -> pd.DataFrame:
                     else "held_out_1to1_train_only_message_passing"
                 ),
                 "cci_scope": "cell_cell",
+                "higher_level_auprc": higher_level["ap"],
+                "higher_level_f1": higher_level["f1"],
+                "higher_level_f1_averaging": "macro",
+                "higher_level_accuracy": higher_level["acc"],
+                "higher_level_auroc": higher_level["roc"],
+                "higher_level_scope": "full_metagraph" if is_pinnacle else "cell_cell",
+                "higher_level_protocol": (
+                    "in_sample_reconstruction" if is_pinnacle
+                    else "held_out_1to1_train_only_message_passing"
+                ),
             }
         )
     return pd.DataFrame(rows)
@@ -207,6 +218,6 @@ def build_output_tables(robust, metagraph, cci, parameters, contextwise):
         "contextwise_ppi_auprc.csv": contextwise[contextwise["metric"] == "ap"],
         "contextwise_ppi_f1.csv": contextwise[contextwise["metric"] == "f1"],
         "pooling_sensitivity.csv": pd.DataFrame(pooling_rows),
-        "pretraining_full_metrics.csv": full_metrics_table(robust, cci),
+        "pretraining_full_metrics.csv": full_metrics_table(robust, cci, metagraph),
     }
     return outputs

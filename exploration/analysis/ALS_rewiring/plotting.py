@@ -187,20 +187,7 @@ def plot_giant_simple(giant: nx.Graph, module_of: dict, mod_palette: dict, layou
 
 
 def _canonical_module_subgraph(giant: nx.Graph, module_of: dict, module_id: int) -> nx.Graph:
-    """Induced subgraph on `module_id`'s nodes, rebuilt fresh with a
-    canonical (hash-seed-independent) node/edge order, instead of
-    `giant.subgraph(nodes)` - that view's OWN `.nodes()`/`.edges()`
-    iteration goes through an internal set-based filter whose order depends
-    on PYTHONHASHSEED (randomized per process by default), so two separate
-    process launches computing `nx.spring_layout` on the same view at the
-    SAME seed can still get different, non-comparable layouts (verified
-    directly: same giant.pickle, same module_of file, same seed, different
-    process -> different node order -> different layout). Filtering
-    `giant.nodes()`/`giant.edges()` directly instead - `giant`'s own
-    iteration order is fixed at pickle time and stable across processes -
-    and rebuilding a plain `nx.Graph` from that gives a `spring_layout` that
-    reproduces identically no matter which script/process calls it. Same
-    fix `clustering.build_igraph` applies for Leiden's own vertex order."""
+    """Build the module subgraph in stored node/edge order for seeded layouts."""
     node_set = {n for n, m in module_of.items() if m == module_id}
     sub_g = nx.Graph()
     sub_g.add_nodes_from(n for n in giant.nodes() if n in node_set)
@@ -825,9 +812,7 @@ def save_fe_significance_csv(enrichment_vcp_ct: pd.DataFrame, day: str, out_path
 
 
 def plot_fraction_module_oi(enrichment_vcp_ct: pd.DataFrame, mod_palette: dict, module_id: int, ax=None) -> None:
-    """`PlotFractionModuleOI()` in the R script - % of edges per condition for one
-    module. The R version's bar labels don't match its bar order for the last
-    two bars (a mislabeling, not intentional), so that's not reproduced here."""
+    """Plot the percentage of edges per condition for one module."""
     ax = ax or plt.gca()
     row = enrichment_vcp_ct.set_index("module").loc[module_id]
     labels = ["ct_d22", "vcp_22", "ct_35", "vcp_35"]

@@ -42,9 +42,6 @@ SOURCE_STYLE = {
     "savefig.transparent": True,
 }
 
-matplotlib.rcParams.update(SOURCE_STYLE)
-
-
 MODEL_ORDER = [
     "pinnacle_random",
     "pinnacle_esm2_acm",
@@ -54,8 +51,8 @@ MODEL_ORDER = [
 ]
 MODEL_LABELS = {
     "pinnacle_random": "Pinnacle",
-    "pinnacle_esm2_acm": "Pinnacle-ESM (ACM)",
-    "pinnacle_esm2": "Pinnacle-ESM (GAT)",
+    "pinnacle_esm2_acm": "Pinnacle-ESM2 (ACM)",
+    "pinnacle_esm2": "Pinnacle-ESM2 (GATv2)",
     "gae_att": "ProtScape-GAE",
     "s2gae_att_k1_uni": "ProtScape",
 }
@@ -220,6 +217,7 @@ def plot_pooling(legend_ax, ax, table):
 
 def plot_pretraining(source, output):
     """Render model-performance and pooling diagnostics."""
+    matplotlib.rcParams.update(SOURCE_STYLE)
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     auprc = pd.read_csv(source / "contextwise_ppi_auprc.csv")

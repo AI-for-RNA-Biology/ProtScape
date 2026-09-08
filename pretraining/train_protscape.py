@@ -551,7 +551,7 @@ def main(
         print("Optimization finished!")
 
     else:
-        print('Skipping training as per user request.')
+        print('Training disabled.')
 
     portable_source = primary_model_path
     if not os.path.exists(portable_source):

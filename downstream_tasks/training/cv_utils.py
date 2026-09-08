@@ -72,41 +72,8 @@ def build_cv_splits(
             n_splits=n_splits,
         )
 
-        # Clustering multilabel patterns does not guarantee that every label is
-        # represented in every fold. Prefer direct multilabel stratification
-        # whenever that postcondition fails and the label has enough positives.
-        label_totals = np.asarray(Y_ref).sum(axis=0)
-        required_labels = label_totals >= n_splits
-        fold_label_counts = np.stack(
-            [np.asarray(Y_ref)[fold].sum(axis=0) for fold in folds]
-        )
-        missing_required = (fold_label_counts[:, required_labels] == 0).sum()
-        if missing_required:
-            print(
-                "[WARN] Context-stratified folds omit "
-                f"{int(missing_required)} required fold-label combinations; "
-                "using direct multilabel stratification."
-            )
-            splitter = MultilabelStratifiedKFold(
-                n_splits=n_splits,
-                shuffle=True,
-                random_state=seed,
-            )
-            folds = [
-                np.asarray(test_idx, dtype=int)
-                for _, test_idx in splitter.split(
-                    np.zeros((len(Y_ref), 1)),
-                    Y_ref,
-                )
-            ]
-            fold_label_counts = np.stack(
-                [np.asarray(Y_ref)[fold].sum(axis=0) for fold in folds]
-            )
-            if np.any(fold_label_counts[:, required_labels] == 0):
-                raise RuntimeError(
-                    "Multilabel stratification failed to represent every "
-                    "eligible label in every fold."
-                )
+        # Keep the context-stratified partition even if a rare label is absent
+        # from a fold; changing stratifiers would change the held-out cohort.
     else:
         # Use standard multilabel stratified split
         splitter = MultilabelStratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)

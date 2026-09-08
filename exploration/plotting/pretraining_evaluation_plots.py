@@ -33,8 +33,8 @@ CORE_MODEL_ORDER = [
 ]
 MODEL_LABELS = {
     "pinnacle_random": "Pinnacle",
-    "pinnacle_esm2_acm": "Pinnacle-ESM (ACM)",
-    "pinnacle_esm2": "Pinnacle-ESM (GAT)",
+    "pinnacle_esm2_acm": "Pinnacle-ESM2 (ACM)",
+    "pinnacle_esm2": "Pinnacle-ESM2 (GATv2)",
     "gae_att": "ProtScape-GAE",
     "s2gae_att_k1_uni": "ProtScape",
 }
@@ -223,7 +223,7 @@ def plot_core_model_legend(output: Path) -> None:
     save_pretraining_figure(fig, output, "core_model_legend")
 
 
-def plot_metagraph_barplot(table: pd.DataFrame, output: Path, stem: str) -> None:
+def plot_metagraph_barplot(table: pd.DataFrame, output: Path, stem: str, metric: str = "AUPRC") -> None:
     rows = table.set_index("model_key").reindex(CORE_MODEL_ORDER)
     values = rows["metagraph_percent"].to_numpy(dtype=float)
     x = np.arange(len(rows))
@@ -240,7 +240,7 @@ def plot_metagraph_barplot(table: pd.DataFrame, output: Path, stem: str) -> None
     ax.set_xticks(x)
     ax.set_xticklabels([""] * len(rows))
     ax.set_xlabel("Models")
-    ax.set_ylabel("Metagraph AUPRC")
+    ax.set_ylabel(f"Higher-level {metric} (%)")
     y_min = max(0, float(values.min()) - 5)
     y_max = min(100, float(values.max()) + 5)
     ax.set_ylim(y_min, y_max)
@@ -340,7 +340,8 @@ def plot_pretraining(source: str | Path, output: str | Path) -> None:
     panel_a_auprc = read_table(source, "robust_ppi_auprc.csv")
     panel_a_f1 = read_table(source, "robust_ppi_f1.csv")
     panel_b = read_table(source, "metagraph_auprc.csv")
-    metagraph_metrics = read_table(source, "metagraph_metrics.csv")
+    panel_b_f1 = read_table(source, "pretraining_full_metrics.csv")
+    panel_b_f1["metagraph_percent"] = 100 * panel_b_f1["higher_level_f1"]
     panel_c = read_table(source, "parameter_counts.csv")
     panel_d_auprc = read_table(source, "loss_sensitivity_auprc.csv")
     panel_d_f1 = read_table(source, "loss_sensitivity_f1.csv")
@@ -369,11 +370,7 @@ def plot_pretraining(source: str | Path, output: str | Path) -> None:
         plot_core_model_legend(output)
 
         plot_metagraph_barplot(panel_b, output, "metagraph_barplot_auprc")
-        plot_metagraph_metric_scatter(
-            metagraph_metrics,
-            output,
-            "core_metagraph_f1_vs_ap",
-        )
+        plot_metagraph_barplot(panel_b_f1, output, "metagraph_barplot_f1", metric="macro-F1")
         plot_parameter_counts(panel_c, output, "core_parameter_counts")
 
         plot_curve(

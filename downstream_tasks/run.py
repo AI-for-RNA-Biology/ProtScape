@@ -3,16 +3,15 @@
 import argparse
 import sys
 from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import List
 
 import numpy as np
 import torch
 
 from .config import DEFAULT_OUTPUT_ROOT, get_hc_embedding_paths, load_config
-from .data.loaders import EmbeddingLoader, load_pinnacle_paper_gene_universe
-from .data.task_loaders import get_task_loader
+from .data.loaders import EmbeddingLoader
+from .data.partitions import load_training_partition
 from .models.registry import MODEL_VARIANTS, parse_model_argument
-from .training.cv_utils import SplitPlan, build_cv_splits
 from .training.trainer import Trainer
 from .utils.io_utils import save_results_csv, save_task_results, setup_output_dirs
 
@@ -77,7 +76,7 @@ def parse_args():
         "--embedding-inference-model",
         default=None,
         help=(
-            "Optional frozen embedding snapshot. The --inference-model value remains "
+            "Optional embedding directory. The --inference-model value remains "
             "the downstream run identifier and output folder name."
         ),
     )
@@ -105,7 +104,7 @@ def parse_args():
         "--task-csv",
         type=Path,
         default=None,
-        help="Optional label CSV override for a versioned or corrected task snapshot.",
+        help="Label CSV with prepared partitions beside it; use configs/paths.yaml for analysis inputs.",
     )
     parser.add_argument("--model")
     parser.add_argument("--embedding-source", default="esm", choices=["esm", "prostt5"])
@@ -151,48 +150,6 @@ def list_models():
     print("\nAvailable model variants:\n")
     for key, variant in MODEL_VARIANTS.items():
         print(f"  {key:40s} {variant.name}")
-
-
-def _build_shared_split(
-    genes: List[str],
-    Y: np.ndarray,
-    embedding_loader: EmbeddingLoader,
-    seed: int,
-    n_splits: int,
-    gene_universe: Optional[Set[str]] = None,
-    gene_universe_name: str = "gene universe",
-) -> Tuple[List[str], np.ndarray, SplitPlan]:
-    genes_upper = [g.upper() for g in genes]
-    task_gene_set = set(genes_upper)
-
-    seq_genes = set(embedding_loader.load_esm().keys())
-    hc_means, hc_cells = embedding_loader.load_hc_mean(task_gene_set)
-    shared_genes_set = task_gene_set & seq_genes & set(hc_means.keys())
-    universe_parts = ["task", "seq", "HC"]
-    if gene_universe is not None:
-        shared_genes_set &= {g.upper() for g in gene_universe}
-        universe_parts.append(gene_universe_name)
-
-    keep_idx = [i for i, g in enumerate(genes_upper) if g in shared_genes_set]
-    if len(keep_idx) < n_splits:
-        raise ValueError(
-            f"Shared intersection has too few genes ({len(keep_idx)}) for {n_splits}-fold CV."
-        )
-
-    shared_genes = [genes_upper[i] for i in keep_idx]
-    Y_shared = Y[keep_idx]
-    shared_cell_ids = [hc_cells.get(g, ["unknown"]) for g in shared_genes]
-    split_plan = build_cv_splits(
-        Y_shared,
-        cell_ids_per_bag=shared_cell_ids,
-        use_context_split=True,
-        k_label=None,
-        n_splits=n_splits,
-        seed=seed,
-    )
-    universe_label = " ∩ ".join(universe_parts)
-    print(f"[INFO] Shared intersection ({universe_label}): {len(shared_genes)}/{len(genes)} genes")
-    return shared_genes, Y_shared, split_plan
 
 
 def main():
@@ -307,9 +264,6 @@ def main():
         print(f"[ERROR] Label CSV not found: {task_csv}")
         return 1
 
-    task_loader = get_task_loader(args.task, task_csv)
-    genes, Y, class_names = task_loader.load()
-
     embedding_loader = EmbeddingLoader(
         esm_path=config.embeddings.esm,
         hc_protein_path=hc_paths["protein_embed"],
@@ -318,27 +272,9 @@ def main():
         hc_cell_labels_path=hc_cell_labels_path,
     )
 
-    legacy_gene_universe = None
-    if config.dataset_mode == "legacy":
-        if not config.embeddings.pinnacle_paper_labels.exists():
-            print(
-                "[ERROR] PINNACLE labels not found: "
-                f"{config.embeddings.pinnacle_paper_labels}"
-            )
-            return 1
-        legacy_gene_universe = load_pinnacle_paper_gene_universe(
-            config.embeddings.pinnacle_paper_labels
-        )
-        print(f"[INFO] Legacy gene universe (pinnacle_paper): {len(legacy_gene_universe)} genes")
-
-    shared_genes, Y_shared, shared_split_plan = _build_shared_split(
-        genes=genes,
-        Y=Y,
-        embedding_loader=embedding_loader,
-        seed=config.seed,
-        n_splits=config.n_folds,
-        gene_universe=legacy_gene_universe,
-        gene_universe_name="pinnacle_paper",
+    shared_genes, Y_shared, class_names, shared_split_plan = load_training_partition(
+        args.task, task_csv, embedding_loader, config.seed, config.n_folds,
+        config.dataset_mode,
     )
     embedding_loader.clear_cache()
 
@@ -374,12 +310,48 @@ def main():
         )
         split_arrays = {
             "genes": np.asarray(shared_genes, dtype=str),
+            "labels": Y_shared,
+            "class_names": np.asarray(class_names, dtype=str),
             **{
                 f"fold_{fold}": np.asarray(indices, dtype=np.int64)
                 for fold, indices in enumerate(shared_split_plan.folds)
             },
         }
-        np.savez_compressed(output_dir / "split_indices.npz", **split_arrays)
+        # Never relabel an existing checkpoint with a different partition.
+        saved_split = output_dir / "split_indices.npz"
+        if any((output_dir / "models").glob("*.pt")) and not any(
+            (output_dir / name).is_file()
+            for name in ("split_indices.npz", "test_predictions.npz", "test_idx.npy")
+        ):
+            raise ValueError(f"Existing checkpoints have no partition metadata: {output_dir}")
+        if saved_split.exists():
+            with np.load(saved_split, allow_pickle=False) as previous:
+                if any((key not in previous and key not in {"labels", "class_names"})
+                       or (key in previous and not np.array_equal(value, previous[key]))
+                       for key, value in split_arrays.items()):
+                    raise ValueError(
+                        f"Existing run uses different partitions: {output_dir}. "
+                        "Use a new output-model-key for retraining; do not overwrite its split."
+                    )
+        predictions = output_dir / "test_predictions.npz"
+        if predictions.exists():
+            with np.load(predictions, allow_pickle=False) as previous:
+                if not np.array_equal(previous["test_idx"], split_arrays["fold_0"]):
+                    raise ValueError(f"Existing predictions use a different test set: {output_dir}")
+                if "y_true" in previous and not np.array_equal(
+                    previous["y_true"], Y_shared[split_arrays["fold_0"]]
+                ):
+                    raise ValueError(f"Existing predictions use different test labels: {output_dir}")
+                if "class_names" in previous and not np.array_equal(
+                    previous["class_names"].astype(str), np.asarray(class_names, dtype=str)
+                ):
+                    raise ValueError(f"Existing predictions use a different class order: {output_dir}")
+        saved_test = output_dir / "test_idx.npy"
+        if saved_test.exists() and not np.array_equal(
+            np.load(saved_test, allow_pickle=False), split_arrays["fold_0"]
+        ):
+            raise ValueError(f"Existing checkpoint uses a different test set: {output_dir}")
+        np.savez_compressed(saved_split, **split_arrays)
         np.save(
             output_dir / "test_idx.npy",
             np.asarray(

@@ -268,10 +268,7 @@ def main():
             if cell_memory is not None:
                 cells = cell_memory(cells)
 
-            # This is the pooled cell representation before CCI refinement.
-            # Historically it was exported under the misleading name
-            # ``cell_embeddings_before_pool.pt`` even though pooling had already
-            # happened.
+            # Pooled cell representations before CCI refinement.
             pre_cci_cells = cells.detach().cpu()
 
             if model.use_metagraph:

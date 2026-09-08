@@ -76,7 +76,7 @@ N_JOBS = max(1, int(os.environ.get("PIPELINE_THREADS", DEFAULT_THREADS)))
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Step 2b: robust z-score + REG ranking with PPI expansion."
+        description="Step 2b: rank reliably expressed genes by context enrichment and select PPI size."
     )
     parser.add_argument(
         "--dataset",
@@ -341,9 +341,11 @@ def _collapse_expression(
 
 def _compute_robust_z(expr_gc: np.ndarray) -> np.ndarray:
     """expr_gc = genes × cells."""
-    n_genes, n_cells = expr_gc.shape
-    if n_cells == 0:
-        return np.zeros_like(expr_gc)
+    n_cells = expr_gc.shape[1]
+    if n_cells < 2:
+        raise ValueError("One-versus-rest enrichment requires at least two contexts.")
+    if not np.isfinite(expr_gc).all():
+        raise ValueError("Context expression values must be finite.")
 
     def _z_for_cell(j: int) -> np.ndarray:
         others = np.delete(expr_gc, j, axis=1)
@@ -351,69 +353,34 @@ def _compute_robust_z(expr_gc: np.ndarray) -> np.ndarray:
         mad = MAD_SCALE * np.median(np.abs(others - median[:, None]), axis=1)
         return (expr_gc[:, j] - median) / (mad + EPS)
 
-    if n_cells > 1:
-        n_jobs = min(n_cells, N_JOBS)
-        columns = Parallel(n_jobs=n_jobs, backend="threading")(
-            delayed(_z_for_cell)(j) for j in range(n_cells)
-        )
-        return np.column_stack(columns)
-
-    z = np.zeros_like(expr_gc)
-    for j in range(n_cells):
-        z[:, j] = _z_for_cell(j)
-    return z
+    n_jobs = min(n_cells, N_JOBS)
+    columns = Parallel(n_jobs=n_jobs, backend="threading")(
+        delayed(_z_for_cell)(j) for j in range(n_cells)
+    )
+    return np.column_stack(columns)
 
 
-def _build_reg_z(
+def _rank_reliable_genes(
+    z_rob: np.ndarray,
     gene_names: Sequence[str],
     cell_types: Sequence[str],
     reg_sets: Dict[str, List[str]],
-) -> np.ndarray:
+) -> Dict[str, np.ndarray]:
+    """Rank each context's REGs by enrichment, breaking exact ties by gene ID."""
+    gene_names = np.asarray(gene_names)
     gene_to_idx = {gene: idx for idx, gene in enumerate(gene_names)}
-    matrix = np.zeros((len(gene_names), len(cell_types)), dtype=float)
+    score_order = {}
     for c_idx, cell in enumerate(cell_types):
-        genes = reg_sets.get(cell, [])
-        for gene in genes:
-            idx = gene_to_idx.get(gene)
-            if idx is not None:
-                matrix[idx, c_idx] = 1.0
-    with np.errstate(divide="ignore", invalid="ignore"):
-        mean = matrix.mean(axis=0, keepdims=True)
-        std = matrix.std(axis=0, ddof=0, keepdims=True)
-        z = np.zeros_like(matrix)
-        mask = std > 0
-        if np.any(mask):
-            z[:, mask[0]] = (matrix[:, mask[0]] - mean[:, mask[0]]) / (std[:, mask[0]] + EPS)
-    return z
-
-
-def _descending_rank(values: np.ndarray) -> np.ndarray:
-    order = np.argsort(-values, kind="mergesort")
-    ranks = np.empty_like(order, dtype=float)
-    ranks[order] = np.arange(1, len(values) + 1)
-    return ranks
-
-
-def _rank_aggregate(z_rob: np.ndarray, reg_z: np.ndarray) -> np.ndarray:
-    scores = np.zeros_like(z_rob)
-    n_cells = z_rob.shape[1]
-
-    def _aggregate_for_cell(j: int) -> np.ndarray:
-        components = [_descending_rank(z_rob[:, j])]
-        if np.any(reg_z[:, j]):
-            components.append(_descending_rank(reg_z[:, j]))
-        return np.mean(components, axis=0)
-
-    if n_cells > 1:
-        n_jobs = min(n_cells, N_JOBS)
-        columns = Parallel(n_jobs=n_jobs, backend="threading")(
-            delayed(_aggregate_for_cell)(j) for j in range(n_cells)
+        genes = reg_sets.get(cell, reg_sets.get("default"))
+        if genes is None:
+            raise KeyError(f"Missing reliably expressed genes for context '{cell}'.")
+        allowed = np.array(
+            sorted({gene_to_idx[g] for g in genes if g in gene_to_idx}), dtype=int
         )
-        return np.column_stack(columns)
+        order = np.lexsort((gene_names[allowed], -z_rob[allowed, c_idx]))
+        score_order[cell] = allowed[order]
+    return score_order
 
-    for j in range(n_cells):
-        scores[:, j] = _aggregate_for_cell(j)
-    return scores
 
 def _build_k_grid(max_genes: int, override: Optional[str]) -> List[int]:
     if override:
@@ -548,9 +515,7 @@ def _compute_global_hubs(ppi: nx.Graph, percentile: float = 95.0) -> set[str]:
 
 def _build_gene_sets_for_k(
     score_order: Dict[str, np.ndarray],
-    scores: np.ndarray,
     z_rob: np.ndarray,
-    reg_z: np.ndarray,
     gene_names: np.ndarray,
     ppi_gene_names: np.ndarray,
     cell_types: np.ndarray,
@@ -602,9 +567,7 @@ def _build_gene_sets_for_k(
                     "cell_type": cell,
                     "gene": gene_names[idx],
                     "rank": rank,
-                    "score": float(scores[idx, c_idx]),
                     "z_robust": float(z_rob[idx, c_idx]),
-                    "reg_z": float(reg_z[idx, c_idx]),
                 }
             )
 
@@ -687,10 +650,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     symbol_mapping: Dict[str, str] = {}
     if dataset_key == "hbca":
         metadata_path = HBCA_GENE_METADATA if os.path.exists(HBCA_GENE_METADATA) else None
-        try:
-            symbol_mapping = map_genes(adata, metadata_path)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to map HBCA genes to HGNC symbols (%s). Falling back to var columns.", exc)
+        symbol_mapping = map_genes(adata, metadata_path)
 
     union_genes = sorted({gene for genes in reliable.values() for gene in genes})
     if not union_genes:
@@ -740,36 +700,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     logger.info("Computing robust one-vs-rest z-scores for %d contexts...", len(unique_cells))
     z_rob = _compute_robust_z(expr_gc)
     logger.info("Robust z computation complete.")
-    reg_z = _build_reg_z(gene_names, unique_cells, reliable)
-    logger.info("Aggregating ranks with REG evidence...")
-    scores = _rank_aggregate(z_rob, reg_z)
-    logger.info("Rank aggregation complete.")
+    logger.info("Ranking reliably expressed genes by decreasing enrichment...")
     gene_names_arr = np.asarray(gene_names)
-    gene_to_pos = {gene: idx for idx, gene in enumerate(gene_names_arr)}
-    default_reg = reliable.get("default")
-    if default_reg:
-        default_idx = np.array([gene_to_pos[g] for g in default_reg if g in gene_to_pos], dtype=int)
-    else:
-        default_idx = np.arange(len(gene_names_arr), dtype=int)
-
-    reg_idx_by_cell: Dict[str, np.ndarray] = {}
-    for cell in unique_cells:
-        genes_for_cell = reliable.get(cell)
-        if genes_for_cell:
-            idxs = [gene_to_pos[g] for g in genes_for_cell if g in gene_to_pos]
-            reg_idx_by_cell[cell] = np.asarray(idxs, dtype=int)
-        else:
-            reg_idx_by_cell[cell] = default_idx
-
-    score_order: Dict[str, np.ndarray] = {}
-    for idx, cell in enumerate(unique_cells):
-        allowed = reg_idx_by_cell.get(cell)
-        if allowed is not None and allowed.size:
-            unique_allowed = np.unique(allowed)
-            order = unique_allowed[np.argsort(scores[unique_allowed, idx], kind="mergesort")]
-        else:
-            order = np.argsort(scores[:, idx], kind="mergesort")
-        score_order[cell] = order
+    score_order = _rank_reliable_genes(z_rob, gene_names_arr, unique_cells, reliable)
 
     global_ppi = _load_global_ppi(args.global_ppi)
     k_grid = _build_k_grid(len(gene_names_arr), args.k_grid)
@@ -839,9 +772,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     ppi_gene_names_arr = np.asarray(ppi_gene_names)
     gene_sets, summary_rows, score_records = _build_gene_sets_for_k(
         score_order,
-        scores,
         z_rob,
-        reg_z,
         gene_names_arr,
         ppi_gene_names_arr,
         unique_cells,

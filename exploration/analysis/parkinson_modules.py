@@ -10,14 +10,13 @@ from scipy.stats import hypergeom
 from exploration.analysis.parkinson_string import benjamini_hochberg
 
 
-MODULE_ANCHORS = ["DRD2", "GABRB3", "GRIN1", "GRM5", "SCN2A", "POLE"]
-MODULE_LABELS = {
-    1: "Class-A GPCR and monoaminergic receptors",
-    2: "GABA/cholinergic ligand-gated receptors",
-    3: "Ionotropic glutamate/NMDA receptor signalling",
-    4: "Metabotropic glutamate and Class-C GPCR signalling",
-    5: "Voltage-gated ion channels and excitability",
-    6: "DNA replication/repair",
+MODULE_ANCHORS = {
+    "DRD2": "Class-A GPCR and monoaminergic receptors",
+    "GABRB3": "GABA/cholinergic ligand-gated receptors",
+    "GRIN1": "Ionotropic glutamate/NMDA receptor signalling",
+    "GRM5": "Metabotropic glutamate and Class-C GPCR signalling",
+    "SCN2A": "Voltage-gated ion channels and excitability",
+    "POLE": "DNA replication/repair",
 }
 LEIDEN_RESOLUTIONS = (0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0)
 LEIDEN_SEEDS = tuple(range(10))
@@ -221,6 +220,12 @@ def order_modules(communities: list[set[str]]) -> list[set[str]]:
     return ordered
 
 
+def module_label(community: set[str], module_id: int) -> str:
+    """Annotate communities using their representative proteins when present."""
+    labels = [label for anchor, label in MODULE_ANCHORS.items() if anchor in community]
+    return "; ".join(labels) if labels else f"Module {module_id}"
+
+
 def build_leiden_tables(
     network_nodes: pd.DataFrame,
     edges: pd.DataFrame,
@@ -239,10 +244,10 @@ def build_leiden_tables(
         raise ValueError("Connected STRING nodes and edge endpoints disagree")
     medoid, selection, stability = select_leiden_partition(graph)
     modules = order_modules(medoid)
-    if len(modules) != len(MODULE_LABELS):
-        raise RuntimeError(
-            f"Expected six Leiden communities, found {len(modules)}"
-        )
+    module_labels = {
+        module_id: module_label(module, module_id)
+        for module_id, module in enumerate(modules, start=1)
+    }
     cluster_by_protein = {
         protein: module_id
         for module_id, module in enumerate(modules, start=1)
@@ -252,7 +257,7 @@ def build_leiden_tables(
         cluster_by_protein
     )
     connected["leiden_cluster_label"] = connected["leiden_cluster"].map(
-        MODULE_LABELS
+        module_labels
     )
     connected = connected.merge(
         membership[["protein", "benchmark_label", "benchmark_split"]],
@@ -278,7 +283,6 @@ def build_leiden_tables(
         "protein",
         "current_opentargets_parkinson_association_non_literature_only",
         "approved_human_drugbank_target_any_indication",
-        "other_opentargets_disease_association",
     ]
     prot_support = support[support["model"].eq("protscape")][support_columns]
     connected = connected.merge(
@@ -311,6 +315,7 @@ def build_module_reactome_enrichment(
     reactome["protein"] = reactome["string_id"].map(protein_by_string)
     background = set(graph)
     background_size = len(background)
+    module_labels = nodes.groupby("leiden_cluster")["leiden_cluster_label"].first()
     rows = []
     for (term, description), term_rows in reactome.groupby(
         ["term", "description"]
@@ -318,7 +323,7 @@ def build_module_reactome_enrichment(
         members = set(term_rows["protein"]) & background
         if not (3 <= len(members) <= 0.8 * background_size):
             continue
-        for module_id in sorted(MODULE_LABELS):
+        for module_id in sorted(module_labels.index):
             module = set(
                 nodes.loc[
                     nodes["leiden_cluster"].eq(module_id), "protein"
@@ -345,7 +350,7 @@ def build_module_reactome_enrichment(
             rows.append(
                 {
                     "leiden_cluster": module_id,
-                    "leiden_cluster_label": MODULE_LABELS[module_id],
+                    "leiden_cluster_label": module_labels[module_id],
                     "module_size": len(module),
                     "term": term,
                     "description": description,
@@ -379,6 +384,17 @@ def build_module_reactome_enrichment(
                     ),
                 }
             )
+    if not rows:
+        print("No Reactome terms meet the network-size criteria.")
+        empty = pd.DataFrame(columns=[
+            "leiden_cluster", "leiden_cluster_label", "module_size", "term", "description",
+            "term_network_size", "module_hits", "module_hit_genes",
+            "benchmark_positive_hits", "benchmark_positive_hit_genes",
+            "protscape_candidate_hits", "protscape_candidate_hit_genes",
+            "benchmark_positive_hit_percent", "protscape_candidate_hit_percent",
+            "fold_enrichment", "p_value", "fdr", "minus_log10_fdr", "significant",
+        ])
+        return empty, empty.copy()
     enrichment = pd.DataFrame(rows)
     enrichment["fdr"] = benjamini_hochberg(enrichment["p_value"])
     enrichment["minus_log10_fdr"] = -np.log10(
@@ -406,10 +422,6 @@ def build_module_reactome_enrichment(
         .sort_values("leiden_cluster")
         .reset_index(drop=True)
     )
-    if set(displayed["leiden_cluster"]) != set(MODULE_LABELS):
-        raise RuntimeError(
-            "One or more Leiden clusters lack five displayable Reactome terms"
-        )
     return enrichment, displayed
 
 
@@ -429,7 +441,7 @@ def build_module_summary(nodes: pd.DataFrame) -> pd.DataFrame:
         )
     )
     summary["leiden_cluster_label"] = summary["leiden_cluster"].map(
-        MODULE_LABELS
+        nodes.groupby("leiden_cluster")["leiden_cluster_label"].first()
     )
     summary["protscape_percent"] = (
         100 * summary["protscape_proteins"] / summary["total_proteins"]

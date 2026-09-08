@@ -355,7 +355,7 @@ def main(
         torch.save(mg_metapaths_val, os.path.join(cfg.save_prefix, "mg_metapaths_val.pth"))
 
     else:
-        print('Skipping training as per user request.')
+        print('Training disabled.')
 
     if os.path.exists(save_best_model):
         id_to_name = {cell_id: name for name, cell_id in celltype_map.items()}

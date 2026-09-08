@@ -13,20 +13,14 @@ from exploration.plotting.fonts import register_arial
 register_arial()
 matplotlib.rcParams["pdf.fonttype"] = 42
 matplotlib.rcParams["ps.fonttype"] = 42
-matplotlib.rcParams.update(
-    {
-        "font.family": "Arial",
-        "font.sans-serif": ["Arial"],
-        "mathtext.fontset": "custom",
-        "mathtext.rm": "Arial",
-        "mathtext.it": "Arial:italic",
-        "mathtext.bf": "Arial:bold",
-        "mathtext.cal": "Arial:italic",
-        "mathtext.sf": "Arial",
-        "mathtext.tt": "Arial",
-        "axes.linewidth": 0.8,
-    }
-)
+PLOT_RC = {
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Arial", "Nimbus Sans", "DejaVu Sans"],
+    "mathtext.fontset": "dejavusans",
+    "axes.linewidth": 0.8,
+}
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -442,7 +436,7 @@ def plot_context_tissue_histogram(data, output):
     ax.set_title("", fontsize=8)
     style_axes(ax, grid_axis=None, labelsize=5)
     mean_value = values.mean()
-    ax.axhline(
+    ax.axvline(
         mean_value,
         color=BAR_EDGE,
         linestyle="--",
@@ -455,6 +449,7 @@ def plot_context_tissue_histogram(data, output):
 
 def plot_all(source: str | Path, output: str | Path) -> None:
     """Render all processed-network statistics plots."""
+    matplotlib.rcParams.update(PLOT_RC)
     source = Path(source)
     output = Path(output)
     if not source.exists():

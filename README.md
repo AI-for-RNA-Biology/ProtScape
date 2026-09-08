@@ -1,8 +1,8 @@
 # ProtScape: Resolving context-specific protein-protein interactomes for biological discovery and therapeutic target prioritisation
 
-**Authors:** Alois Thomas, Lisa Fournier, Vincent Jung, Pascal Frossard, Rickie Patani, Raphaëlle Luisier and Cédric Vincent-Cuaz<br>
+**Authors:** Alois Thomas, Lisa Fournier, Vincent Jung, Rickie Patani, Pascal Frossard, Raphaëlle Luisier and Cédric Vincent-Cuaz<br>
 **Correspondence:** [Cédric Vincent-Cuaz](mailto:cedric.vincent-cuaz@unibe.ch)<br>
-**Paper:** preprint forthcoming · **Data and pretrained models:** companion release prepared; public link forthcoming
+**Data and pretrained models:** [Zenodo](https://zenodo.org/records/22645081)
 
 [![Overview of ProtScape](assets/protscape_overview.png)](assets/protscape_overview.pdf)
 
@@ -29,26 +29,25 @@ conda env create -f environment_cellphonedb.yml
 
 ## Data and configuration
 
-Set input and output paths in [`configs/paths.yaml`](configs/paths.yaml). The committed defaults expect the extracted companion archive in a sibling directory named `ProtScape_release` and write new results below `outputs/`. Edit the paths if the archive is stored elsewhere. Inputs needed only for rebuilding raw networks or labels use `data/raw/` and `data/reference_data/` placeholders.
+Download the [data release](https://zenodo.org/records/22645081) and set paths in [`configs/paths.yaml`](configs/paths.yaml). Defaults expect a sibling directory named `ProtScape_release` and write results to `outputs/`.
 
-Requirements for rebuilding the networks are documented in [`data_processing_bulk/README.md`](data_processing_bulk/README.md). The companion archive contains the exact processed networks, ESM-2 and ProstT5 protein vectors, contextual embedding exports, pretraining checkpoints, and CORUM/therapeutic-target labels used in the paper. The public archive link will be added here after deposition. After downloading it, extract its graph bundle with:
+The release includes networks, protein embeddings, pretraining checkpoints, CORUM and therapeutic-target labels and splits, and figure source tables. Downstream checkpoints cover the ProtScape and PINNACLE Parkinson ensembles. Extract the graph bundle with:
 
 ```bash
 unzip /path/to/ProtScape_release/data/networks_bulk.zip \
     -d /path/to/ProtScape_release/data
 ```
 
+Use the released inputs for the paper experiments. To rebuild datasets, follow the [network](data_processing_bulk/README.md) and [downstream](downstream_tasks/README.md) processing instructions and obtain their listed inputs.
+
 ## Usage
 
 Run commands from the repository root:
 
-```bash
-# Build the context-specific networks and metagraph
-conda activate protscape-scrna
-bash data_processing_bulk/run_pipeline.sh all
+Before training all selected downstream configurations, generate the six ablation embedding exports listed in the [inference instructions](pretraining/README.md#architecture-ablation-embeddings).
 
+```bash
 # Train the main ProtScape model
-conda activate protscape
 bash scripts/run_pretraining.sh
 
 # Generate embeddings from the released main checkpoint
@@ -59,8 +58,11 @@ python -m pretraining.inference \
 python -m downstream_tasks.run_selected corum
 python -m downstream_tasks.run_selected therapeutic_targets
 
-# Recompute analyses and their plots
-bash scripts/run_analysis.sh
+# Redraw quantitative panels from released source tables (excluding ALS rewiring)
+python -m exploration.plotting.paper_figures
+
+# Export the five result tables as numeric CSV files
+python -m exploration.plotting.paper_tables
 ```
 
 Detailed instructions:
@@ -80,7 +82,3 @@ exploration/            Analysis and plotting code
 configs/                Data paths and model configurations
 scripts/                Workflow entry points
 ```
-
-## Citation
-
-Citation information will be added with the preprint.

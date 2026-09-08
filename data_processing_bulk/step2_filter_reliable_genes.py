@@ -54,7 +54,6 @@ def parse_args():
     parser.add_argument("--min-samples", type=int)
     parser.add_argument("--quantile", type=float, help="Quantile of the GMM background component.")
     parser.add_argument("--log-offset", type=float)
-    parser.add_argument("--fallback-threshold", type=float, default=0.5)
     parser.add_argument("--qc-dir", help="Optional directory for per-cell-type histograms.")
     parser.add_argument("--output-dir", help="Override the dataset intermediate directory.")
     return parser.parse_args()
@@ -75,12 +74,11 @@ def main():
     log_offset = params.log_offset
     logger.info(
         "REG parameters: quantile=%.3f, min_fraction=%.2f, min_samples=%d, "
-        "log_offset=%.3f, fallback_threshold=%.2f",
+        "log_offset=%.3f",
         quantile,
         min_fraction,
         min_samples,
         log_offset,
-        args.fallback_threshold,
     )
 
     adata = _load_pseudobulk(args.dataset, args.pseudobulk)
@@ -138,7 +136,6 @@ def main():
             min_count=min_samples,
             log_offset=log_offset,
             log_matrix=cell_log,
-            fallback_threshold=args.fallback_threshold,
         )
 
         reliable_genes[cell_type] = selected

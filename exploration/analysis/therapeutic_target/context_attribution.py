@@ -23,7 +23,7 @@ ANALYSIS_DIR = Path(PATHS["output_root"]) / "analysis/therapeutic_target_analysi
 
 LRP_MODELS = {
     "Pinnacle": ("pinnacle_random_fixed", "abmil8"),
-    "Pinnacle-ESM2 (GAT)": ("pinnacle_esm_fixed", "abmil8"),
+    "Pinnacle-ESM2 (GATv2)": ("pinnacle_esm_fixed", "abmil8"),
     "Pinnacle-ESM2 (ACM)": ("pinnacle_esm2_acm", "abmil8"),
     "ProtScape-GAE": ("gae_att_fixed_do06", "abmil8"),
     "ProtScape": ("s2gae_att_k1_fixed_do04_uni", PDL_READOUT),
@@ -380,7 +380,10 @@ def focal_target_contexts(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
     maxima = []
     for task, disease, gene, clinical_anchor in FOCAL_TARGETS:
         values = data.loc[data["task"].eq(task) & data["gene"].eq(gene)].copy()
-        if values.empty or values["fold"].nunique() != 5:
+        if values.empty:
+            print(f"Skipping {task}/{gene}: no held-out contextual explanations.")
+            continue
+        if values["fold"].nunique() != 5:
             raise RuntimeError(f"Expected five explanations for {task}/{gene}")
         model_tables = []
         model_summaries = []
@@ -436,6 +439,9 @@ def focal_target_contexts(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
             }
         )
         maxima.append(float(by_model["overall_positive_contribution_pct"].max()))
+    if not top_tables:
+        return (pd.DataFrame(columns=["task", "disease", "gene", "shared_x_axis_max_pct"]),
+                pd.DataFrame(columns=["task", "disease", "gene", "n_models"]))
     top = pd.concat(top_tables, ignore_index=True)
     top["shared_x_axis_max_pct"] = max(0.5, np.ceil(max(maxima) * 2.0) / 2.0)
     return top, pd.DataFrame(summaries)

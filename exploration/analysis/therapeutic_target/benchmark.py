@@ -9,6 +9,7 @@ import pandas as pd
 from scipy.stats import ttest_rel
 
 from downstream_tasks.config import PATHS
+from downstream_tasks.data.partitions import load_task_partition
 
 
 THERAPEUTIC_TARGET_DATASET_DIR = Path(PATHS["therapeutic_target_dataset_dir"])
@@ -49,6 +50,18 @@ MODEL_ORDER = [
     "s2gae_att_k1_fixed_do04_uni",
 ]
 PDL_READOUT = "abmil8_pdl_id2_dropout"
+ARCHITECTURE_ABLATIONS = {
+    "gae_att_uni", "gae_vn", "gae_vn_uni", "gae_lvn", "gae_lvn_uni", "s2gae_att",
+}
+
+
+def write_performance_tables(performance: pd.DataFrame, output: Path) -> pd.DataFrame:
+    """Write the main/loss and architecture-ablation scores for plots and tables."""
+    is_ablation = performance["inference_key"].isin(ARCHITECTURE_ABLATIONS)
+    main = performance.loc[~is_ablation].copy()
+    main.to_csv(output / "held_out_performance.csv", index=False)
+    performance.loc[is_ablation].to_csv(output / "ablation_fold_performance.csv", index=False)
+    return main
 
 
 def dataset_statistics() -> pd.DataFrame:
@@ -59,6 +72,7 @@ def dataset_statistics() -> pd.DataFrame:
         counts = labels["label"].value_counts()
         positives = int(counts.get(1, 0))
         negatives = int(counts.get(0, 0))
+        _, cohort_labels, _, _ = load_task_partition(task, path)
         rows.append(
             {
                 "task": task,
@@ -71,7 +85,7 @@ def dataset_statistics() -> pd.DataFrame:
                 ),
                 "negative_label_source": (
                     "October 2022 approved-human DrugBank targets without a "
-                    "non-literature historical Open Targets association"
+                    "non-literature Open Targets association"
                 ),
                 "label_file": path.name,
                 "positive": positives,
@@ -79,6 +93,8 @@ def dataset_statistics() -> pd.DataFrame:
                 "total": len(labels),
                 "positive_to_negative_ratio": positives / negatives,
                 "positive_fraction": positives / len(labels),
+                "cohort_positive": int((cohort_labels == 1).sum()),
+                "cohort_negative": int((cohort_labels == 0).sum()),
             }
         )
     return pd.DataFrame(rows)

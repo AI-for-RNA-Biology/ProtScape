@@ -46,7 +46,7 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     if not torch.cuda.is_available():
         raise RuntimeError(
-            "Exact pretraining evaluation requires CUDA for the PINNACLE "
+            "Pretraining evaluation requires CUDA for the PINNACLE "
             "FP16 evaluation protocol."
         )
     device = torch.device("cuda")

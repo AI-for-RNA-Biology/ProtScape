@@ -38,48 +38,6 @@ MODULE_AXIS_LABEL_SIZE = 8.5
 MODULE_TICK_LABEL_SIZE = 8.0
 MODULE_TITLE_SIZE = 9.5
 
-CLINICAL_STAGE_ORDER = [
-    "NO_LINKED_CLINICAL_STAGE",
-    "UNKNOWN",
-    "PRECLINICAL",
-    "IND",
-    "EARLY_PHASE_1",
-    "PHASE_1",
-    "PHASE_1_2",
-    "PHASE_2",
-    "PHASE_2_3",
-    "PHASE_3",
-    "PHASE_4",
-    "APPROVAL",
-]
-CLINICAL_STAGE_LABELS = {
-    "NO_LINKED_CLINICAL_STAGE": "No linked clinical stage",
-    "UNKNOWN": "Unknown",
-    "PRECLINICAL": "Preclinical",
-    "IND": "IND",
-    "EARLY_PHASE_1": "Early phase 1",
-    "PHASE_1": "Phase 1",
-    "PHASE_1_2": "Phase 1/2",
-    "PHASE_2": "Phase 2",
-    "PHASE_2_3": "Phase 2/3",
-    "PHASE_3": "Phase 3",
-    "PHASE_4": "Phase 4",
-    "APPROVAL": "Approved",
-}
-CLINICAL_STAGE_COLORS = {
-    "NO_LINKED_CLINICAL_STAGE": "#D9D9D9",
-    "UNKNOWN": "#737373",
-    "PRECLINICAL": "#440154",
-    "IND": "#482878",
-    "EARLY_PHASE_1": "#3E4989",
-    "PHASE_1": "#31688E",
-    "PHASE_1_2": "#26828E",
-    "PHASE_2": "#1F9E89",
-    "PHASE_2_3": "#35B779",
-    "PHASE_3": "#6DCD59",
-    "PHASE_4": "#B4DE2C",
-    "APPROVAL": "#FDE725",
-}
 
 MODULE_COLORS = {
     1: "#4477AA",
@@ -88,14 +46,6 @@ MODULE_COLORS = {
     4: "#CCBB44",
     5: "#228833",
     6: "#CC79A7",
-}
-MODULE_LABELS = {
-    1: "Class-A GPCR and monoaminergic receptors",
-    2: "GABA/cholinergic ligand-gated receptors",
-    3: "Ionotropic glutamate/NMDA receptor signalling",
-    4: "Metabotropic glutamate and Class-C GPCR signalling",
-    5: "Voltage-gated ion channels and excitability",
-    6: "DNA replication/repair",
 }
 NETWORK_LABEL_OFFSETS = {
     "POLE": (-8, 8),
@@ -134,6 +84,7 @@ PLOT_RC = {
     "lines.linewidth": DATA_LINEWIDTH,
     "lines.markeredgewidth": AXIS_LINEWIDTH,
     "patch.linewidth": AXIS_LINEWIDTH,
+    "hatch.linewidth": AXIS_LINEWIDTH,
     "axes.labelsize": 8.0,
     "axes.titlesize": PANEL_TITLE_SIZE,
     "figure.titlesize": PANEL_TITLE_SIZE,
@@ -150,6 +101,7 @@ PLOT_RC = {
     "legend.fontsize": TICK_LABEL_SIZE,
     "legend.frameon": False,
     "savefig.format": "pdf",
+    "svg.fonttype": "none",
     "savefig.dpi": 300,
     "savefig.transparent": True,
 }
@@ -286,100 +238,16 @@ def plot_external_support(source: Path, output: Path) -> None:
     save_figure(fig, output, "parkinson_candidate_external_support")
 
 
-def plot_candidate_clinical_stages(source: Path, output: Path) -> None:
-    """Plot target-level clinical stages among Parkinson-supported candidates."""
-    summary = pd.read_csv(
-        source / "parkinson_candidate_clinical_stage_summary.csv"
-    )
-    unknown = set(summary["clinical_stage"]) - set(CLINICAL_STAGE_ORDER)
-    if unknown:
-        raise ValueError(
-            "Unrecognized clinical stages in plot data: "
-            + ", ".join(sorted(unknown))
-        )
-
-    model_specs = [
-        ("protscape", "ProtScape"),
-        ("pinnacle", "Pinnacle"),
-    ]
-    present_stages = [
-        stage
-        for stage in CLINICAL_STAGE_ORDER
-        if summary.loc[
-            summary["clinical_stage"].eq(stage), "candidate_count"
-        ].sum()
-        > 0
-    ]
-
-    fig = plt.figure(figsize=figure_size(18.0, 7.5))
-    grid = fig.add_gridspec(1, 3, width_ratios=[1, 1, 0.9], wspace=0.18)
-    for column, (model, model_label) in enumerate(model_specs):
-        ax = fig.add_subplot(grid[0, column])
-        rows = summary[summary["model"].eq(model)].set_index(
-            "clinical_stage"
-        )
-        if rows.empty:
-            raise ValueError(f"Missing clinical-stage summary for {model}")
-        counts = np.array(
-            [
-                int(rows.loc[stage, "candidate_count"])
-                if stage in rows.index
-                else 0
-                for stage in present_stages
-            ]
-        )
-        total = int(rows["ot_supported_candidates"].iloc[0])
-        if counts.sum() != total:
-            raise ValueError(
-                f"Clinical-stage counts do not sum to the {model} cohort"
-            )
-        wedges, _, percentage_labels = ax.pie(
-            counts,
-            colors=[CLINICAL_STAGE_COLORS[stage] for stage in present_stages],
-            startangle=90,
-            counterclock=False,
-            autopct=lambda value: f"{value:.0f}%" if value >= 5 else "",
-            pctdistance=0.68,
-            wedgeprops={"edgecolor": "white", "linewidth": 0.8},
-            textprops={"fontsize": TICK_LABEL_SIZE, "weight": "bold"},
-        )
-        for wedge, label in zip(wedges, percentage_labels):
-            red, green, blue, _ = wedge.get_facecolor()
-            luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
-            label.set_color("#222222" if luminance > 0.58 else "white")
-        ax.set_title(
-            f"{model_label}\n(n={total})",
-            fontsize=PANEL_TITLE_SIZE,
-            pad=5,
-        )
-        ax.set_aspect("equal")
-
-    legend_ax = fig.add_subplot(grid[0, 2])
-    handles = [
-        Patch(
-            facecolor=CLINICAL_STAGE_COLORS[stage],
-            edgecolor="white",
-            label=CLINICAL_STAGE_LABELS[stage],
-        )
-        for stage in present_stages
-    ]
-    legend_ax.legend(
-        handles=handles,
-        title="Maximum Parkinson clinical stage",
-        loc="center left",
-        fontsize=TICK_LABEL_SIZE,
-        title_fontsize=PANEL_TITLE_SIZE,
-        frameon=False,
-        handlelength=1.2,
-        handleheight=1.0,
-    )
-    legend_ax.set_axis_off()
-    fig.subplots_adjust(left=0.02, right=0.98, bottom=0.04, top=0.92)
-    save_figure(fig, output, "parkinson_candidate_clinical_stages")
 
 
 def plot_synaptic_completion(source: Path, output: Path) -> None:
     table = pd.read_csv(source / "parkinson_synaptic_group_completion.csv")
+    complete = table[["protscape_completion_rank", "pinnacle_completion_rank"]].notna().all(axis=1)
+    if not complete.all():
+        print("Skipping synaptic-family panels without all members in both candidate cohorts.")
+    table = table[complete]
+    if table.empty:
+        return
     table = table.sort_values("group_order")
     y_positions = np.arange(len(table))[::-1]
     fig, ax = plt.subplots(figsize=figure_size(18.0, 6.1))
@@ -410,7 +278,7 @@ def plot_synaptic_completion(source: Path, output: Path) -> None:
     ax.set_yticks(y_positions)
     ax.set_yticklabels([f"{row.group} ({row.member_label})" for row in table.itertuples()])
     ax.set_ylim(-0.55, len(table) - 0.45)
-    ax.set_xlabel("Rank of last recovered member among 13,303 label-excluded proteins")
+    ax.set_xlabel("Rank of last recovered member among label-excluded proteins")
     clean_axes(ax)
     ax.spines["left"].set_visible(False)
     ax.tick_params(axis="y", length=0)
@@ -472,6 +340,10 @@ def plot_role_network(source: Path, output: Path, stem: str, known_color: str) -
     save_figure(fig, output, stem)
 
 
+def module_color(module_id: int):
+    return MODULE_COLORS.get(module_id, plt.get_cmap("tab20")((module_id - 1) % 20))
+
+
 def plot_leiden_network(source: Path, output: Path) -> None:
     graph, nodes = network_graph(source)
     position = nx.spring_layout(graph, seed=42, k=1.2 / graph.number_of_nodes() ** 0.5)
@@ -482,30 +354,32 @@ def plot_leiden_network(source: Path, output: Path) -> None:
         graph, position, edgelist=inter_edges, edge_color="#BDBDBD",
         alpha=0.12, width=AXIS_LINEWIDTH, ax=ax,
     )
-    for module_id in sorted(MODULE_COLORS):
+    for module_id in sorted(nodes["leiden_cluster"].unique()):
         module_nodes = nodes.loc[nodes["leiden_cluster"].eq(module_id)]
         subgraph = graph.subgraph(module_nodes["protein"])
         nx.draw_networkx_edges(
             graph, position, edgelist=list(subgraph.edges()),
-            edge_color=MODULE_COLORS[module_id], alpha=0.30,
+            edge_color=module_color(module_id), alpha=0.30,
             width=AXIS_LINEWIDTH, ax=ax,
         )
         for role, fill_color in [("benchmark_positive", "white"), ("candidate", PROTSCAPE_COLOR)]:
             role_nodes = module_nodes.loc[module_nodes["node_role"].eq(role), "protein"].tolist()
             nx.draw_networkx_nodes(
                 graph, position, nodelist=role_nodes, node_color=fill_color,
-                node_size=36, edgecolors=MODULE_COLORS[module_id],
+                node_size=36, edgecolors=module_color(module_id),
                 linewidths=BAR_EDGE_LINEWIDTH, ax=ax,
             )
     annotate_network(ax, graph, position)
     save_figure(fig, output, "parkinson_known_candidates_leiden_modules")
 
 
-def plot_leiden_legend(output: Path) -> None:
+def plot_leiden_legend(source: Path, output: Path) -> None:
     """Render the separate role/module legend emitted by the source script."""
+    nodes = pd.read_csv(source / "parkinson_leiden_nodes.csv")
+    module_labels = nodes.groupby("leiden_cluster")["leiden_cluster_label"].first()
     fig, ax = plt.subplots(figsize=figure_size(18.0, 10.0))
     ax.set_xlim(0, 1)
-    ax.set_ylim(0, len(MODULE_LABELS) + 2)
+    ax.set_ylim(0, len(module_labels) + 2)
 
     for row, (label, fill_color) in enumerate(
         [
@@ -513,21 +387,21 @@ def plot_leiden_legend(output: Path) -> None:
             ("Known benchmark target", "white"),
         ]
     ):
-        y = len(MODULE_LABELS) + 1.5 - row
+        y = len(module_labels) + 1.5 - row
         ax.scatter(
             0.043, y, s=45, facecolor=fill_color, edgecolor="#4A4A4A",
             linewidth=BAR_EDGE_LINEWIDTH,
         )
         ax.text(0.085, y, label, ha="left", va="center", fontsize=TICK_LABEL_SIZE)
 
-    for row, module_id in enumerate(sorted(MODULE_LABELS)):
-        y = len(MODULE_LABELS) - row - 0.5
+    for row, module_id in enumerate(sorted(module_labels.index)):
+        y = len(module_labels) - row - 0.5
         ax.scatter(
             0.043, y, s=45, facecolor="white",
-            edgecolor=MODULE_COLORS[module_id], linewidth=BAR_EDGE_LINEWIDTH,
+            edgecolor=module_color(module_id), linewidth=BAR_EDGE_LINEWIDTH,
         )
         ax.text(
-            0.085, y, f"M{module_id}  {MODULE_LABELS[module_id]}",
+            0.085, y, f"M{module_id}  {module_labels[module_id]}",
             ha="left", va="center", fontsize=TICK_LABEL_SIZE,
         )
     ax.set_axis_off()
@@ -623,7 +497,7 @@ def plot_string_enrichment(source: Path, output: Path) -> None:
 
 def plot_reactome_modules(source: Path, output: Path) -> None:
     display = pd.read_csv(source / "parkinson_reactome_module_enrichment.csv")
-    for module_id in sorted(MODULE_COLORS):
+    for module_id in sorted(display["leiden_cluster"].unique()):
         rows = display[display["leiden_cluster"].eq(module_id)].sort_values(
             ["fdr", "fold_enrichment", "module_hits", "term"],
             ascending=[True, False, False, True],
@@ -644,11 +518,11 @@ def plot_reactome_modules(source: Path, output: Path) -> None:
         )
         ax.barh(
             y, known_width, height=0.55,
-            color=MODULE_COLORS[module_id], edgecolor="none",
+            color=module_color(module_id), edgecolor="none",
         )
         ax.barh(
             y, candidate_width, left=known_width, height=0.55,
-            color=lighten_color(MODULE_COLORS[module_id]), edgecolor="none",
+            color=lighten_color(module_color(module_id)), edgecolor="none",
         )
         ax.barh(
             y, significance, height=0.55, color="none", edgecolor="#222222",
@@ -663,7 +537,7 @@ def plot_reactome_modules(source: Path, output: Path) -> None:
             fontsize=MODULE_AXIS_LABEL_SIZE,
         )
         ax.set_title(
-            textwrap.fill(MODULE_LABELS[module_id], width=52, break_long_words=False),
+            textwrap.fill(rows["leiden_cluster_label"].iloc[0], width=52, break_long_words=False),
             fontsize=MODULE_TITLE_SIZE, fontweight="bold", pad=12,
         )
         clean_axes(ax)
@@ -709,10 +583,9 @@ def plot_all(source: Path, output: Path) -> None:
     with matplotlib.rc_context(PLOT_RC):
         plot_candidate_recovery(source, output)
         plot_external_support(source, output)
-        plot_candidate_clinical_stages(source, output)
         plot_synaptic_completion(source, output)
         plot_leiden_network(source, output)
-        plot_leiden_legend(output)
+        plot_leiden_legend(source, output)
         plot_string_enrichment(source, output)
 
         plot_role_network(

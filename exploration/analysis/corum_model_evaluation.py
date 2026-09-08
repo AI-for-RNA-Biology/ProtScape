@@ -1,7 +1,8 @@
-"""Load and evaluate the released CORUM downstream checkpoints."""
+"""Load and evaluate CORUM downstream checkpoints."""
 
 from __future__ import annotations
 
+import json
 import pickle
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from downstream_tasks.config import PATHS, get_hc_embedding_paths, load_config
 from downstream_tasks.data.datasets import ABMILDataset, collate_abmil
 from downstream_tasks.data.loaders import EmbeddingLoader
 from downstream_tasks.data.preprocessing import zscore_normalize_bags
-from downstream_tasks.data.task_loaders import get_task_loader
+from downstream_tasks.data.partitions import load_task_partition, partition_path
 from downstream_tasks.models.abmil import ABMIL_ContextOnly, ABMIL_LateFusion
 from downstream_tasks.models.linear import LinearProbe
 from downstream_tasks.models.registry import MODEL_VARIANTS, ModelType
@@ -42,6 +43,7 @@ MAIN_CONTEXT_MODEL_ORDER = [
     "s2gae_bce_uni",
 ]
 MAIN_MODEL_ORDER = ["lr_esm", "lr_prostt5"] + MAIN_CONTEXT_MODEL_ORDER
+ABLATION_MODEL_ORDER = ["gae_att_uni", "gae_vn", "gae_vn_uni", "gae_lvn", "gae_lvn_uni", "s2gae_att"]
 
 CONTEXT_READOUTS = [
     "lr_hc_cell",
@@ -56,6 +58,7 @@ LOSS_READOUTS = {
     "s2gae_phuber_uni": [
         "lr_hc_cell",
         "lr_hc_cell_esm",
+        "abmil8_hc_cell",
         "abmil8",
         "abmil8_pdl_hc_cell",
         "abmil8_pdl_id2_dropout",
@@ -63,6 +66,7 @@ LOSS_READOUTS = {
     "s2gae_l1_uni": [
         "lr_hc_cell",
         "lr_hc_cell_esm",
+        "abmil8_hc_cell",
         "abmil8",
         "abmil8_pdl_hc_cell",
         "abmil8_pdl_id2_dropout",
@@ -93,12 +97,18 @@ MODEL_LABELS = {
     "lr_esm": "ESM2",
     "lr_prostt5": "ProstT5",
     "pinnacle_random": "Pinnacle",
-    "pinnacle_esm": "Pinnacle-ESM2 (GAT)",
+    "pinnacle_esm": "Pinnacle-ESM2 (GATv2)",
     "pinnacle_acm": "Pinnacle-ESM2 (ACM)",
     "gae_bce": "ProtScape-GAE",
     "s2gae_bce_uni": "ProtScape",
     "s2gae_phuber_uni": "ProtScape (pHuber)",
     "s2gae_l1_uni": "ProtScape (L1)",
+    "gae_att_uni": "ProtScape-GAE, attention + uniformity",
+    "gae_vn": "ProtScape-GAE, virtual node",
+    "gae_vn_uni": "ProtScape-GAE, virtual node + uniformity",
+    "gae_lvn": "ProtScape-GAE, learned virtual node",
+    "gae_lvn_uni": "ProtScape-GAE, learned virtual node + uniformity",
+    "s2gae_att": "ProtScape, without uniformity",
 }
 
 
@@ -169,12 +179,10 @@ def load_data(
         paths["protein_labels"],
         paths["cell_labels"],
     )
-    task_loader = get_task_loader("corum", CORUM_MEMBERSHIPS)
-    genes, labels, class_names = task_loader.load()
-    with np.load(split_file) as saved_split:
-        shared_genes = saved_split["genes"].astype(str).tolist()
-    gene_index = {gene: index for index, gene in enumerate(genes)}
-    shared_labels = labels[[gene_index[gene] for gene in shared_genes]]
+    shared_genes, shared_labels, class_names, _ = load_task_partition(
+        "corum", CORUM_MEMBERSHIPS, config.n_folds
+    )
+    load_folds(split_file, shared_genes)
 
     gene_to_bags, gene_to_cells = loader.load_hc_with_cell(set(shared_genes))
     gene_to_means, _ = loader.load_hc_with_cell_mean(set(shared_genes))
@@ -232,10 +240,20 @@ def load_run_data(
 
 
 def load_folds(split_file: Path, genes: list[str]) -> list[np.ndarray]:
-    with np.load(split_file) as saved:
-        if saved["genes"].astype(str).tolist() != genes:
+    with np.load(split_file) as saved, np.load(
+        partition_path("corum", CORUM_MEMBERSHIPS)
+    ) as dataset:
+        if (saved["genes"].astype(str).tolist() != genes
+                or dataset["genes"].astype(str).tolist() != genes):
             raise ValueError(f"Gene order does not match {split_file}")
-        return [saved[f"fold_{index}"].astype(int) for index in range(6)]
+        folds = [saved[f"fold_{index}"].astype(int) for index in range(6)]
+        if any(not np.array_equal(fold, dataset[f"fold_{index}"])
+               for index, fold in enumerate(folds)):
+            raise ValueError(f"CORUM checkpoint partitions differ from the dataset: {split_file}")
+        for field in ("labels", "class_names"):
+            if field in saved and not np.array_equal(saved[field], dataset[field]):
+                raise ValueError(f"CORUM checkpoint {field} differ from the dataset: {split_file}")
+        return folds
 
 
 def train_indices(folds: list[np.ndarray], fold: int) -> np.ndarray:
@@ -263,11 +281,8 @@ def build_abmil(
     readout: str,
     data: dict[str, object],
     device: torch.device,
-    use_pdl=None,
 ) -> nn.Module:
     variant = MODEL_VARIANTS[READOUT_VARIANTS[readout]]
-    if use_pdl is None:
-        use_pdl = variant.use_pdl
     common = {
         "num_classes": data["labels"].shape[1],
         "ctx_dim": data["ctx_bags"][0].shape[1],
@@ -278,7 +293,7 @@ def build_abmil(
         "attention_type": variant.attention_type or "gated",
         "classifier_type": variant.classifier_type,
         "mlp_hidden_dim": variant.mlp_hidden_dim,
-        "use_pdl": use_pdl,
+        "use_pdl": variant.use_pdl,
         "pdl_proj_mode": "identity",
         "pdl_proj_layers": 2,
     }
@@ -333,12 +348,7 @@ def evaluate(
             if esm is not None:
                 esm_mean = esm[train_idx].mean(axis=0)
                 esm_std = np.maximum(esm[train_idx].std(axis=0), 1e-8)
-            model = build_abmil(
-                readout,
-                data,
-                device,
-                use_pdl=any(key.startswith("ctx_proj.") for key in state),
-            )
+            model = build_abmil(readout, data, device)
             model.load_state_dict(state)
             model.eval()
             test_bags = [
@@ -377,6 +387,7 @@ def evaluate(
 
     return {
         "summary": summarize_cv_metrics(fold_metrics, split="test"),
+        "fold_metrics": fold_metrics,
         "y_true": y_true,
         "fold_probs": np.stack(fold_probs),
         "test_idx": np.asarray(test_idx),
@@ -405,6 +416,7 @@ def performance_rows(
                 "std_percent": 100.0 * std,
                 "n_test_samples": len(result["y_true"]),
                 "n_folds": result["fold_probs"].shape[0],
+                "fold_scores": json.dumps([m[f"{metric}_macro"] for m in result["fold_metrics"]]),
             }
         )
     return rows
@@ -424,7 +436,10 @@ def per_complex_rows(
         fold_f1s = []
         for fold_probs in result["fold_probs"]:
             probabilities = fold_probs[:, class_idx]
-            fold_auprcs.append(float(average_precision_score(labels, probabilities)))
+            fold_auprcs.append(
+                float(average_precision_score(labels, probabilities))
+                if labels.sum() > 0 else float("nan")
+            )
             fold_f1s.append(
                 float(f1_score(labels, probabilities >= 0.5, zero_division=0))
             )
@@ -460,6 +475,7 @@ def append_modeling_statistics(
                 "scope": scope,
                 "n_proteins": int(labels.shape[0]),
                 "n_complexes": int(labels.shape[1]),
+                "n_complexes_with_positives": int((labels.sum(axis=0) > 0).sum()),
                 "n_positive_memberships": positives,
                 "n_negative_memberships": total - positives,
                 "positive_label_fraction": positives / total,

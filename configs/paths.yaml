@@ -3,34 +3,36 @@ networks_bulk: ../ProtScape_release/data/networks_bulk
 global_ppi: ../ProtScape_release/data/networks_bulk/global_ppi_edgelist.txt
 inference_root: ../ProtScape_release/embeddings
 output_root: outputs
+paper_source_data: ../ProtScape_release/data/paper_source_data
+parkinson_checkpoint_root: ../ProtScape_release/models/downstream_tasks
 checkpoint_root: ../ProtScape_release/models/pretraining
 
 tabula_h5ad: data/raw/GSM6058681_TabulaSapiens.h5ad
 tabula_metadata: data/raw/GSM6058681_TabulaSapiens_metadata.csv
 hbca_neurons_h5ad: data/raw/HBCA_v1_all_neurons.h5ad
 hbca_nonneurons_h5ad: data/raw/HBCA_v1_all_non_neuronal.h5ad
-hbca_gene_metadata: data/raw/hbca_gene_metadata.csv
-als_gene_metadata: data/raw/als_gene_metadata.csv
+hbca_gene_metadata: ../ProtScape_release/data/raw/hbca_gene_metadata.csv
+als_gene_metadata: ../ProtScape_release/data/raw/als_gene_metadata.csv
 
-cell_ontology_obo: data/reference_data/cl-full.obo
-tissue_ontology_obo: data/reference_data/bto.obo
+cell_ontology_obo: ../ProtScape_release/data/reference_data/ontologies/cl-full.obo
+tissue_ontology_obo: ../ProtScape_release/data/reference_data/ontologies/bto.obo
 celltype_class_mapping: ../ProtScape_release/data/networks_bulk/celltype_class_mapping.csv
 
-als_motor_neuron_counts: data/raw/als_motor_neuron_counts.csv
-als_motor_neuron_metadata: data/raw/als_motor_neuron_metadata.csv
-als_astrocyte_counts: data/raw/als_astrocyte_counts.csv
-als_astrocyte_metadata: data/raw/als_astrocyte_metadata.csv
+als_motor_neuron_counts: ../ProtScape_release/data/raw/als_motor_neuron_counts.csv
+als_motor_neuron_metadata: ../ProtScape_release/data/raw/als_motor_neuron_metadata.csv
+als_astrocyte_counts: ../ProtScape_release/data/raw/als_astrocyte_counts.csv
+als_astrocyte_metadata: ../ProtScape_release/data/raw/als_astrocyte_metadata.csv
 
 cellphonedb_database: data/reference_data/cellphonedb_v3.0.0/cellphone.db
 
-protein_sequences: data/raw/protein_sequences.csv.gz
-# Legacy filename; this file contains esm2_t36_3B_UR50D layer-33 features (2,560 dimensions).
+protein_sequences: ../ProtScape_release/data/raw/protein_sequences.csv.gz
+# ESM2 3B layer-33 features (2,560 dimensions).
 esm2_embeddings: ../ProtScape_release/data/sequence_embeddings/gene_protein_embeddings_esm2_3B_layer33.plk
 prostt5_embeddings: ../ProtScape_release/data/sequence_embeddings/gene_protein_embeddings_prostt5_1024.plk
 pinnacle_paper_embeddings_dir: data/reference_data/pinnacle_paper_embeddings
-corum_raw_json: data/reference_data/corum_4.1/corum_humanComplexes.json
+corum_raw_json: ../ProtScape_release/data/raw/corum_4.1/corum_humanComplexes.json
 corum_dataset_dir: ../ProtScape_release/data/downstream_tasks/corum_dataset
-therapeutic_target_drugbank_targets: ../ProtScape_release/data/downstream_tasks/therapeutic_target_dataset/drugbank_approved_human_target_symbols_oct2022.csv
+therapeutic_target_drugbank_targets: ../ProtScape_release/data/reference_data/drugbank/all_approved_oct2022.csv
 therapeutic_target_evidence_dir: data/reference_data/opentargets_24_03/evidence/sourceId=chembl
 therapeutic_target_ot_diseases_dir: data/reference_data/opentargets_24_03/diseases
 therapeutic_target_ot_targets_dir: data/reference_data/opentargets_24_03/targets
@@ -41,9 +43,9 @@ string_protein_info: data/reference_data/string_v12_human/9606.protein.info.v12.
 string_links_detailed: data/reference_data/string_v12_human/9606.protein.links.detailed.v12.0.txt.gz
 string_protein_aliases: data/reference_data/string_v12_human/9606.protein.aliases.v12.0.txt.gz
 string_enrichment_terms: data/reference_data/string_v12_human/9606.protein.enrichment.terms.v12.0.txt.gz
-parkinson_external_support: data/raw/parkinson_external_support.csv
+parkinson_opentargets_associations: ../ProtScape_release/data/reference_data/opentargets_parkinson_associations_2026-07-28.csv
 
-# ALS_rewiring analysis (exploration/analysis/ALS_rewiring) - PPI-module
+# ALS network rewiring
 als_rewiring_data_root: data/raw/als_rewiring
 als_rewiring_go_terms_csv: data/reference_data/human_GO_terms.csv
 als_rewiring_cyto_gene_expression_csv: data/raw/als_rewiring/df_genes_filtered_normalized.csv

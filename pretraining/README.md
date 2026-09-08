@@ -13,7 +13,7 @@ Set these paths in `configs/paths.yaml`:
 
 The graph bundle and checkpoint must belong to the same dataset snapshot. The companion release includes the exact ESM-2 and ProstT5 feature matrices used in the paper; use those matrices for checkpoint-equivalent results.
 
-Optional regeneration requires a `protein_sequences` table with `gene_name` and `fasta_seq` columns.
+Optional regeneration uses the released `protein_sequences` table with `gene_name` and `fasta_seq` columns.
 
 Generate the ESM-2 features with:
 
@@ -29,9 +29,9 @@ Generate the 1,024-dimensional ProstT5 features used by the downstream sequence 
 python -m pretraining.generate_prostt5_embeddings
 ```
 
-This script uses the historical `Rostlab/ProstT5` revision, filters proteins to the configured global PPI, mean-pools residue representations and length-weights 1,000-residue chunks for proteins longer than 1,500 residues.
+This script uses a fixed `Rostlab/ProstT5` revision, filters proteins to the configured global PPI, mean-pools residue representations and length-weights 1,000-residue chunks for proteins longer than 1,500 residues.
 
-The pretraining and downstream entry points run the required generator when a configured feature file is absent. Regeneration uses the same model and pooling definitions as the historical scripts, but the released matrices remain the exact inputs used for the reported models.
+The pretraining and downstream entry points run the required generator when a configured feature file is absent.
 
 ## Training
 
@@ -70,6 +70,26 @@ tissue_predictions.pt
 mappings.pkl
 ```
 
-`cell_embeddings.pt` contains the final post-CCI cell representations used by new downstream runs. The historical filename `cell_embeddings_before_pool.pt` is retained for compatibility with existing analyses; it contains the pooled cell representation before CCI refinement.
+`cell_embeddings.pt` contains the final post-CCI cell representations. `cell_embeddings_before_pool.pt` contains pooled cell representations before CCI refinement.
 
 Adapted PINNACLE inference exports protein, cell and full-metagraph embeddings with their mappings. Inference reconstructs each metagraph relation from its corresponding edge type.
+
+### Architecture-ablation embeddings
+
+The release provides checkpoints for all ablations. Generate these six embedding exports before retraining their selected downstream configurations:
+
+```bash
+python -m pretraining.inference <release>/models/pretraining/<checkpoint> \
+    --output-dir <inference_root>/<directory>
+```
+
+| Checkpoint | Directory |
+|---|---|
+| `protscape_gae_uniformity_state_dict.pt` | `gae_att_fixed_do06_ep300_uni5e-5` |
+| `protscape_gae_virtual_node_state_dict.pt` | `gae_vn_fixed_do04_ep300` |
+| `protscape_gae_virtual_node_uniformity_state_dict.pt` | `gae_vn_fixed_do04_ep300_uni5e-5` |
+| `protscape_gae_learned_virtual_node_state_dict.pt` | `gae_learnedvn_fixed_do06_ep300` |
+| `protscape_gae_learned_virtual_node_uniformity_state_dict.pt` | `gae_learnedvn_fixed_do06_ep300_uni5e-5` |
+| `protscape_no_uniformity_state_dict.pt` | `s2gae_att_k1_fixed_do04` |
+
+These exports are not needed to redraw figures or export tables from the supplied source data.

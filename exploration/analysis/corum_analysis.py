@@ -21,6 +21,7 @@ from exploration.analysis.corum_context_relevance import (
     xmil_tables,
 )
 from exploration.analysis.corum_model_evaluation import (
+    ABLATION_MODEL_ORDER,
     CONTEXT_READOUTS,
     LOSS_READOUTS,
     MAIN_CONTEXT_MODEL_ORDER,
@@ -47,6 +48,7 @@ def main() -> None:
 
     main_rows = []
     loss_rows = []
+    ablation_rows = []
     per_complex_parts = []
     lrp_parts = []
 
@@ -162,6 +164,16 @@ def main() -> None:
         del data, data_by_embedding, result
         gc.collect()
 
+    for model_key in ABLATION_MODEL_ORDER:
+        readout = "abmil8_pdl_id2_dropout"
+        run_dir = selected_run("aggregate", model_key, readout)
+        split_file = run_dir / "split_indices.npz"
+        data = load_run_data(run_spec("aggregate", model_key, readout), split_file)
+        result = evaluate(data, run_dir / "models", split_file, readout)
+        ablation_rows.extend(performance_rows(model_key, readout, result))
+        del data, result
+        gc.collect()
+
     # ProstT5 sequence baseline (aggregate and split-fixed per-complex results).
     run_dir = selected_run("aggregate", "lr_prostt5", "lr_prostt5")
     split_file = run_dir / "split_indices.npz"
@@ -219,6 +231,7 @@ def main() -> None:
         "corum_complexes_per_protein_distribution.csv": protein_distribution,
         "corum_main_performance.csv": main_performance,
         "corum_loss_performance.csv": loss_performance,
+        "corum_ablation_performance.csv": pd.DataFrame(ablation_rows),
         "corum_per_complex_performance.csv": per_complex,
         "corum_complex_topology_metrics.csv": topology,
         "corum_complex_cell_ppi_metrics.csv": cell_coverage,

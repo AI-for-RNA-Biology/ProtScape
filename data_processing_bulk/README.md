@@ -33,9 +33,9 @@ The processed Tabula Sapiens v1 matrix and metadata are available from [GEO acce
 
 The neuronal and non-neuronal Human Brain Cell Atlas v1.0 objects are available from the [Human Cell Atlas data portal](https://data.humancellatlas.org/hca-bio-networks/nervous-system/atlases/brain-v1-0).
 
-The ALS inputs are the count matrices and context metadata consumed directly by Step 0. The corresponding processed and raw sequencing data are available from [GSE152983](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE152983) for motor neurons and [GSE160133](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE160133) for astrocytes.
+The release includes ALS replicate-averaged count profiles, context metadata and HBCA/ALS gene mappings in `data/raw/`. The ALS profiles derive from [GSE152983](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE152983) (motor neurons) and [GSE160133](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE160133) (astrocytes); Step 0 reads these profiles rather than sequencing reads.
 
-The CellPhoneDB 3.0.0 database is available from the [CellPhoneDB releases](https://github.com/ventolab/CellphoneDB/releases).
+The release includes Cell Ontology (30 July 2025) and BTO (26 October 2021) snapshots in `data/reference_data/ontologies/`. Download the [CellPhoneDB 3.0.0 database](https://raw.githubusercontent.com/ventolab/cellphonedb-data/v3.0.0/cellphone.db) to the configured `cellphonedb_database` path.
 
 ## Run
 
@@ -76,8 +76,10 @@ The complete graph bundle is written to:
 
 Reliable genes are selected with a two-component `BayesianGaussianMixture` fitted to each log2(count + 1) profile. The threshold is the 0.99 quantile of the lower-mean component, using `random_state=0`, `max_iter=1000` and an inclusive `>=` comparison.
 
+Within each dataset, Step 2b ranks each context's reliably expressed genes by decreasing one-versus-rest enrichment, using the median and scaled MAD of the other context profiles. Exact ties are resolved by gene identifier. Graph-size selection balances LCC coverage against overlap with other contexts.
+
 Before CellPhoneDB, each single-cell type is capped at 100 cells with seed 7. CellPhoneDB runs with 100 permutations, expression threshold 0.1 and debug seed 1. The single-cell branches use CellPhoneDB subsampling; the replicate-averaged ALS profiles do not.
 
 For compartment-resolved ALS contexts, only nucleus--nucleus and nucleus--cytoplasm CCI edges are removed. Cytoplasm--cytoplasm, cytoplasm--whole-cell, nucleus--whole-cell and whole-cell--whole-cell edges are retained. Autocrine CCI self-loops are also retained.
 
-The data release contains the exact `networks_bulk` snapshot used to train the released checkpoints. A fresh rebuild can differ slightly after the corrected ALS compartment filtering and upstream dataset updates; this is expected. Use the released graph bundle for checkpoint-equivalent inference.
+Use the companion release's `networks_bulk` graph bundle with the pretrained checkpoints. The processing pipeline builds networks from the raw resources configured above.

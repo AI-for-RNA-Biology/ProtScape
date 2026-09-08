@@ -1,4 +1,4 @@
-"""Held-out inference and xMIL-LRP from released downstream checkpoints."""
+"""Held-out inference and xMIL-LRP from downstream checkpoints."""
 
 from __future__ import annotations
 
@@ -15,11 +15,10 @@ from downstream_tasks.config import get_hc_embedding_paths, load_config
 from downstream_tasks.data.datasets import ABMILDataset
 from downstream_tasks.data.loaders import EmbeddingLoader
 from downstream_tasks.data.preprocessing import zscore_normalize_bags
-from downstream_tasks.data.task_loaders import get_task_loader
+from downstream_tasks.data.partitions import load_training_partition
 from downstream_tasks.models.abmil import ABMIL_LateFusion
 from downstream_tasks.models.linear import LinearProbe
 from downstream_tasks.models.registry import MODEL_VARIANTS, ModelType
-from downstream_tasks.run import _build_shared_split
 from downstream_tasks.run_selected import load_selected_runs, selected_run_dir
 from downstream_tasks.training.cv_utils import get_cv_train_val_indices, get_test_indices
 from downstream_tasks.training.metrics import compute_all_metrics
@@ -80,25 +79,36 @@ def load_embeddings(
 
 
 def load_task(task: str, config, loader: EmbeddingLoader):
-    genes, labels, class_names = get_task_loader(
-        task, config.tasks[task].label_csv
-    ).load()
-    genes, labels, split_plan = _build_shared_split(
-        genes,
-        labels,
-        loader,
-        seed=config.seed,
-        n_splits=config.n_folds,
+    return load_training_partition(
+        task, config.tasks[task].label_csv, loader,
+        config.seed, config.n_folds, config.dataset_mode,
     )
-    return genes, labels, class_names, split_plan
 
 
-def check_alignment(run_dir: Path, features, genes, split_plan) -> None:
-    if list(features["genes"]) != list(genes):
-        raise RuntimeError(f"Feature genes changed for {run_dir}")
-    expected = np.load(run_dir / "test_idx.npy")
+def check_saved_split(run_dir: Path, genes, labels, class_names, split_plan) -> None:
+    expected = np.load(run_dir / "test_idx.npy", allow_pickle=False)
     if not np.array_equal(get_test_indices(split_plan), expected):
         raise RuntimeError(f"Held-out indices do not match {run_dir}")
+    split_file = run_dir / "split_indices.npz"
+    if split_file.is_file():
+        with np.load(split_file, allow_pickle=False) as saved:
+            if saved["genes"].astype(str).tolist() != list(genes):
+                raise RuntimeError(f"Checkpoint gene order does not match {run_dir}")
+            if any(not np.array_equal(saved[f"fold_{i}"], fold)
+                   for i, fold in enumerate(split_plan.folds)):
+                raise RuntimeError(f"Checkpoint partitions do not match {run_dir}")
+            if "labels" in saved and not np.array_equal(saved["labels"], labels):
+                raise RuntimeError(f"Checkpoint labels do not match {run_dir}")
+            if "class_names" in saved and not np.array_equal(
+                saved["class_names"].astype(str), np.asarray(class_names, dtype=str)
+            ):
+                raise RuntimeError(f"Checkpoint class order does not match {run_dir}")
+
+
+def check_alignment(run_dir: Path, features, genes, labels, class_names, split_plan) -> None:
+    if list(features["genes"]) != list(genes):
+        raise RuntimeError(f"Feature genes changed for {run_dir}")
+    check_saved_split(run_dir, genes, labels, class_names, split_plan)
 
 
 def abmil_parameters(trainer: Trainer, variant, features, labels) -> dict:
@@ -223,14 +233,14 @@ def recompute_performance() -> pd.DataFrame:
         config = load_config(str(inference_name), str(embedding_source), "bulk")
         loader = load_embeddings(config, str(cell_embedding_file))
         for task, task_runs in group.groupby("task", sort=False):
-            genes, labels, _, split_plan = load_task(task, config, loader)
+            genes, labels, class_names, split_plan = load_task(task, config, loader)
             for _, row in task_runs.iterrows():
                 apply_hyperparameters(config, row)
                 run_dir = Path(row["run_dir"])
                 trainer = Trainer(config, loader, run_dir, force=False)
                 variant = MODEL_VARIANTS[str(row["base_model_key"])]
                 features = trainer._build_features(variant, genes.copy())
-                check_alignment(run_dir, features, genes, split_plan)
+                check_alignment(run_dir, features, genes, labels, class_names, split_plan)
                 metrics = evaluate_folds(
                     run_dir, row, trainer, features, labels, split_plan
                 )
@@ -270,7 +280,7 @@ def generate_lrp(
     trainer = Trainer(config, loader, run_dir, force=False)
     variant = MODEL_VARIANTS[str(row["base_model_key"])]
     features = trainer._build_features(variant, genes.copy())
-    check_alignment(run_dir, features, genes, split_plan)
+    check_alignment(run_dir, features, genes, labels, class_names, split_plan)
     protein_embeddings = loader._load_hc_protein_embed()
     id_to_name = {
         str(cell_id): str(cell_name)

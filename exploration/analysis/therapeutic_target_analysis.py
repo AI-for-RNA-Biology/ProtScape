@@ -9,6 +9,7 @@ from exploration.analysis.therapeutic_target.benchmark import (
     dataset_statistics,
     disease_model_comparison,
     mean_performance,
+    write_performance_tables,
 )
 from exploration.analysis.therapeutic_target.checkpoint_lrp import (
     recompute_performance,
@@ -42,7 +43,7 @@ def main() -> None:
     ).to_csv(ANALYSIS_DIR / "lrp_model_readouts.csv", index=False)
 
     performance = recompute_performance()
-    performance.to_csv(ANALYSIS_DIR / "held_out_performance.csv", index=False)
+    performance = write_performance_tables(performance, ANALYSIS_DIR)
     mean_performance(performance).to_csv(
         ANALYSIS_DIR / "mean_performance.csv", index=False
     )
