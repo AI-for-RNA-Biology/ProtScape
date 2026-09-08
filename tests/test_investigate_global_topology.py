@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from pretraining.investigate_global_topology import (
     adjacency, pair_keys, pair_fold, rewire_boundary, personalized_pagerank,
-    topology_tables, negative_targets, probe_features, PROBES, analyze,
+    topology_tables, negative_targets, probe_features, PROBES, analyze, complementarity,
 )
 
 
@@ -107,3 +107,10 @@ def test_complete_crossfit_analysis_outputs(tmp_path):
     assert np.all(summary["count"] == 2)
     assert np.all((summary["mean"] > 0) & (summary["mean"] <= 1))
     assert (tmp_path / "topology_interventions.png").exists()
+    complementarity(SimpleNamespace(output_dir=tmp_path))
+    fusion = pd.read_csv(tmp_path / "complementarity_summary.csv")
+    assert len(fusion) == 2 * 3 * 3 * 3
+    matched = fusion[(fusion.mixture == "random") & (fusion.model == "Global GNN + global structure")]
+    old = summary[summary.model == "Global GNN + global structure"]
+    checked = matched.merge(old, on=["bank", "model", "k"])
+    np.testing.assert_allclose(checked.auprc, checked["mean"], atol=1e-10)

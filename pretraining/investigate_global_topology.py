@@ -453,7 +453,7 @@ def analyze(args):
     print(summary[summary.k == 500].to_string(index=False), flush=True)
 
 
-def plot_results(summary, output):
+def plot_results(summary, output, metric="auprc"):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -469,17 +469,179 @@ def plot_results(summary, output):
         ax.set_xlabel("Negatives per positive")
         ax.set_title(bank.replace("_", " ").title())
         ax.set_ylim(0, 100)
-    axes[0].set_ylabel("Validation AUPRC (%)")
+    axes[0].set_ylabel("Validation AUPRC (%)" if metric == "auprc" else "Validation binary-class macro-F1 (%)")
     fig.legend(*axes[0].get_legend_handles_labels(), loc="lower center", ncol=3, bbox_to_anchor=(.5, -.10), frameon=False)
     fig.tight_layout()
     for suffix in ("png", "pdf"):
-        fig.savefig(output / f"topology_interventions.{suffix}", bbox_inches="tight", dpi=180)
+        stem = "topology_interventions" if metric == "auprc" else "topology_interventions_f1"
+        fig.savefig(output / f"{stem}.{suffix}", bbox_inches="tight", dpi=180)
     plt.close(fig)
+
+
+def verify(args):
+    """Independent count/AP audit and an equal-diversity negative-bank control.
+
+    First 250 distinct targets from a uniform-with-replacement sequence form a
+    uniform-without-replacement sample. Reuse the saved predictions only: no new
+    encoder runs, heuristic mining, or model fitting. Hard banks already contain
+    distinct targets. Every anchor must support 250; none may be dropped.
+    """
+    protocol = json.loads((args.output_dir / "protocol.json").read_text())
+    reference = pd.read_csv(args.output_dir / "metrics_by_context.csv")
+    cache = torch.load(args.output_dir / "cache.pt", weights_only=False, map_location="cpu")
+    size = len(cache["data"].protein_names)
+    known = np.unique(pair_keys(cache["data"].all_edge_index.numpy(), size))
+    val = np.unique(pair_keys(cache["data"].val_edge_index.numpy(), size))
+    unique_rows = []
+    max_ap_error = 0.
+    minimum_unique = 500
+    positive_count = 0
+    for cell in protocol["selected"]:
+        with np.load(args.output_dir / f"cell_{cell}.npz") as item:
+            keys, folds, predictions = item["keys"], item["folds"], item["scores"]
+            n_positive = len(folds)
+            positive_count += n_positive
+            assert keys.shape == (3, n_positive, 501)
+            assert np.all(keys[:, :, 0] == keys[0, :, 0])
+            assert np.all(np.isin(keys[:, :, 0], val))
+            assert np.all(keys[:, :, 0] // size != keys[:, :, 0] % size)
+            assert not np.intersect1d(np.unique(keys[:, :, 1:]), known).size
+            assert np.all(pair_fold(keys) == folds[None, :, None])
+            for bank_id, bank in enumerate(BANKS):
+                distinct = np.empty((n_positive, 251), int)
+                distinct[:, 0] = 0
+                for row in range(n_positive):
+                    _, indices = np.unique(keys[bank_id, row, 1:], return_index=True)
+                    minimum_unique = min(minimum_unique, len(indices))
+                    assert len(indices) >= 250
+                    distinct[row, 1:] = np.sort(indices)[:250] + 1
+                for model_id, model in enumerate(GNN_NAMES):
+                    for k in (1, 500):
+                        aps = []
+                        for fold in range(3):
+                            selected = predictions[model_id, bank_id, folds == fold, :k + 1]
+                            labels = np.broadcast_to(np.arange(k + 1) == 0, selected.shape).ravel()
+                            aps.append(average_precision_score(labels, selected.ravel()))
+                        expected = reference[(reference.cell_id == cell) & (reference.bank == bank) & (reference.model == model) & (reference.k == k)].auprc.item()
+                        max_ap_error = max(max_ap_error, abs(float(np.mean(aps)) - expected))
+                    unique_scores = np.take_along_axis(predictions[model_id, bank_id], distinct, axis=1)
+                    for k in (1, 10, 50, 100, 250):
+                        aps = []
+                        for fold in range(3):
+                            selected = unique_scores[folds == fold, :k + 1]
+                            labels = np.broadcast_to(np.arange(k + 1) == 0, selected.shape).ravel()
+                            aps.append(average_precision_score(labels, selected.ravel()))
+                        unique_rows.append({"cell_id": cell, "bank": bank, "model": model, "k": k, "auprc": float(np.mean(aps))})
+    assert max_ap_error < 1e-12
+    pd.DataFrame(unique_rows).to_csv(args.output_dir / "distinct_negative_control.csv", index=False)
+    audit = {"contexts": len(protocol["selected"]), "unique_positive_occurrences": positive_count,
+             "negative_membership_and_fold_checks": "passed", "max_independent_ap_error": max_ap_error,
+             "minimum_distinct_targets_in_any_original_bank": minimum_unique,
+             "distinct_control_k": [1, 10, 50, 100, 250], "dropped_anchors": 0,
+             "gnn_checkpoint_sha256": protocol["checkpoint_sha256"]}
+    (args.output_dir / "verification.json").write_text(json.dumps(audit, indent=2) + "\n")
+    print(json.dumps(audit, indent=2), flush=True)
+    print(pd.DataFrame(unique_rows).query("k == 250").groupby(["model", "bank"]).auprc.mean().unstack().mul(100).round(3).to_string())
+
+
+def positive_rank_strata(args):
+    """Paired per-positive ranks conditioned on train-only common-neighbor support.
+
+    This avoids comparing AUPRC values across strata with different prevalence.
+    MRR is descriptive; compare models within a stratum, not causal effects
+    between strata. Tied negative scores contribute half a rank.
+    """
+    protocol = json.loads((args.output_dir / "protocol.json").read_text())
+    rows = []
+    for cell in protocol["selected"]:
+        with np.load(args.output_dir / f"cell_{cell}.npz") as item:
+            local_cn = item["local"][0, :, 0, 2]
+            global_cn = item["global_features"][0, :, 0, 2]
+            strata = {"No common neighbor": global_cn == 0,
+                      "Common neighbors only outside cell": (local_cn == 0) & (global_cn > 0),
+                      "Common neighbors already inside cell": local_cn > 0}
+            for model_id in (0, 1, 4):
+                for bank_id, bank in enumerate(BANKS):
+                    scores = item["scores"][model_id, bank_id]
+                    ranks = 1 + (scores[:, 1:] > scores[:, :1]).sum(1) + .5 * (scores[:, 1:] == scores[:, :1]).sum(1)
+                    for name, mask in strata.items():
+                        if not mask.any():
+                            continue
+                        rows.append({"cell_id": cell, "bank": bank, "model": GNN_NAMES[model_id],
+                                     "stratum": name, "n_positive": int(mask.sum()),
+                                     "mrr": float((1 / ranks[mask]).mean()), "hits10": float((ranks[mask] <= 10).mean())})
+    frame = pd.DataFrame(rows)
+    frame.to_csv(args.output_dir / "positive_rank_strata.csv", index=False)
+    summary = frame.groupby(["bank", "stratum", "model"], as_index=False).agg(mrr=("mrr", "mean"), hits10=("hits10", "mean"), contexts=("cell_id", "count"), positive_occurrences=("n_positive", "sum"))
+    summary.to_csv(args.output_dir / "positive_rank_strata_summary.csv", index=False)
+    print(summary.to_string(index=False), flush=True)
+
+
+def complementarity(args):
+    """Fixed-C score-fusion/negative-mixture probes, not new pretraining.
+
+    Fits use two validation pair folds and evaluate the third. Both fit mixtures
+    have exactly one positive and ten negatives per anchor. The mixed fit takes
+    five random and five global-hard negatives, without changing held-out banks.
+    """
+    protocol = json.loads((args.output_dir / "protocol.json").read_text())
+    fit_data = {mixture: [] for mixture in ("random", "half_hard")}
+    labels, fold_ids = [], []
+    for cell in protocol["selected"]:
+        with np.load(args.output_dir / f"cell_{cell}.npz") as item:
+            base = probe_features(item)
+            design = np.concatenate([base, item["scores"][4, ..., None]], -1)
+            fit_data["random"].append(design[0, :, :11].reshape(-1, 13))
+            mixed = np.concatenate([design[0, :, :6], design[2, :, 1:6]], axis=1)
+            fit_data["half_hard"].append(mixed.reshape(-1, 13))
+            labels.append(np.broadcast_to(np.arange(11) == 0, mixed.shape[:2]).ravel())
+            fold_ids.append(np.repeat(item["folds"], 11))
+    y, folds = np.concatenate(labels), np.concatenate(fold_ids)
+    specifications = {"Global GNN + global structure": [0, 7, 8, 9, 10, 11],
+                      "Global + contextual logits": [0, 12],
+                      "Global + contextual logits + global structure": [0, 12, 7, 8, 9, 10, 11]}
+    fitted, coefficients = {}, []
+    for mixture, blocks in fit_data.items():
+        features = np.concatenate(blocks)
+        for fold in range(3):
+            mask = folds != fold
+            for name, columns in specifications.items():
+                estimator = make_pipeline(StandardScaler(), LogisticRegression(C=1., max_iter=2000, tol=1e-7, random_state=0))
+                estimator.fit(features[mask][:, columns], y[mask])
+                assert estimator[-1].n_iter_.max() < 2000
+                fitted[mixture, fold, name] = estimator
+                coefficients.append({"mixture": mixture, "fold": fold, "model": name,
+                                     "columns": columns, "coefficient": estimator[-1].coef_[0].tolist(),
+                                     "n_fit": int(mask.sum()), "iterations": estimator[-1].n_iter_.tolist()})
+    rows = []
+    for cell in protocol["selected"]:
+        with np.load(args.output_dir / f"cell_{cell}.npz") as item:
+            design = np.concatenate([probe_features(item), item["scores"][4, ..., None]], -1)
+            for bank_id, bank in enumerate(BANKS):
+                for mixture in fit_data:
+                    for name, columns in specifications.items():
+                        for fold in range(3):
+                            selected = design[bank_id, item["folds"] == fold]
+                            assert np.all(pair_fold(item["keys"][bank_id, item["folds"] == fold]) == fold)
+                            predicted = fitted[mixture, fold, name].decision_function(selected.reshape(-1, 13)[:, columns]).reshape(selected.shape[:2])
+                            for k in (1, 100, 500):
+                                scores = predicted[:, :k + 1]
+                                target = np.broadcast_to(np.arange(k + 1) == 0, scores.shape).ravel()
+                                rows.append({"cell_id": cell, "fold": fold, "bank": bank, "mixture": mixture,
+                                             "model": name, "k": k, "auprc": average_precision_score(target, scores.ravel())})
+    frame = pd.DataFrame(rows)
+    frame.to_csv(args.output_dir / "complementarity_by_fold.csv", index=False)
+    context = frame.groupby(["cell_id", "bank", "mixture", "model", "k"], as_index=False).auprc.mean()
+    context.to_csv(args.output_dir / "complementarity_by_context.csv", index=False)
+    summary = context.groupby(["bank", "mixture", "model", "k"], as_index=False).auprc.mean()
+    summary.to_csv(args.output_dir / "complementarity_summary.csv", index=False)
+    (args.output_dir / "complementarity_coefficients.json").write_text(json.dumps(coefficients, indent=2) + "\n")
+    print(summary.query("k == 500").pivot(index=["mixture", "model"], columns="bank", values="auprc").mul(100).round(3).to_string(), flush=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=("prepare", "evaluate", "analyze"))
+    parser.add_argument("stage", choices=("prepare", "evaluate", "analyze", "verify", "strata", "complementarity"))
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--protscape-checkpoint", type=Path)
@@ -492,7 +654,8 @@ def main():
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    {"prepare": prepare, "evaluate": evaluate, "analyze": analyze}[args.stage](args)
+    {"prepare": prepare, "evaluate": evaluate, "analyze": analyze, "verify": verify,
+     "strata": positive_rank_strata, "complementarity": complementarity}[args.stage](args)
 
 
 if __name__ == "__main__":
