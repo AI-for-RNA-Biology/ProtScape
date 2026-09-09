@@ -8,7 +8,7 @@
 
 ## Overview
 
-ProtScape is a multiscale framework for learning context-specific protein representations across proteins, cells and tissues. It combines protein foundation-model features, graph representation learning over context-specific interactomes, and hierarchical cell–cell and cell–tissue supervision. The repository includes construction of the cellular-context networks, model pretraining and inference, CORUM protein-complex and therapeutic-target prediction.
+ProtScape is a multiscale framework for learning context-specific protein representations across proteins, cells and tissues. It combines protein foundation-model features, graph representation learning over context-specific interactomes, and hierarchical cell–cell and cell–tissue supervision. The repository includes construction of the cellular-context networks, model pretraining and inference, CORUM protein-complex and therapeutic-target prediction, and ALS network-rewiring analysis.
 
 ## Installation
 
@@ -71,6 +71,7 @@ Detailed instructions:
 - [Pretraining and inference](pretraining/README.md)
 - [Downstream tasks](downstream_tasks/README.md)
 - [Analyses and plots](exploration/README.md)
+- [ALS rewiring and input preparation](exploration/analysis/ALS_rewiring/README.md)
 
 ## Repository structure
 

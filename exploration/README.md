@@ -57,13 +57,18 @@ python -m exploration.analysis.parkinson_inference
 # Target discovery, Leiden clustering and enrichment from those predictions
 python -m exploration.analysis.parkinson_target_analysis
 
-# ALS motor-neuron PPI-module rewiring (CTRL vs. VCP, D22 vs. D35)
+# Modularity against 1,000 degree-preserving null networks (connected STRING graph)
+python -m exploration.analysis.parkinson_modularity
+
+# ALS rewiring, after preparing the inputs documented in ALS_rewiring/README.md
 python -m exploration.analysis.ALS_rewiring_analysis
 ```
 
 The bulk-network step requires the complete `<output_root>/data_processing_bulk/` directory. Pretraining analyses use `checkpoint_root`; downstream analyses use the selected runs below `<output_root>/downstream_tasks/`. Outputs are written below `<output_root>/analysis/`.
 
-Parkinson inference reads the two ensembles from `parkinson_checkpoint_root`; set this to `<output_root>/downstream_tasks` for new training runs. Candidate analyses use the saved predictions and the configured Open Targets (28 July 2026) and DrugBank (October 2022) reference exports.
+See [ALS rewiring](analysis/ALS_rewiring/README.md) for interaction-matrix and neighbourhood generators, expression inputs and external annotations.
+
+Parkinson inference reads the two ensembles from `parkinson_checkpoint_root`; set this to `<output_root>/downstream_tasks` for new training runs. Candidate analyses use the saved predictions, `opentargets_parkinson_associations.csv` beside the disease labels, and the configured October 2022 DrugBank export.
 
 To generate Parkinson candidates and external support from the saved predictions without the STRING network analyses:
 

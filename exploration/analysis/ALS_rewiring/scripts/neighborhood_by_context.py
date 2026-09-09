@@ -7,7 +7,7 @@ config.NEIGHBORHOOD_GENE (default: ALS2CL) against
 config.NEIGHBORHOOD_EDGES_CSV (`als_rewiring_neighborhood_edges_csv` in
 configs/paths.yaml) - both overridable via --gene/--csv for ad hoc
 exploration of a different gene or CSV export. This reads a standalone
-neighborhood-edges CSV (gene-focus/ALS_merging_analysis-style exports with
+observed-PPI neighborhood CSV (prepare_neighborhood.py exports with
 source/target/*_hop columns), not INTERMEDIATE_DIR/giant.pickle - so it
 doesn't share state with the rest of this package; any CSV with the same
 column layout works.
@@ -44,11 +44,6 @@ Usage:
         --gene SOMEOTHERGENE \\
         --out-dir /path/to/figures/SOMEOTHERGENE_neighborhood
 
-Note: config.NEIGHBORHOOD_EDGES_CSV lives under another user's
-`temp/athomas/outputs/...` working directory, which has been observed to be
-rewritten/cleared by that user's own pipeline between runs. For an ad hoc
---csv of your own, always write --out-dir somewhere you own too (never back
-into that temp directory).
 """
 import argparse
 from pathlib import Path

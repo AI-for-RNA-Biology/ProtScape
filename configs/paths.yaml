@@ -41,13 +41,15 @@ therapeutic_target_dataset_dir: ../ProtScape_release/data/downstream_tasks/thera
 
 string_protein_info: data/reference_data/string_v12_human/9606.protein.info.v12.0.txt.gz
 string_links_detailed: data/reference_data/string_v12_human/9606.protein.links.detailed.v12.0.txt.gz
+string_links_physical: data/reference_data/string_v12_human/9606.protein.physical.links.v12.0.txt.gz
 string_protein_aliases: data/reference_data/string_v12_human/9606.protein.aliases.v12.0.txt.gz
 string_enrichment_terms: data/reference_data/string_v12_human/9606.protein.enrichment.terms.v12.0.txt.gz
-parkinson_opentargets_associations: ../ProtScape_release/data/reference_data/opentargets_parkinson_associations_2026-07-28.csv
 
 # ALS network rewiring
-als_rewiring_data_root: data/raw/als_rewiring
+als_rewiring_data_root: outputs/analysis/ALS_rewiring/inputs
+als_rewiring_checkpoint: ../ProtScape_release/models/pretraining/protscape_main_state_dict.pt
+als_rewiring_inference_dir: ../ProtScape_release/embeddings/s2gae_att_k1_fixed_do04_uni5e6
 als_rewiring_go_terms_csv: data/reference_data/human_GO_terms.csv
-als_rewiring_cyto_gene_expression_csv: data/raw/als_rewiring/df_genes_filtered_normalized.csv
-als_rewiring_raw_matrix_csv: data/raw/als_rewiring/ALS_motor_neuron_ppi_stringdb_s2gae_matrix.csv
-als_rewiring_neighborhood_edges_csv: data/raw/als_rewiring/ALS2CL_neighborhood_edges.csv
+als_rewiring_cyto_gene_expression_csv: ../ProtScape_release/data/raw/als_motor_neuron_sample_expression.csv
+als_rewiring_raw_matrix_csv: outputs/analysis/ALS_rewiring/inputs/ALS_motor_neuron_ppi_stringdb_s2gae_matrix.csv
+als_rewiring_neighborhood_edges_csv: outputs/analysis/ALS_rewiring/inputs/ALS2CL_neighborhood_edges.csv

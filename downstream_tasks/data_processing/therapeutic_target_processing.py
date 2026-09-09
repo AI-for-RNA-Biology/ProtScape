@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Build therapeutic-target labels from frozen Open Targets 24.03 data."""
+"""Build therapeutic-target labels and annotations from Open Targets 24.03."""
 
 from __future__ import annotations
 
@@ -135,15 +135,16 @@ def load_target_symbols(path: Path, table_format: str) -> Dict[str, str]:
     return symbols
 
 
-def load_associated_targets(
+def load_association_scores(
     path: Path,
     diseases: Iterable[str],
     target_symbols: Dict[str, str],
     table_format: str,
-) -> Dict[str, Set[str]]:
-    """Load non-literature indirect associations for each root disease."""
+) -> Dict[str, Dict[str, Dict[str, float]]]:
+    """Load indirect datatype scores, taking the maximum per gene and datatype."""
     requested = set(diseases)
-    target_ids = {disease: set() for disease in requested}
+    associations = {disease: {} for disease in sorted(requested)}
+    unresolved = set()
     files, detected = detect_table_files(path, table_format)
 
     for record in iter_records(files, detected):
@@ -151,24 +152,46 @@ def load_associated_targets(
         if disease_id not in requested:
             continue
         datatype = str(record.get("datatypeId", "")).strip().lower()
-        if datatype and datatype != "literature":
-            target_ids[disease_id].add(str(record.get("targetId", "")).strip())
+        if not datatype:
+            continue
+        target_id = str(record.get("targetId", "")).strip()
+        if target_id not in target_symbols:
+            unresolved.add(target_id)
+            continue
+        scores = associations[disease_id].setdefault(target_symbols[target_id], {})
+        score = float(record["score"])
+        scores[datatype] = max(score, scores.get(datatype, score))
 
-    unresolved = sorted({
-        target_id
-        for ids in target_ids.values()
-        for target_id in ids
-        if target_id not in target_symbols
-    })
     if unresolved:
         raise ValueError(
             f"{len(unresolved)} associated target IDs are absent from the 24.03 target table"
         )
+    return associations
 
+
+def non_literature_targets(
+    associations: Dict[str, Dict[str, Dict[str, float]]],
+) -> Dict[str, Set[str]]:
+    """Exclude genes with any non-literature association from negative labels."""
     return {
-        disease: {target_symbols[target_id] for target_id in ids}
-        for disease, ids in target_ids.items()
+        disease: {
+            protein for protein, scores in proteins.items()
+            if any(datatype != "literature" for datatype in scores)
+        }
+        for disease, proteins in associations.items()
     }
+
+
+def load_associated_targets(
+    path: Path,
+    diseases: Iterable[str],
+    target_symbols: Dict[str, str],
+    table_format: str,
+) -> Dict[str, Set[str]]:
+    """Load non-literature indirect associations for each root disease."""
+    return non_literature_targets(
+        load_association_scores(path, diseases, target_symbols, table_format)
+    )
 
 
 def clinically_relevant(phase: object, status: object) -> bool:
@@ -305,7 +328,7 @@ def build_dataset(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build therapeutic-target labels from frozen Open Targets 24.03 data."
+        description="Build therapeutic-target labels and annotations from Open Targets 24.03."
     )
     parser.add_argument(
         "--drugbank-targets",
@@ -361,9 +384,10 @@ def main() -> None:
         args.ot_diseases_dir, diseases, args.ot_format
     )
     target_symbols = load_target_symbols(args.ot_targets_dir, args.ot_format)
-    associated_targets = load_associated_targets(
+    associations = load_association_scores(
         args.ot_associations_dir, diseases, target_symbols, args.ot_format
     )
+    associated_targets = non_literature_targets(associations)
     ppi_genes = read_global_ppi_genes(args.global_ppi_path)
     druggable_targets = load_druggable_targets(args.drugbank_targets)
 
@@ -386,6 +410,22 @@ def main() -> None:
     pd.DataFrame(rows).to_csv(
         output_dir / "therapeutic_target_summary.csv", index=False
     )
+    if "MONDO_0005180" in associations:
+        annotation_rows = [
+            {
+                "protein": protein,
+                "datatype_scores_json": json.dumps(
+                    [{"id": datatype, "score": score}
+                     for datatype, score in sorted(scores.items())],
+                    separators=(",", ":"),
+                ),
+                "open_targets_release": "24.03",
+            }
+            for protein, scores in sorted(associations["MONDO_0005180"].items())
+        ]
+        pd.DataFrame(annotation_rows, columns=[
+            "protein", "datatype_scores_json", "open_targets_release"
+        ]).to_csv(output_dir / "opentargets_parkinson_associations.csv", index=False)
 
 
 if __name__ == "__main__":

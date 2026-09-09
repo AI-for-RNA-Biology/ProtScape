@@ -29,7 +29,10 @@ from exploration.analysis.parkinson_string import (
 
 
 ANALYSIS_DIR = Path(PATHS["output_root"]) / "analysis/parkinson_target_analysis"
-OPENTARGETS_ASSOCIATIONS = Path(PATHS["parkinson_opentargets_associations"])
+OPENTARGETS_ASSOCIATIONS = (
+    Path(PATHS["therapeutic_target_dataset_dir"])
+    / "opentargets_parkinson_associations.csv"
+)
 DRUGBANK_TARGETS = Path(PATHS["therapeutic_target_drugbank_targets"])
 PROBABILITY_THRESHOLD = 0.5
 
@@ -132,15 +135,21 @@ def build_recovery_tables(
 def build_external_support(
     candidates: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    associations = pd.read_csv(require_file(OPENTARGETS_ASSOCIATIONS))
+    associations = pd.read_csv(require_file(OPENTARGETS_ASSOCIATIONS), dtype=str)
     datatypes = associations["datatype_scores_json"].map(json.loads)
-    literature_only = datatypes.map(
-        lambda scores: len(scores) == 1 and scores[0]["id"].lower() == "literature"
+    non_literature = datatypes.map(
+        lambda scores: any(score["id"].lower() != "literature" for score in scores)
     )
-    supported = set(associations.loc[~literature_only, "protein"].str.upper())
-    query_dates = associations["query_utc"].dropna().unique()
-    if len(query_dates) != 1:
-        raise ValueError("Use one dated Open Targets association export.")
+    supported = set(associations.loc[non_literature, "protein"].str.upper())
+    provenance = {}
+    for field in ("open_targets_release", "query_utc"):
+        if field in associations:
+            values = associations[field].dropna().unique()
+            if len(values) != 1:
+                raise ValueError(f"Use one Open Targets snapshot ({field}).")
+            provenance[field] = values[0]
+    if not provenance:
+        raise ValueError("Open Targets annotations need a release version or export date.")
     drugbank = load_druggable_targets(require_file(DRUGBANK_TARGETS))
     displayed_flags = [
         "current_opentargets_parkinson_association_non_literature_only",
@@ -150,7 +159,8 @@ def build_external_support(
     symbols = joined["protein"].str.upper()
     joined[displayed_flags[0]] = symbols.isin(supported)
     joined[displayed_flags[1]] = symbols.isin(drugbank)
-    joined["query_utc"] = query_dates[0]
+    for field, value in provenance.items():
+        joined[field] = value
     summary_rows = []
     for model, rows in joined.groupby("model", sort=False):
         for flag in displayed_flags:
@@ -164,6 +174,7 @@ def build_external_support(
                     "candidate_count": len(rows),
                     "support_percent": 100 * count / len(rows),
                     "nomination_probability_threshold": PROBABILITY_THRESHOLD,
+                    **provenance,
                 }
             )
     return joined, pd.DataFrame(summary_rows)

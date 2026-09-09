@@ -18,7 +18,7 @@ The CORUM and therapeutic-target shell scripts generate the configured ESM-2 and
 
 `corum_dataset_dir` must contain `corum_memberships_filtered.csv`; `therapeutic_target_dataset_dir` must contain the 15 `therapeutic_target_<DISEASE_ID>.csv` tables.
 
-Each dataset includes a shared protein cohort and partitions: `corum_dataset/split_indices.npz` or `therapeutic_target_dataset/splits/therapeutic_target_<disease_id>.npz`. Training and analysis read the same files for every model. The companion release supplies these files with the paper labels, which use Open Targets 24.03 clinical evidence with 26.03 mappings.
+Each dataset includes a shared protein cohort and partitions: `corum_dataset/split_indices.npz` or `therapeutic_target_dataset/splits/therapeutic_target_<disease_id>.npz`. Training and analysis read the same files for every model. The companion release supplies these files with the paper labels, which use Open Targets 24.03 clinical evidence with contemporaneous identifier mappings and association-based negative exclusions.
 
 ## Rebuilding the labels
 
@@ -41,7 +41,7 @@ python -m downstream_tasks.data_processing.corum_processing
 python -m downstream_tasks.data_processing.therapeutic_target_processing
 ```
 
-The generated labels are written below `<output_root>/downstream_tasks/data/`. Point `corum_dataset_dir` and `therapeutic_target_dataset_dir` to these directories, then prepare the common cohort and splits once using a contextual embedding export:
+The generated labels are written below `<output_root>/downstream_tasks/data/`. The therapeutic-target builder also writes `opentargets_parkinson_associations.csv` beside the labels, using the same Open Targets inputs for candidate annotation. Point `corum_dataset_dir` and `therapeutic_target_dataset_dir` to these directories, then prepare the common cohort and splits once using a contextual embedding export:
 
 ```bash
 python -m downstream_tasks.prepare_splits --inference-model <inference-model>
