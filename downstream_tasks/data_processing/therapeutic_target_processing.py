@@ -1,10 +1,12 @@
 #!/usr/bin/env python
-"""Build therapeutic-target labels and annotations from Open Targets 24.03."""
+"""Build therapeutic-target labels from fixed Open Targets clinical and lookup tables."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import warnings
+from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Sequence, Set, Tuple
 
@@ -17,6 +19,7 @@ from ..config import (
     DEFAULT_THERAPEUTIC_TARGET_EVIDENCE_DIR,
     DEFAULT_THERAPEUTIC_TARGET_OT_ASSOCIATIONS_DIR,
     DEFAULT_THERAPEUTIC_TARGET_OT_DISEASES_DIR,
+    DEFAULT_THERAPEUTIC_TARGET_OT_RELEASE,
     DEFAULT_THERAPEUTIC_TARGET_OT_TARGETS_DIR,
     THERAPEUTIC_TARGET_IDS,
 )
@@ -118,20 +121,60 @@ def load_disease_descendants(
 
     missing = requested - set(descendants)
     if missing:
-        raise ValueError(f"Disease IDs absent from Open Targets 24.03: {sorted(missing)}")
+        raise ValueError(f"Disease IDs absent from the Open Targets disease table: {sorted(missing)}")
     return descendants
 
 
-def load_target_symbols(path: Path, table_format: str) -> Dict[str, str]:
+def load_target_symbols(
+    path: Path, table_format: str, ppi_genes: Set[str] | None = None,
+) -> Dict[str, str]:
+    """Align approved names to unique HGNC obsolete names in the PPI, without merging targets."""
     files, detected = detect_table_files(path, table_format)
     symbols: Dict[str, str] = {}
+    obsolete = {}
     for record in iter_records(files, detected):
         target_id = str(record.get("id", "")).strip()
         symbol = str(record.get("approvedSymbol", "")).strip().upper()
         if target_id and symbol:
             symbols[target_id] = symbol
+            if ppi_genes is not None and symbol not in ppi_genes:
+                entries = record.get("obsoleteSymbols")
+                obsolete[target_id] = {
+                    str(entry["label"]).strip().upper()
+                    for entry in ([] if entries is None else entries)
+                    if entry.get("source") == "HGNC"
+                } & ppi_genes
     if not symbols:
         raise ValueError(f"No target symbols found in {path}")
+    if ppi_genes is None:
+        return symbols
+
+    approved_owners = defaultdict(set)
+    for target_id, symbol in symbols.items():
+        approved_owners[symbol].add(target_id)
+    candidates, ambiguous = {}, set()
+    for target_id, aliases in obsolete.items():
+        if len(aliases) > 1:
+            ambiguous.add(target_id)
+        elif len(aliases) == 1:
+            alias = next(iter(aliases))
+            if approved_owners[alias] - {target_id}:
+                ambiguous.add(target_id)
+            else:
+                candidates[target_id] = alias
+    alias_owners = defaultdict(set)
+    for target_id, alias in candidates.items():
+        alias_owners[alias].add(target_id)
+    for target_id, alias in candidates.items():
+        if len(alias_owners[alias]) == 1:
+            symbols[target_id] = alias
+        else:
+            ambiguous.add(target_id)
+    if ambiguous:
+        warnings.warn(
+            f"Retained approved names outside the PPI for {len(ambiguous)} targets with "
+            f"ambiguous HGNC aliases: {', '.join(sorted(ambiguous))}", stacklevel=2,
+        )
     return symbols
 
 
@@ -140,6 +183,7 @@ def load_association_scores(
     diseases: Iterable[str],
     target_symbols: Dict[str, str],
     table_format: str,
+    ot_release: str | None = None,
 ) -> Dict[str, Dict[str, Dict[str, float]]]:
     """Load indirect datatype scores, taking the maximum per gene and datatype."""
     requested = set(diseases)
@@ -151,20 +195,33 @@ def load_association_scores(
         disease_id = str(record.get("diseaseId", ""))
         if disease_id not in requested:
             continue
-        datatype = str(record.get("datatypeId", "")).strip().lower()
+        if "datatypeId" in record and "score" in record:
+            schema_release, datatype_field, score_field = "24.03", "datatypeId", "score"
+        elif (
+            record.get("aggregationType") == "datatypeId"
+            and "aggregationValue" in record and "associationScore" in record
+        ):
+            schema_release, datatype_field, score_field = "26.03", "aggregationValue", "associationScore"
+        else:
+            raise ValueError(f"Unsupported Open Targets association schema in {path}")
+        if ot_release is not None and schema_release != ot_release:
+            raise ValueError(
+                f"Association schema matches {schema_release}, not the configured release {ot_release}"
+            )
+        datatype = str(record[datatype_field] or "").strip().lower()
         if not datatype:
-            continue
+            raise ValueError(f"Missing association datatype in {path}")
         target_id = str(record.get("targetId", "")).strip()
         if target_id not in target_symbols:
             unresolved.add(target_id)
             continue
         scores = associations[disease_id].setdefault(target_symbols[target_id], {})
-        score = float(record["score"])
+        score = float(record[score_field])
         scores[datatype] = max(score, scores.get(datatype, score))
 
     if unresolved:
         raise ValueError(
-            f"{len(unresolved)} associated target IDs are absent from the 24.03 target table"
+            f"{len(unresolved)} associated target IDs are absent from the Open Targets target table"
         )
     return associations
 
@@ -172,7 +229,7 @@ def load_association_scores(
 def non_literature_targets(
     associations: Dict[str, Dict[str, Dict[str, float]]],
 ) -> Dict[str, Set[str]]:
-    """Exclude genes with any non-literature association from negative labels."""
+    """Exclude genes with support beyond the literature (Europe PMC text-mining) datatype."""
     return {
         disease: {
             protein for protein, scores in proteins.items()
@@ -245,7 +302,7 @@ def resolve_positive_targets(
     missing = sorted(target_ids - set(target_symbols))
     if missing:
         raise ValueError(
-            f"{len(missing)} ChEMBL target IDs are absent from the 24.03 target table"
+            f"{len(missing)} ChEMBL target IDs are absent from the Open Targets target table"
         )
     return {target_symbols[target_id] for target_id in target_ids}
 
@@ -268,6 +325,7 @@ def build_dataset(
     output_dir: Path,
     processed_dir: Path,
     min_proteins_per_label: int,
+    lookup_release: str = DEFAULT_THERAPEUTIC_TARGET_OT_RELEASE,
 ) -> Dict[str, object]:
     evidence = collect_evidence(evidence_files, evidence_format, descendants)
     if evidence.empty:
@@ -322,13 +380,19 @@ def build_dataset(
         "n_negative": len(negative),
         "n_total": len(positive) + len(negative),
         "dataset_csv": output_csv.name,
-        "open_targets_release": "24.03",
+        "clinical_evidence_release": "24.03",
+        "lookup_release": lookup_release,
     }
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build therapeutic-target labels and annotations from Open Targets 24.03."
+        description="Build therapeutic-target labels from fixed Open Targets tables."
+    )
+    parser.add_argument(
+        "--ot-release", choices=["24.03", "26.03"],
+        default=DEFAULT_THERAPEUTIC_TARGET_OT_RELEASE,
+        help="Release of the disease, target and association lookup tables.",
     )
     parser.add_argument(
         "--drugbank-targets",
@@ -383,12 +447,12 @@ def main() -> None:
     descendants = load_disease_descendants(
         args.ot_diseases_dir, diseases, args.ot_format
     )
-    target_symbols = load_target_symbols(args.ot_targets_dir, args.ot_format)
+    ppi_genes = read_global_ppi_genes(args.global_ppi_path)
+    target_symbols = load_target_symbols(args.ot_targets_dir, args.ot_format, ppi_genes)
     associations = load_association_scores(
-        args.ot_associations_dir, diseases, target_symbols, args.ot_format
+        args.ot_associations_dir, diseases, target_symbols, args.ot_format, args.ot_release
     )
     associated_targets = non_literature_targets(associations)
-    ppi_genes = read_global_ppi_genes(args.global_ppi_path)
     druggable_targets = load_druggable_targets(args.drugbank_targets)
 
     rows = [
@@ -404,6 +468,7 @@ def main() -> None:
             output_dir=output_dir,
             processed_dir=processed_dir,
             min_proteins_per_label=args.min_proteins_per_label,
+            lookup_release=args.ot_release,
         )
         for disease in diseases
     ]
@@ -419,7 +484,7 @@ def main() -> None:
                      for datatype, score in sorted(scores.items())],
                     separators=(",", ":"),
                 ),
-                "open_targets_release": "24.03",
+                "open_targets_release": args.ot_release,
             }
             for protein, scores in sorted(associations["MONDO_0005180"].items())
         ]

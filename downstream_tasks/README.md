@@ -18,7 +18,7 @@ The CORUM and therapeutic-target shell scripts generate the configured ESM-2 and
 
 `corum_dataset_dir` must contain `corum_memberships_filtered.csv`; `therapeutic_target_dataset_dir` must contain the 15 `therapeutic_target_<DISEASE_ID>.csv` tables.
 
-Each dataset includes a shared protein cohort and partitions: `corum_dataset/split_indices.npz` or `therapeutic_target_dataset/splits/therapeutic_target_<disease_id>.npz`. Training and analysis read the same files for every model. The companion release supplies these files with the paper labels, which use Open Targets 24.03 clinical evidence with contemporaneous identifier mappings and association-based negative exclusions.
+Each dataset includes a shared protein cohort and partitions: `corum_dataset/split_indices.npz` or `therapeutic_target_dataset/splits/therapeutic_target_<disease_id>.npz`. Training and analysis read the same files for every model. The companion release supplies these files with the paper labels.
 
 ## Rebuilding the labels
 
@@ -28,11 +28,15 @@ To rebuild the processed labels, set:
 |---|---|
 | `corum_raw_json` | [CORUM](https://mips.helmholtz-muenchen.de/corum/download) 4.1 snapshot, included at `data/raw/corum_4.1/corum_humanComplexes.json` in the release |
 | `therapeutic_target_evidence_dir` | [Open Targets Platform 24.03 ChEMBL evidence](https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/24.03/output/etl/json/evidence/sourceId=chembl/) |
-| `therapeutic_target_ot_diseases_dir` | Open Targets 24.03 [`diseases`](https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/24.03/output/etl/parquet/diseases/) |
-| `therapeutic_target_ot_targets_dir` | Open Targets 24.03 [`targets`](https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/24.03/output/etl/parquet/targets/) |
-| `therapeutic_target_ot_associations_dir` | Open Targets 24.03 [`associationByDatatypeIndirect`](https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/24.03/output/etl/parquet/associationByDatatypeIndirect/) |
+| `therapeutic_target_ot_release` | `"26.03"` for the disease, target and association lookup tables |
+| `therapeutic_target_ot_diseases_dir` | Open Targets 26.03 [`disease`](https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/26.03/output/disease/) |
+| `therapeutic_target_ot_targets_dir` | Open Targets 26.03 [`target`](https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/26.03/output/target/) |
+| `therapeutic_target_ot_associations_dir` | Open Targets 26.03 [`association_by_datatype_indirect`](https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/26.03/output/association_by_datatype_indirect/) |
 | `therapeutic_target_drugbank_targets` | October 2022 DrugBank target export, included in the data release at `data/reference_data/drugbank/all_approved_oct2022.csv` |
 | `global_ppi` | The same two-column HGNC-symbol interactome used for pretraining |
+
+Clinical evidence remains fixed at 24.03; the lookup tables define disease mappings, gene symbols and association-based negative exclusions. For an all-24.03 rebuild, supply the three 24.03 lookup tables and set `therapeutic_target_ot_release` to `"24.03"` (or pass `--ot-release 24.03`).
+Gene mapping retains approved symbols present in the interactome, otherwise using an unambiguous HGNC obsolete symbol shared with the interactome.
 
 After setting these paths, rebuild both datasets from the repository root:
 

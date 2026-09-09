@@ -34,9 +34,10 @@ corum_raw_json: ../ProtScape_release/data/raw/corum_4.1/corum_humanComplexes.jso
 corum_dataset_dir: ../ProtScape_release/data/downstream_tasks/corum_dataset
 therapeutic_target_drugbank_targets: ../ProtScape_release/data/reference_data/drugbank/all_approved_oct2022.csv
 therapeutic_target_evidence_dir: data/reference_data/opentargets_24_03/evidence/sourceId=chembl
-therapeutic_target_ot_diseases_dir: data/reference_data/opentargets_24_03/diseases
-therapeutic_target_ot_targets_dir: data/reference_data/opentargets_24_03/targets
-therapeutic_target_ot_associations_dir: data/reference_data/opentargets_24_03/associationByDatatypeIndirect
+therapeutic_target_ot_release: "26.03"
+therapeutic_target_ot_diseases_dir: data/reference_data/opentargets_26_03/disease
+therapeutic_target_ot_targets_dir: data/reference_data/opentargets_26_03/target
+therapeutic_target_ot_associations_dir: data/reference_data/opentargets_26_03/association_by_datatype_indirect
 therapeutic_target_dataset_dir: ../ProtScape_release/data/downstream_tasks/therapeutic_target_dataset
 
 string_protein_info: data/reference_data/string_v12_human/9606.protein.info.v12.0.txt.gz

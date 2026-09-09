@@ -25,6 +25,7 @@ DEFAULT_THERAPEUTIC_TARGET_DRUGBANK_TARGETS = Path(
 DEFAULT_THERAPEUTIC_TARGET_EVIDENCE_DIR = Path(
     PATHS["therapeutic_target_evidence_dir"]
 ).expanduser()
+DEFAULT_THERAPEUTIC_TARGET_OT_RELEASE = PATHS["therapeutic_target_ot_release"]
 DEFAULT_THERAPEUTIC_TARGET_OT_DISEASES_DIR = Path(
     PATHS["therapeutic_target_ot_diseases_dir"]
 ).expanduser()
