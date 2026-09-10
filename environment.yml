@@ -27,6 +27,7 @@ dependencies:
   - requests
   - statsmodels
   - pip
+  - setuptools<81
   - wandb=0.13.4
   - protobuf=3.20.3
   - pip:
