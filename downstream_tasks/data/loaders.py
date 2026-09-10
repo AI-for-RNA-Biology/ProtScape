@@ -14,6 +14,8 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
+from .context_controls import replace_protein_instances
+
 
 def load_esm_embeddings(path: Path) -> Dict[str, np.ndarray]:
     """
@@ -616,6 +618,8 @@ class EmbeddingLoader:
         hc_cell_path: Optional[Path] = None,
         hc_protein_labels_path: Optional[Path] = None,
         hc_cell_labels_path: Optional[Path] = None,
+        protein_context_mode: str = "contextual",
+        control_global_path: Optional[Path] = None,
     ):
         """
         Args:
@@ -630,6 +634,8 @@ class EmbeddingLoader:
         self.hc_cell_path = hc_cell_path
         self.hc_protein_labels_path = hc_protein_labels_path
         self.hc_cell_labels_path = hc_cell_labels_path
+        self.protein_context_mode = protein_context_mode
+        self.control_global_path = control_global_path
 
         self._esm_dict: Optional[Dict[str, np.ndarray]] = None
         self._global_dict: Optional[Dict[str, np.ndarray]] = None
@@ -702,7 +708,20 @@ class EmbeddingLoader:
         Returns:
             Tuple of (gene_to_vecs, gene_to_cells)
         """
-        return build_gene_contexts_from_hc(self._load_hc_protein_embed(), target_genes)
+        bags, cells = build_gene_contexts_from_hc(self._load_hc_protein_embed(), target_genes)
+        return self._apply_protein_control(bags), cells
+
+    def _apply_protein_control(self, bags):
+        if self.protein_context_mode == "contextual":
+            return bags
+        payload = self._load_hc_protein_embed()
+        protein_dim = next(iter(payload["embeddings"].values())).shape[1]
+        global_vectors = None
+        if self.protein_context_mode == "global":
+            if self.control_global_path is None:
+                raise ValueError("The global protein control requires a CF embedding export")
+            global_vectors = load_global_protein_embeddings(self.control_global_path)
+        return replace_protein_instances(bags, protein_dim, self.protein_context_mode, global_vectors)
 
     def load_hc_tissue_groups(
         self,
@@ -751,11 +770,12 @@ class EmbeddingLoader:
         Returns:
             Tuple of (gene_to_vecs, gene_to_cells) with protein+cell concatenated
         """
-        return build_gene_contexts_from_hc_with_cell(
+        bags, cells = build_gene_contexts_from_hc_with_cell(
             self._load_hc_protein_embed(),
             self._load_hc_cell_embed(),
             target_genes,
         )
+        return self._apply_protein_control(bags), cells
 
     def load_hc_with_cell_mean(self, target_genes: Optional[Set[str]] = None) -> Tuple[Dict[str, np.ndarray], Dict[str, List[str]]]:
         """
