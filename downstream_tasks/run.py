@@ -26,7 +26,6 @@ from .data.global_split import (
 )
 from .data.loaders import EmbeddingLoader, load_pinnacle_paper_gene_universe
 from .data.task_loaders import get_task_loader
-from .data.context_controls import use_released_partition
 from .models.registry import MODEL_VARIANTS, parse_model_argument
 from .training.cv_utils import SplitPlan, build_cv_splits
 from .training.trainer import Trainer
@@ -277,10 +276,6 @@ def parse_args():
         help="Optional label CSV override for a versioned or corrected task snapshot.",
     )
     parser.add_argument("--model")
-    parser.add_argument("--protein-context-mode", choices=["contextual", "mean", "global"], default="contextual")
-    parser.add_argument("--control-global-embeddings", type=Path, default=None)
-    parser.add_argument("--released-split", type=Path, default=None,
-                        help="Use the release's fixed cohort/labels/folds; fail on a mismatch.")
     parser.add_argument("--embedding-source", default="esm", choices=["esm", "prostt5"])
     parser.add_argument(
         "--dataset-mode",
@@ -663,10 +658,6 @@ def main():
     if args.output_model_key is not None and len(model_keys) != 1:
         print("[ERROR] --output-model-key can only be used with one model.")
         return 1
-    if args.protein_context_mode != "contextual":
-        allowed = {"abmil_hc_cell_gated_8", "abmil_hc_cell_ext_embed_gated_8_pdl", "abmil_hc_gated_8", "abmil_hc_ext_embed_gated_8_pdl"}
-        if not set(model_keys).issubset(allowed) or is_global_protocol:
-            raise ValueError("Protein-instance controls are restricted to the specified ABMIL readouts")
     if is_global_protocol:
         invalid_model_keys = [
             model_key
@@ -722,8 +713,6 @@ def main():
         hc_cell_path=hc_paths["cell_embed"],
         hc_protein_labels_path=hc_protein_labels_path,
         hc_cell_labels_path=hc_cell_labels_path,
-        protein_context_mode=args.protein_context_mode,
-        control_global_path=args.control_global_embeddings,
     )
 
     legacy_gene_universe = None
@@ -770,10 +759,6 @@ def main():
             gene_universe=legacy_gene_universe,
             gene_universe_name="pinnacle_paper",
         )
-    if args.released_split is not None:
-        shared_split_plan = use_released_partition(
-            args.released_split, shared_genes, Y_shared, class_names, shared_split_plan
-        )
     embedding_loader.clear_cache()
     shared_split_fingerprint = split_fingerprint(
         shared_genes, shared_split_plan.folds
@@ -807,8 +792,6 @@ def main():
             f"{model_key}__hp_{hp_suffix}__emb_{config.embedding_source}"
             f"{dataset_suffix}"
         )
-        if args.protein_context_mode != "contextual":
-            output_model_key += f"__protein_{args.protein_context_mode}"
 
         output_dir = setup_output_dirs(
             config.output_root,
@@ -850,10 +833,6 @@ def main():
 
         result["task"] = args.task
         result["task_csv"] = task_csv.name
-        result["protein_context_mode"] = args.protein_context_mode
-        result["control_global_embeddings"] = str(args.control_global_embeddings or "")
-        result["released_split"] = str(args.released_split or "")
-        result["released_split_sha256"] = _sha256_file(args.released_split) if args.released_split else ""
         result["task_csv_path"] = str(task_csv)
         result["task_csv_sha256"] = task_csv_sha256
         result["task_dataset_manifest"] = task_dataset_provenance.get(
