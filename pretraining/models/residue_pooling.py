@@ -12,7 +12,9 @@ from torch.utils.checkpoint import checkpoint
 def attach_residue_ids(ppi_data, ppi_layers, celltype_map, cache_root):
     """Bind sampler node IDs to the cache without relying on local graph numbering."""
     metadata = json.loads((Path(cache_root) / "manifest.json").read_text())
-    lookup = {name: index for index, name in enumerate(metadata["genes"])}
+    lookup = {}
+    for index, name in enumerate(metadata["genes"]):
+        lookup.setdefault(name, index)  # same first-record policy as read_data
     for name, cell in celltype_map.items():
         if cell in ppi_data:
             names = list(ppi_layers[name].nodes())

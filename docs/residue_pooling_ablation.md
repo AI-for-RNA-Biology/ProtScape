@@ -25,6 +25,10 @@ residues. Every new pooling variant uses exactly this cache. This deterministic
 long-sequence policy differs from the original generator's OOM-triggered BOS
 chunk fallback; a BOS-versus-residue comparison therefore includes that caveat
 for long sequences. The mean/MLP/attention comparisons have identical inputs.
+The release contains duplicate gene/isoform records and ESM-supported `.`
+positions. Preserve them and their order: the original GNN uses the first record
+for a gene; the downstream feature dictionary uses the last. The new residue
+cache mirrors both conventions rather than silently changing the proteins.
 
 Standardize using the fixed mean-vector statistics on the feature-covered
 global interactome, matching the original feature-normalization convention.
@@ -65,6 +69,9 @@ Add two **frozen ESM-only** linear baselines on each task: `LR_ESM_BOS` and
 `LR_ESM_mean`. No learned-pooler-only LR baselines. Total: 1,156 downstream
 readout runs, each with five CV fits. Unchanged sequence baselines run once per
 task, not once per contextual model.
+Existing BOS contextual TT/CORUM and localization results are reused. Only the
+12 missing BOS localization ABMIL-PDL settings are additionally fitted, using
+the released frozen encoder (no BOS pretraining).
 
 The controlled PPI comparison recomputes 1:1 context-mean test AUPRC for the
 released BOS model and three selected models, with identical query banks.

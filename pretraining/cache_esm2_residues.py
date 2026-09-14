@@ -36,21 +36,29 @@ def prepare(root, release):
     source = release / "data/raw/protein_sequences.csv.gz"
     features = release / "data/sequence_embeddings/gene_protein_embeddings_esm2_3B_layer33.plk"
     graph = release / "data/networks_bulk/global_ppi_edgelist.txt"
-    # Match exactly the original feature-covered reference-interactome cohort.
-    available = set(pd.read_pickle(features).gene_name)
-    genes = [gene for gene in nx.read_edgelist(graph).nodes if gene in available]
-    table = pd.read_csv(source).set_index("gene_name")
-    if table.index.has_duplicates:
-        raise ValueError("Protein sequence identifiers must be unique")
-    sequences = table.loc[genes, "fasta_seq"].str.strip().str.upper().tolist()
-    if any(not isinstance(seq, str) or not seq or not seq.isalpha() for seq in sequences):
+    # Preserve all release rows, including duplicate gene/isoform records.
+    # The original GNN loader takes the first record; downstream LR takes the
+    # last. Keeping that same order avoids changing either published baseline.
+    table = pd.read_csv(source)
+    genes = table.gene_name.tolist()
+    if genes != pd.read_pickle(features).gene_name.tolist():
+        raise ValueError("Sequence row identities/order differ from released BOS features")
+    first = {}
+    for index, gene in enumerate(genes):
+        first.setdefault(gene, index)
+    gnn_indices = [first[gene] for gene in nx.read_edgelist(graph).nodes if gene in first]
+    sequences = table.fasta_seq.str.strip().str.upper().tolist()
+    allowed = set("LAGVSERTIDPKQNFYMHWCXBUZO.-")
+    if any(not isinstance(seq, str) or not seq or not set(seq) <= allowed for seq in sequences):
         raise ValueError("Missing/invalid protein sequences")
     metadata = dict(model=MODEL_NAME, layer=LAYER, embedding_dim=DIM, genes=genes,
                     sequence_sha256=sha256(source), bos_sha256=sha256(features),
                     graph_sha256=sha256(graph), chunk_size=CHUNK,
                     long_sequence_policy="consecutive nonoverlapping 1024-residue windows; keep every residue",
                     special_tokens="exclude BOS, EOS and padding", storage_dtype="float16",
-                    inference_dtype="float32", sequences=sequences)
+                    inference_dtype="float32", sequences=sequences, gnn_indices=gnn_indices,
+                    duplicate_policy="preserve release order; first row for GNN, last row for downstream LR",
+                    gap_policy="retain ESM-supported dot/dash positions exactly as released")
     manifest = root / "manifest.json"
     if manifest.exists():
         if json.loads(manifest.read_text()) != metadata:
@@ -127,7 +135,7 @@ def finalize(root):
         if not np.isfinite(values).all():
             raise ValueError("Nonfinite residues in cache")
         means.append(values.mean(axis=0))
-    features = torch.from_numpy(np.stack(means))
+    features = torch.from_numpy(np.stack(means)[metadata["gnn_indices"]])
     mean, std = features.mean(0).numpy(), features.std(0).numpy()
     if not np.all(std > 0):
         raise ValueError("Zero variance feature in residue-mean cache")
