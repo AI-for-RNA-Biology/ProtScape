@@ -1,16 +1,14 @@
-# ProtScape
+# ProtScape: Resolving context-specific protein-protein interactomes for biological discovery and therapeutic target prioritisation
 
-**Geometric deep learning for context-specific protein interactomes**
-
-**Authors:** Alois Thomas, Lisa Fournier, Vincent Jung, Pascal Frossard, Rickie Patani, Raphaëlle Luisier and Cédric Vincent-Cuaz<br>
+**Authors:** Alois Thomas, Lisa Fournier, Vincent Jung, Rickie Patani, Pascal Frossard, Raphaëlle Luisier and Cédric Vincent-Cuaz<br>
 **Correspondence:** [Cédric Vincent-Cuaz](mailto:cedric.vincent-cuaz@unibe.ch)<br>
-**Paper:** preprint forthcoming · **Data and pretrained models:** release forthcoming
+**Data and pretrained models:** [Zenodo](https://zenodo.org/records/22645081)
 
 [![Overview of ProtScape](assets/protscape_overview.png)](assets/protscape_overview.pdf)
 
 ## Overview
 
-ProtScape is a multiscale framework for learning context-specific protein representations across proteins, cells and tissues. It combines protein foundation-model features, graph representation learning over context-specific interactomes, and hierarchical cell–cell and cell–tissue supervision. The repository includes construction of the cellular-context networks, model pretraining and inference, CORUM protein-complex and therapeutic-target prediction.
+ProtScape is a multiscale framework for learning context-specific protein representations across proteins, cells and tissues. It combines protein foundation-model features, graph representation learning over context-specific interactomes, and hierarchical cell–cell and cell–tissue supervision. The repository includes construction of the cellular-context networks, model pretraining and inference, CORUM protein-complex and therapeutic-target prediction, and ALS network-rewiring analysis.
 
 ## Installation
 
@@ -31,26 +29,25 @@ conda env create -f environment_cellphonedb.yml
 
 ## Data and configuration
 
-Set input and output paths in [`configs/paths.yaml`](configs/paths.yaml). Large datasets, checkpoints and generated outputs are stored outside the repository.
+Download the [data release](https://zenodo.org/records/22645081) and set paths in [`configs/paths.yaml`](configs/paths.yaml). Defaults expect a sibling directory named `ProtScape_release` and write results to `outputs/`.
 
-Requirements for rebuilding the networks are documented in [`data_processing_bulk/README.md`](data_processing_bulk/README.md). Links to the processed datasets and released checkpoints will be added here when the accompanying archive is public. After downloading the archive, extract its graph bundle with:
+The release includes networks, protein embeddings, pretraining checkpoints, CORUM and therapeutic-target labels and splits, and figure source tables. Downstream checkpoints cover the ProtScape and PINNACLE Parkinson ensembles. Extract the graph bundle with:
 
 ```bash
 unzip /path/to/ProtScape_release/data/networks_bulk.zip \
     -d /path/to/ProtScape_release/data
 ```
 
+Use the released inputs for the paper experiments. To rebuild datasets, follow the [network](data_processing_bulk/README.md) and [downstream](downstream_tasks/README.md) processing instructions and obtain their listed inputs.
+
 ## Usage
 
 Run commands from the repository root:
 
-```bash
-# Build the context-specific networks and metagraph
-conda activate protscape-scrna
-bash data_processing_bulk/run_pipeline.sh all
+Before training all selected downstream configurations, generate the six ablation embedding exports listed in the [inference instructions](pretraining/README.md#architecture-ablation-embeddings).
 
+```bash
 # Train the main ProtScape model
-conda activate protscape
 bash scripts/run_pretraining.sh
 
 # Generate embeddings from the released main checkpoint
@@ -61,8 +58,11 @@ python -m pretraining.inference \
 python -m downstream_tasks.run_selected corum
 python -m downstream_tasks.run_selected therapeutic_targets
 
-# Recompute analyses and their plots
-bash scripts/run_analysis.sh
+# Redraw quantitative panels from released source tables (excluding ALS rewiring)
+python -m exploration.plotting.paper_figures
+
+# Export the five result tables as numeric CSV files
+python -m exploration.plotting.paper_tables
 ```
 
 Detailed instructions:
@@ -71,6 +71,7 @@ Detailed instructions:
 - [Pretraining and inference](pretraining/README.md)
 - [Downstream tasks](downstream_tasks/README.md)
 - [Analyses and plots](exploration/README.md)
+- [ALS rewiring and input preparation](exploration/analysis/ALS_rewiring/README.md)
 
 ## Repository structure
 
@@ -82,7 +83,3 @@ exploration/            Analysis and plotting code
 configs/                Data paths and model configurations
 scripts/                Workflow entry points
 ```
-
-## Citation
-
-Citation information will be added with the preprint.

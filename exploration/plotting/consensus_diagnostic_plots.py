@@ -43,9 +43,6 @@ SOURCE_STYLE = {
     "savefig.transparent": True,
 }
 
-matplotlib.rcParams.update(SOURCE_STYLE)
-
-
 CLASS_ORDER = [
     "Consensus negative",
     "Weak disagreement negative",
@@ -284,12 +281,12 @@ def plot_mean_std(axes, table, *, set_title=False, show_labels=False):
         if set_title:
             ax.set_title(edge_label)
         if show_labels:
-            ax.set_xlabel("Prediction mean")
+            ax.set_xlabel("Prediction mean across losses")
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 0.5)
         clean_2d_axis(ax)
     if show_labels:
-        axes[0].set_ylabel("Prediction std")
+        axes[0].set_ylabel("Prediction SD across losses")
 
 
 def plot_loss_similarity(axes, table):
@@ -346,6 +343,7 @@ def plot_loss_similarity(axes, table):
 
 def plot_consensus(source, output):
     """Render loss-score geometry and agreement diagnostics."""
+    matplotlib.rcParams.update(SOURCE_STYLE)
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     score_sample = pd.read_csv(source / "score_sample.csv.gz")

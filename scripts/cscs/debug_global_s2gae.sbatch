@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-REPO_ROOT="${PROTSCAPE_ROOT:-/users/aloistho/projects/ProtScape}"
+REPO_ROOT="${PROTSCAPE_ROOT:-/users/aloistho/projects/ProtScape_dev}"
 CONDA_ENV="${PROTSCAPE_CONDA_ENV:-/iopsstor/scratch/cscs/aloistho/protscape/conda-global-s2gae}"
 PYTHON="${CONDA_ENV}/bin/python"
 DATA_ROOT="${PROTSCAPE_DATA:-/iopsstor/scratch/cscs/aloistho/protscape/release-data}"

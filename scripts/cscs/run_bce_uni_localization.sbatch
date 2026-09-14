@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-REPO_ROOT="${PROTSCAPE_ROOT:-/users/aloistho/projects/ProtScape}"
+REPO_ROOT="${PROTSCAPE_ROOT:-/users/aloistho/projects/ProtScape_dev}"
 CONDA_ENV="${PROTSCAPE_CONDA_ENV:-/iopsstor/scratch/cscs/aloistho/protscape/conda-global-s2gae}"
 SOURCE_INFERENCE_ROOT="${PROTSCAPE_INFERENCE_ROOT:-/users/aloistho/projects/ProtScape_release/embeddings}"
 SOURCE_ESM="${PROTSCAPE_ESM:-/iopsstor/scratch/cscs/aloistho/protscape/release-data/sequence_embeddings/gene_protein_embeddings_esm2_3B_layer33.plk}"

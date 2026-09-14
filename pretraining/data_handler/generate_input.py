@@ -14,23 +14,17 @@ from sklearn.model_selection import train_test_split
 
 
 def _get_embedding_column(df, ppi_feat_dir):
-    preferred_columns = []
     feat_path = str(ppi_feat_dir).lower()
-
     if "prostt5" in feat_path or "prosst5" in feat_path:
-        preferred_columns.append("ProstT5-Embeddings")
-    if "esm" in feat_path:
-        preferred_columns.append("ESM2-Embeddings")
-
-    preferred_columns.extend(["ProstT5-Embeddings", "ESM2-Embeddings"])
-    seen = set()
-
-    for column in preferred_columns:
-        if column in seen:
-            continue
-        seen.add(column)
-        if column in df.columns:
-            return column
+        column = "ProstT5-Embeddings"
+    elif "esm" in feat_path:
+        column = "ESM2-Embeddings"
+    else:
+        column = None
+    if column is not None:
+        if column not in df.columns:
+            raise KeyError(f"Expected {column} in {ppi_feat_dir}; found {list(df.columns)}")
+        return column
 
     embedding_columns = [col for col in df.columns if col.endswith("-Embeddings")]
     if len(embedding_columns) == 1:
@@ -76,7 +70,7 @@ def split_data_global(
         try:
             tuple_ = (x, y)
             set_ = edges_to_sets[tuple_]
-        except:
+        except KeyError:
             tuple_ = (y, x)
             set_ = edges_to_sets[tuple_]
         if set_ == 'train':
@@ -85,6 +79,8 @@ def split_data_global(
             val_mask[i] = 1
         elif set_ == 'test':
             test_mask[i] = 1
+        else:
+            raise ValueError(f"Unknown split {set_!r} for edge {tuple_}")
 
         if not dict_edge_count is None:
             edge_weights[i] = 1. / dict_edge_count[tuple_]
@@ -116,7 +112,7 @@ def compute_degree(
             dict_degree[x] += 1
             dict_degree[y] += 1
         print('--- f:', f)
-        print('current degree counts:', np.unique(list(dict_degree.values()), return_count=True))
+        print('current degree counts:', np.unique(list(dict_degree.values()), return_counts=True))
     return dict_degree
 
 
@@ -148,7 +144,7 @@ def compute_count_edge(
         for edge in list(ppi.edges):
             try:
                 dict_edges[edge] += 1
-            except:
+            except KeyError:
                 x, y = edge
                 dict_edges[(y,x)] += 1
 
@@ -259,11 +255,7 @@ def read_ppi(
         ppi = nx.read_edgelist(f)
         if verbose:
             print('ppi.nodes():', len(ppi.nodes()))
-        for gene in removed_genes:
-            try:
-                ppi.remove_node(gene)
-            except:
-                continue
+        ppi.remove_nodes_from(removed_genes)
         if verbose:
             print('updated ppi.nodes():', len(ppi.nodes()))
         

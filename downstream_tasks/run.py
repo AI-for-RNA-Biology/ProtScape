@@ -26,6 +26,7 @@ from .data.global_split import (
 )
 from .data.loaders import EmbeddingLoader, load_pinnacle_paper_gene_universe
 from .data.task_loaders import get_task_loader
+from .data.partitions import load_task_partition, load_training_partition, partition_path
 from .models.registry import MODEL_VARIANTS, parse_model_argument
 from .training.cv_utils import SplitPlan, build_cv_splits
 from .training.trainer import Trainer
@@ -206,7 +207,7 @@ def parse_args():
         "--embedding-inference-model",
         default=None,
         help=(
-            "Optional frozen embedding snapshot. The --inference-model value remains "
+            "Optional embedding directory. The --inference-model value remains "
             "the downstream run identifier and output folder name."
         ),
     )
@@ -273,7 +274,7 @@ def parse_args():
         "--task-csv",
         type=Path,
         default=None,
-        help="Optional label CSV override for a versioned or corrected task snapshot.",
+        help="Label CSV with prepared partitions beside it; use configs/paths.yaml for analysis inputs.",
     )
     parser.add_argument("--model")
     parser.add_argument("--embedding-source", default="esm", choices=["esm", "prostt5"])
@@ -704,9 +705,6 @@ def main():
         return 1
     task_csv_sha256 = _sha256_file(task_csv)
 
-    task_loader = get_task_loader(args.task, task_csv)
-    genes, Y, class_names = task_loader.load()
-
     embedding_loader = EmbeddingLoader(
         esm_path=config.embeddings.esm,
         hc_protein_path=hc_paths["protein_embed"],
@@ -715,28 +713,26 @@ def main():
         hc_cell_labels_path=hc_cell_labels_path,
     )
 
-    legacy_gene_universe = None
-    if not is_global_protocol and config.dataset_mode == "legacy":
-        if not config.embeddings.pinnacle_paper_labels.exists():
-            print(
-                "[ERROR] PINNACLE labels not found: "
-                f"{config.embeddings.pinnacle_paper_labels}"
-            )
-            return 1
-        legacy_gene_universe = load_pinnacle_paper_gene_universe(
-            config.embeddings.pinnacle_paper_labels
-        )
-        print(f"[INFO] Legacy gene universe (pinnacle_paper): {len(legacy_gene_universe)} genes")
-
     context_presence = None
     shared_contexts = None
+    # Paper tasks always use the released cohort/folds, including CF probes.
+    # The explicit localization/pathway datasets retain their dev-only protocol.
+    paper_task = args.task == "corum" or args.task.startswith("therapeutic_target_")
+    use_saved_partition = paper_task or partition_path(args.task, task_csv, config.dataset_mode).is_file()
+    if use_saved_partition:
+        shared_genes, Y_shared, class_names, shared_split_plan = load_task_partition(
+            args.task, task_csv, config.n_folds, config.dataset_mode,
+        )
+        genes, Y = shared_genes, Y_shared
+    else:
+        genes, Y, class_names = get_task_loader(args.task, task_csv).load()
     if is_global_protocol:
         try:
             context_presence = load_context_presence(
                 args.context_ppi_edgelists,
                 expected_context_count=EXPECTED_CELL_PPI_CONTEXTS,
             )
-            shared_genes, Y_shared, shared_split_plan, shared_contexts = (
+            global_genes, global_labels, computed_plan, shared_contexts = (
                 _build_global_shared_split(
                     genes=genes,
                     Y=Y,
@@ -746,9 +742,20 @@ def main():
                     n_splits=config.n_folds,
                 )
             )
+            if use_saved_partition:
+                if global_genes != shared_genes or not np.array_equal(global_labels, Y_shared):
+                    raise ValueError("CF embeddings must cover the entire released cohort.")
+                shared_split_plan.label_clusters = computed_plan.label_clusters
+            else:
+                shared_genes, Y_shared, shared_split_plan = global_genes, global_labels, computed_plan
         except (FileNotFoundError, ValueError) as error:
             print(f"[ERROR] {error}")
             return 1
+    elif use_saved_partition:
+        shared_genes, Y_shared, class_names, shared_split_plan = load_training_partition(
+            args.task, task_csv, embedding_loader, config.seed, config.n_folds,
+            config.dataset_mode,
+        )
     else:
         shared_genes, Y_shared, shared_split_plan = _build_shared_split(
             genes=genes,
@@ -756,8 +763,6 @@ def main():
             embedding_loader=embedding_loader,
             seed=config.seed,
             n_splits=config.n_folds,
-            gene_universe=legacy_gene_universe,
-            gene_universe_name="pinnacle_paper",
         )
     embedding_loader.clear_cache()
     shared_split_fingerprint = split_fingerprint(
@@ -799,14 +804,58 @@ def main():
             args.inference_model,
             output_model_key,
         )
-        saved_split_fingerprint = _save_split_artifacts(
-            output_dir,
-            shared_genes,
-            shared_split_plan,
-            seed=config.seed,
-            context_presence=context_presence,
-            gene_contexts=shared_contexts,
+        split_arrays = {
+            "genes": np.asarray(shared_genes, dtype=str),
+            "labels": Y_shared,
+            "class_names": np.asarray(class_names, dtype=str),
+            **{
+                f"fold_{fold}": np.asarray(indices, dtype=np.int64)
+                for fold, indices in enumerate(shared_split_plan.folds)
+            },
+        }
+        # Never relabel an existing checkpoint with a different partition.
+        saved_split = output_dir / "split_indices.npz"
+        if any((output_dir / "models").glob("*.pt")) and not any(
+            (output_dir / name).is_file()
+            for name in ("split_indices.npz", "test_predictions.npz", "test_idx.npy")
+        ):
+            raise ValueError(f"Existing checkpoints have no partition metadata: {output_dir}")
+        if saved_split.exists():
+            with np.load(saved_split, allow_pickle=False) as previous:
+                if any((key not in previous and key not in {"labels", "class_names"})
+                       or (key in previous and not np.array_equal(value, previous[key]))
+                       for key, value in split_arrays.items()):
+                    raise ValueError(
+                        f"Existing run uses different partitions: {output_dir}. "
+                        "Use a new output-model-key for retraining; do not overwrite its split."
+                    )
+        predictions = output_dir / "test_predictions.npz"
+        if predictions.exists():
+            with np.load(predictions, allow_pickle=False) as previous:
+                if not np.array_equal(previous["test_idx"], split_arrays["fold_0"]):
+                    raise ValueError(f"Existing predictions use a different test set: {output_dir}")
+                if "y_true" in previous and not np.array_equal(
+                    previous["y_true"], Y_shared[split_arrays["fold_0"]]
+                ):
+                    raise ValueError(f"Existing predictions use different test labels: {output_dir}")
+                if "class_names" in previous and not np.array_equal(
+                    previous["class_names"].astype(str), np.asarray(class_names, dtype=str)
+                ):
+                    raise ValueError(f"Existing predictions use a different class order: {output_dir}")
+        saved_test = output_dir / "test_idx.npy"
+        if saved_test.exists() and not np.array_equal(
+            np.load(saved_test, allow_pickle=False), split_arrays["fold_0"]
+        ):
+            raise ValueError(f"Existing checkpoint uses a different test set: {output_dir}")
+        np.savez_compressed(saved_split, **split_arrays)
+        np.save(
+            output_dir / "test_idx.npy",
+            np.asarray(
+                shared_split_plan.folds[shared_split_plan.test_fold_idx],
+                dtype=np.int64,
+            ),
         )
+        saved_split_fingerprint = split_fingerprint(shared_genes, shared_split_plan.folds)
         if saved_split_fingerprint != shared_split_fingerprint:
             raise RuntimeError("Shared split changed between model variants.")
 

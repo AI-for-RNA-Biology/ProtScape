@@ -65,6 +65,7 @@ def dataset_tables() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
                 "scope": "filtered_corum_dataset",
                 "n_proteins": n_proteins,
                 "n_complexes": n_complexes,
+                "n_complexes_with_positives": int(memberships["complex_id"].nunique()),
                 "n_positive_memberships": positives,
                 "n_negative_memberships": n_proteins * n_complexes - positives,
                 "positive_label_fraction": positives / (n_proteins * n_complexes),

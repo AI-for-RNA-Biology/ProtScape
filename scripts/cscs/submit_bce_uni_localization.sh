@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="${PROTSCAPE_ROOT:-/users/aloistho/projects/ProtScape}"
+REPO_ROOT="${PROTSCAPE_ROOT:-/users/aloistho/projects/ProtScape_dev}"
 CONDA_ENV="${PROTSCAPE_CONDA_ENV:-/iopsstor/scratch/cscs/aloistho/protscape/conda-global-s2gae}"
 SBATCH_SCRIPT="${REPO_ROOT}/scripts/cscs/run_bce_uni_localization.sbatch"
 PYTHON="${CONDA_ENV}/bin/python"

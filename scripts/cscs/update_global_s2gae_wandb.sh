@@ -3,7 +3,7 @@ set -euo pipefail
 
 CONDA_ENV="${PROTSCAPE_CONDA_ENV:-/iopsstor/scratch/cscs/aloistho/protscape/conda-global-s2gae}"
 PYTHON="${CONDA_ENV}/bin/python"
-REPO_ROOT="${PROTSCAPE_ROOT:-/users/aloistho/projects/ProtScape}"
+REPO_ROOT="${PROTSCAPE_ROOT:-/users/aloistho/projects/ProtScape_dev}"
 PROJECTS_ROOT="$(dirname "${REPO_ROOT}")"
 DATA_ROOT="${PROTSCAPE_DATA:-/iopsstor/scratch/cscs/aloistho/protscape/release-data}"
 RUNS_ROOT="${PROTSCAPE_OUTPUT:-/capstor/scratch/cscs/aloistho/protscape/global-s2gae-grid500/runs}"

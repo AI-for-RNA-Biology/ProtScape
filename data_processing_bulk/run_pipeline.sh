@@ -217,8 +217,7 @@ run_cellphonedb() {
             --database "${CPDB_DATABASE}"
         )
 
-        # ALS profiles are already condition-level bulk samples; the single-cell
-        # branches retain the historical CellPhoneDB subsampling.
+        # Subsample individual cells, not the single bulk profile per ALS context.
         if [[ "${dataset}" != als ]]; then
             command+=(--subsampling --subsampling-log false)
             if [[ -n "${CELLPHONEDB_SUBSAMPLING_NUM_CELLS:-}" ]]; then

@@ -1,20 +1,8 @@
-"""Section 4-5(part): Leiden resolution sweep (modularity / ARI-stability
-trade-off) and final module assignment.
+"""Select Leiden resolution using modularity and partition stability.
 
-Switched from Louvain to Leiden (`leidenalg`, `RBConfigurationVertexPartition`
-- the same modularity-with-resolution objective Louvain optimizes, but with
-the Leiden guarantee that communities stay well-connected, and a C-backed
-implementation via `igraph` that's much faster than networkx's pure-Python
-Louvain).
-
-Resolution selection: for each candidate resolution, run Leiden
-`N_STABILITY_RUNS` times with different seeds, then pick the resolution that
-best trades off (1) modularity - mean Q across seeds, and (2) stability - mean
-pairwise Adjusted Rand Index (ARI) across seeds. ARI was chosen over NMI/AMI
-because it tends to favor a handful of large, evenly-sized communities, which
-keeps the downstream per-module analysis simpler to interpret. Both metrics
-are min-max normalized across the tested resolutions, then averaged with
-weight `TRADEOFF_MODULARITY_WEIGHT` into a single `combined_score`.
+For each resolution, average modularity and pairwise adjusted Rand index
+across seeds. Min-max normalise both metrics across resolutions and combine
+them using `TRADEOFF_MODULARITY_WEIGHT`.
 """
 import igraph as ig
 import leidenalg
@@ -27,22 +15,11 @@ from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
 
 
 def build_igraph(giant: nx.Graph):
-    """Converts `giant` to an igraph Graph with a fixed vertex order, for use with
-    leidenalg. Returns (ig_graph, nodes) where nodes[i] is the protein name of
-    igraph vertex i - every membership array below is aligned to this order, so
-    partitions from different seeds/resolutions are directly comparable.
+    """Return an igraph graph and protein names in fixed vertex order.
 
-    Nodes/edges are explicitly sorted rather than trusting `giant.nodes()`/
-    `giant.edges()` iteration order: `nx.Graph.subgraph()` (used e.g. by the
-    hierarchical-recluster experiment to re-cluster a single module) filters
-    its node list through a Python `set()` internally, whose iteration order
-    over strings depends on `PYTHONHASHSEED` - which is randomized per
-    process by default. Leiden's local-moving phase is a greedy, visitation-
-    order-sensitive algorithm, so an unsorted vertex order fed here made the
-    resulting partition vary between process launches even with a fixed
-    `seed` (verified directly - same seed, same resolution, different
-    process launch, different partition, traced to exactly this). Sorting
-    makes vertex order canonical and hash-seed-independent."""
+    Sorting nodes and edges makes seeded Leiden runs independent of Python
+    hash order. Membership arrays align with the returned protein names.
+    """
     nodes = sorted(giant.nodes())
     index_of = {n: i for i, n in enumerate(nodes)}
     edges = [(index_of[u], index_of[v]) for u, v in sorted(giant.edges())]

@@ -109,14 +109,7 @@ def _find_elbow(y: np.ndarray) -> int:
 
 
 def _input_fingerprint(giant, module_of, mod_ids) -> str:
-    """Short hash of (giant's nodes+edges, module_of, mod_ids) - print this at
-    the top of every run. Given a fixed input, this experiment's Leiden calls
-    are fully seeded and reproducible (verified directly, incl. across
-    processes with different PYTHONHASHSEED); if two runs' results still
-    differ, compare this fingerprint first - a different fingerprint means
-    INTERMEDIATE_DIR's giant.pickle/module_of.json/mod_ids.json changed
-    between runs (e.g. stage 05 was re-run and its resolution sweep picked a
-    different "best" resolution), not that this script is non-deterministic."""
+    """Hash graph and partition inputs to identify the data used for a run."""
     h = hashlib.sha256()
     h.update(repr(sorted(giant.nodes())).encode())
     h.update(repr(sorted(giant.edges())).encode())
@@ -140,9 +133,7 @@ def main():
     giant = io_utils.load_graph(config.INTERMEDIATE_DIR / "giant.pickle")
     module_of = io_utils.load_json(config.INTERMEDIATE_DIR / "module_of.json")
     mod_ids = io_utils.load_json(config.INTERMEDIATE_DIR / "mod_ids.json")
-    print(f"Input fingerprint: {_input_fingerprint(giant, module_of, mod_ids)} "
-          f"(same across two runs => same starting graph/partition; different => "
-          f"INTERMEDIATE_DIR changed between runs, e.g. stage 05 was re-run)")
+    print(f"Input fingerprint: {_input_fingerprint(giant, module_of, mod_ids)}")
 
     # Step-0 (pre-split) connectivity snapshot - plotted as the "initial"
     # point in connectivity_vs_split.pdf below, same convention
@@ -325,12 +316,7 @@ def main():
         ax_dens.annotate(f"elbow\n(mod {elbow_module})", (elbow_x, elbow_y), fontsize=7, color="black",
                           ha="left", va="bottom", xytext=(5, 5), textcoords="offset points")
 
-        # Re-run truncated to the elbow step, rather than saving a snapshot from
-        # the loop above - `recursive_refine_by_density` is deterministic given
-        # the same args (verified earlier, incl. across process launches), so
-        # `max_splits=elbow_x` reproduces bit-identically the partition that
-        # existed right after that split during the full run above, without
-        # the main function needing to track intermediate-partition snapshots.
+        # Recompute the partition at the selected elbow with the same seed.
         module_of_elbow, mod_ids_elbow, _ = recursive_refine_by_density(
             giant, module_of, mod_ids,
             resolutions=config.RESOLUTION_SWEEP, n_runs=config.N_STABILITY_RUNS,

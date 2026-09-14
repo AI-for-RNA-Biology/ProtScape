@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-REPO_ROOT="${PROTSCAPE_ROOT:-/users/aloistho/projects/ProtScape}"
+REPO_ROOT="${PROTSCAPE_ROOT:-/users/aloistho/projects/ProtScape_dev}"
 PROJECTS_ROOT="$(dirname "${REPO_ROOT}")"
 CONDA_ENV="${PROTSCAPE_CONDA_ENV:-/iopsstor/scratch/cscs/aloistho/protscape/conda-protscape-downstream}"
 PYTHON="${CONDA_ENV}/bin/python"

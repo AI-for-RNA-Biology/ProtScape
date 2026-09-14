@@ -20,58 +20,40 @@ The CORUM and therapeutic-target shell scripts generate the configured ESM-2 and
 
 `corum_dataset_dir` must contain `corum_memberships_filtered.csv`; `therapeutic_target_dataset_dir` must contain the 15 `therapeutic_target_<DISEASE_ID>.csv` tables.
 
+Each dataset includes a shared protein cohort and partitions: `corum_dataset/split_indices.npz` or `therapeutic_target_dataset/splits/therapeutic_target_<disease_id>.npz`. Training and analysis read the same files for every model. The companion release supplies these files with the paper labels.
+
 ## Rebuilding the labels
 
 To rebuild the processed labels, set:
 
 | Config key | Required input |
 |---|---|
-| `corum_raw_json` | Frozen `corum_humanComplexes.json` snapshot from [CORUM](https://mips.helmholtz-muenchen.de/corum/download) |
+| `corum_raw_json` | [CORUM](https://mips.helmholtz-muenchen.de/corum/download) 4.1 snapshot, included at `data/raw/corum_4.1/corum_humanComplexes.json` in the release |
 | `therapeutic_target_evidence_dir` | [Open Targets Platform 24.03 ChEMBL evidence](https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/24.03/output/etl/json/evidence/sourceId=chembl/) |
-| `therapeutic_target_drugbank_targets` | Frozen approved-drug target table, `all_approved_oct2022.csv`, from [DrugBank](https://go.drugbank.com/) |
+| `therapeutic_target_ot_release` | `"26.03"` for the disease, target and association lookup tables |
+| `therapeutic_target_ot_diseases_dir` | Open Targets 26.03 [`disease`](https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/26.03/output/disease/) |
+| `therapeutic_target_ot_targets_dir` | Open Targets 26.03 [`target`](https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/26.03/output/target/) |
+| `therapeutic_target_ot_associations_dir` | Open Targets 26.03 [`association_by_datatype_indirect`](https://ftp.ebi.ac.uk/pub/databases/opentargets/platform/26.03/output/association_by_datatype_indirect/) |
+| `therapeutic_target_drugbank_targets` | October 2022 DrugBank target export, included in the data release at `data/reference_data/drugbank/all_approved_oct2022.csv` |
 | `global_ppi` | The same two-column HGNC-symbol interactome used for pretraining |
 
-Therapeutic-target reconstruction additionally uses a frozen Open Targets
-release. Both the 24.03 JSON layout (`diseases`, `searchTarget`,
-`associationByDatatypeIndirect`) and the official Parquet layout used by newer
-releases (`disease/disease.parquet`, `target/*.parquet`,
-`association_by_datatype_indirect/*.parquet`) are supported. The indirect table
-is used because disease associations include evidence propagated from ontology
-descendants. Reconstruction does not query live APIs and does not force the
-class balances reported in the paper.
+Clinical evidence remains fixed at 24.03; the lookup tables define disease mappings, gene symbols and association-based negative exclusions. For an all-24.03 rebuild, supply the three 24.03 lookup tables and set `therapeutic_target_ot_release` to `"24.03"` (or pass `--ot-release 24.03`).
+Gene mapping retains approved symbols present in the interactome, otherwise using an unambiguous HGNC obsolete symbol shared with the interactome.
 
 After setting these paths, rebuild both datasets from the repository root:
 
 ```bash
 python -m downstream_tasks.data_processing.corum_processing
-python -m downstream_tasks.data_processing.therapeutic_target_processing \
-  --evidence-dir /path/to/opentargets_24_03_chembl \
-  --evidence-release-name 24.03 \
-  --static-release-dir /path/to/opentargets_26_03 \
-  --static-release-name 26.03 \
-  --association-scope indirect \
-  --force
+python -m downstream_tasks.data_processing.therapeutic_target_processing
 ```
 
-On CSCS, the same frozen rebuild for both tasks is packaged as:
+The generated labels are written below `<output_root>/downstream_tasks/data/`. The therapeutic-target builder also writes `opentargets_parkinson_associations.csv` beside the labels, using the same Open Targets inputs for candidate annotation. Point `corum_dataset_dir` and `therapeutic_target_dataset_dir` to these directories, then prepare the common cohort and splits once using a contextual embedding export:
 
 ```bash
-bash scripts/cscs/rebuild_downstream_labels.sh
+python -m downstream_tasks.prepare_splits --inference-model <inference-model>
 ```
 
-Its input and output roots can be overridden with `PROTSCAPE_DATA` and
-`PROTSCAPE_DOWNSTREAM_DATA`; an alternate frozen Open Targets snapshot can be
-selected with `PROTSCAPE_OT_STATIC_RELEASE` and
-`PROTSCAPE_OT_RELEASE_NAME`; the evidence release can be recorded with
-`PROTSCAPE_OT_EVIDENCE_RELEASE`. The association table defaults to `indirect`
-and can be overridden with `PROTSCAPE_OT_ASSOCIATION_SCOPE`.
-
-Therapeutic-target labels are written to the configured
-`therapeutic_target_dataset_dir`, or to `--output-dir` when supplied. The
-directory includes a deterministic `therapeutic_target_manifest.json` recording
-the ChEMBL evidence release, association release and raw input paths separately.
-Pass `--force` to rebuild existing tables. Update `corum_dataset_dir` and
-`therapeutic_target_dataset_dir` to the generated directories before training.
+Preparation keeps existing partitions unchanged. Use `--task corum` or a therapeutic-target task name to prepare one dataset. All compared models must cover the prepared cohort. Use a separate output directory for experiments on new labels or splits.
 
 ## Training
 
@@ -143,7 +125,7 @@ The validation-selected settings used in the paper are stored in:
 - `configs/downstream/corum_selected_hyperparameters.csv`
 - `configs/downstream/therapeutic_target_selected_hyperparameters.csv`
 
-Retrain every distinct selected configuration with:
+First generate the six [architecture-ablation embedding exports](../pretraining/README.md#architecture-ablation-embeddings) from the released checkpoints. Then retrain every distinct selected configuration with:
 
 ```bash
 python -m downstream_tasks.run_selected corum
@@ -151,3 +133,4 @@ python -m downstream_tasks.run_selected therapeutic_targets
 ```
 
 These runs are consumed directly by the analysis scripts. The full sweep scripts above remain available for repeating model selection from scratch.
+For a new model selection, update these tables with the chosen validation settings and embedding directories before running the analyses.

@@ -91,7 +91,7 @@ MODEL_ORDER = [
 ]
 MODEL_LABELS = {
     "pinnacle_random_fixed": "Pinnacle",
-    "pinnacle_esm_fixed": "Pinnacle-ESM2 (GAT)",
+    "pinnacle_esm_fixed": "Pinnacle-ESM2 (GATv2)",
     "pinnacle_esm2_acm": "Pinnacle-ESM2 (ACM)",
     "gae_att_fixed_do06": "ProtScape-GAE",
     "s2gae_att_k1_fixed_do04_uni": "ProtScape",
@@ -342,6 +342,9 @@ def wrap_label(value: object) -> str:
 
 
 def plot_focal_targets(top: pd.DataFrame, output: Path) -> None:
+    if top.empty:
+        print("No held-out focal-target explanations to plot.")
+        return
     stems = {
         (
             "therapeutic_target_mondo_0005180",
@@ -356,6 +359,8 @@ def plot_focal_targets(top: pd.DataFrame, output: Path) -> None:
     shown_classes = []
     for keys, stem in stems.items():
         values = top.loc[top["task"].eq(keys[0]) & top["gene"].eq(keys[1])].sort_values("rank")
+        if values.empty:
+            continue
         shown_classes.extend(values["cell_class"].tolist())
         y = np.arange(len(values))
         fig, ax = plt.subplots(figsize=WIDE_SINGLE_SIZE, facecolor="white")

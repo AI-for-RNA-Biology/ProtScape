@@ -218,7 +218,7 @@ def reduce_pair_class_counts() -> tuple[dict[int, np.ndarray], dict[int, dict[st
                 continue
 
             observed = block[:, present]
-            # Historical context-independent class: lower class wins exact ties.
+            # Resolve exact modal ties toward the more-negative class.
             majority = observed.argmax(axis=0)
             for majority_id in range(len(CLASS_NAMES)):
                 selected = majority == majority_id

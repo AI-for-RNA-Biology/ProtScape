@@ -11,9 +11,7 @@ from .models.hierarchical_model import hierarchical_model
 from .models.pinnacle_model import Pinnacle
 
 
-# The original checkpoints stored complete Python model objects under these
-# module names. The aliases let trusted historical checkpoints load after the code
-# was moved into the ``pretraining`` package.
+# Module aliases required to load trusted full-object checkpoints.
 _LEGACY_MODULES = {
     "models": "pretraining.models",
     "models.attention": "pretraining.models.attention",

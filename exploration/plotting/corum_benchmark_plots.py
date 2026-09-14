@@ -31,6 +31,7 @@ PANEL_TITLE_SIZE = 7.0
 LEGEND_SIZE = 6.0
 SINGLE_COLUMN_WIDTH_CM = 8.8
 DOUBLE_COLUMN_WIDTH_CM = 18.0
+LOSS_PANEL_WIDTH_CM = 9.47
 
 PLOT_RC = {
     "pdf.fonttype": 42,
@@ -106,7 +107,7 @@ MODEL_LABELS = {
     "lr_esm": "ESM2",
     "lr_prostt5": "ProstT5",
     "pinnacle_random": "Pinnacle",
-    "pinnacle_esm": "Pinnacle-ESM2 (GAT)",
+    "pinnacle_esm": "Pinnacle-ESM2 (GATv2)",
     "pinnacle_acm": "Pinnacle-ESM2 (ACM)",
     "gae_bce": "ProtScape-GAE",
     "s2gae_bce_uni": "ProtScape",
@@ -311,11 +312,13 @@ def plot_performance_metric(
     output: Path,
     stem: str,
     model_order: list[str],
+    loss_comparison: bool = False,
 ) -> None:
     sub = rows[rows["metric"] == metric].copy()
     readouts = [key for key in READOUT_ORDER if key in set(sub["readout_key"])]
     model_order = present_models(sub, model_order)
     bar_width = 0.25
+    group_gap = 3.0 if loss_comparison else 1.3
     group_widths = {
         key: bar_width if key in BASELINE_MODELS else bar_width * len(model_order)
         for key in readouts
@@ -325,12 +328,13 @@ def plot_performance_metric(
         previous, current = readouts[index - 1], readouts[index]
         gap = (
             (group_widths[previous] + group_widths[current]) / 2.0
-            + bar_width * 1.3
+            + bar_width * group_gap
         )
         x_positions.append(x_positions[-1] + gap)
     x = np.asarray(x_positions, dtype=float)
 
-    plot_width = DOUBLE_COLUMN_WIDTH_CM * max(0.45, 0.40 + bar_width * 0.7)
+    plot_width = (LOSS_PANEL_WIDTH_CM if loss_comparison else
+                  DOUBLE_COLUMN_WIDTH_CM * max(0.45, 0.40 + bar_width * 0.7))
     fig, ax = plt.subplots(figsize=figure_size(plot_width, 5.5))
     baseline_styles = {
         "lr_esm": {"facecolor": "white", "edgecolor": "#222222"},
@@ -377,8 +381,9 @@ def plot_performance_metric(
         )
 
     if metric == "auprc":
-        ax.set_ylim(0.0, 80.0)
-        ax.set_yticks(np.arange(0.0, 81.0, 20.0))
+        lower, step = (40.0, 10.0) if loss_comparison else (0.0, 20.0)
+        ax.set_ylim(lower, 80.0)
+        ax.set_yticks(np.arange(lower, 81.0, step))
     elif metric == "f1":
         ax.set_ylim(0.0, 60.0)
         ax.set_yticks(np.arange(0.0, 61.0, 20.0))
@@ -440,6 +445,7 @@ def plot_benchmark(source: Path, output: Path) -> None:
                 output,
                 f"corum_{metric}_performance_protscape_losses",
                 LOSS_MODEL_ORDER,
+                loss_comparison=True,
             )
         plot_performance_legend(
             loss_performance,

@@ -23,7 +23,7 @@ with (REPO_ROOT / "configs" / "paths.yaml").open(encoding="utf-8") as handle:
 # Inputs produced by the bulk-data pipeline.
 OUTPUT_ROOT = Path(PATHS["output_root"]).expanduser()
 PROCESSED_ROOT = OUTPUT_ROOT / "data_processing_bulk"
-NETWORKS_BULK = PROCESSED_ROOT / "networks_bulk"
+NETWORKS_BULK = Path(PATHS["networks_bulk"]).expanduser()
 TABULA_RAW_H5AD = Path(PATHS["tabula_h5ad"]).expanduser()
 HBCA_GENE_METADATA = Path(PATHS["hbca_gene_metadata"]).expanduser()
 ALS_GENE_METADATA = Path(PATHS["als_gene_metadata"]).expanduser()
@@ -204,7 +204,7 @@ def is_true(value):
 def source_label(row):
     if is_true(row["has_condition"]):
         return "ALS"
-    if "HBCA" in str(row["primary_dataset"]):
+    if "HBCA__" in str(row["source_files"]):
         return "HBCA"
     return "Tabula Sapiens"
 
@@ -212,9 +212,9 @@ def source_label(row):
 def database_label(row):
     if is_true(row["has_condition"]):
         return "ALS"
-    datasets = str(row["datasets"])
-    has_tabula = "Tabula" in datasets
-    has_hbca = "HBCA" in datasets
+    sources = str(row["source_files"])
+    has_tabula = "TABULA__" in sources
+    has_hbca = "HBCA__" in sources
     if has_tabula and has_hbca:
         return "Tabula Sapiens + HBCA"
     if has_hbca:
@@ -331,7 +331,7 @@ def read_cell_to_tissues():
 
 
 def prepare_tissue_tables(metadata):
-    """Expand base-context tissue annotations as in the historical analysis."""
+    """Summarize the context-to-tissue assignments used by the model."""
     bto_graph = obonet.read_obo(str(BTO_OBO))
     bto_names = {
         str(node): str(attributes["name"])
@@ -342,9 +342,7 @@ def prepare_tissue_tables(metadata):
     compact_rows, long_rows = [], []
 
     for row in metadata.itertuples(index=False):
-        direct = cell_to_tissues.get(str(row.cl_id), set())
-        inherited = cell_to_tissues.get(str(row.base_cl_id), set())
-        tissues = sorted(direct | inherited)
+        tissues = sorted(cell_to_tissues.get(str(row.edgelist), set()))
         names = [
             bto_names.get(tissue.replace("BTO_", "BTO:", 1), tissue)
             for tissue in tissues
@@ -424,7 +422,7 @@ def prepare_mds_table(contexts, edge_counts, edge_jaccard, metadata, tissue_mapp
     classes = pd.read_csv(CELL_CLASS_MAPPING)[["edgelist", "cell_type_class"]]
     result = result.merge(classes, on="edgelist", how="left", validate="one_to_one")
     result = result.merge(
-        metadata[["edgelist", "primary_dataset", "has_condition", "datasets"]],
+        metadata[["edgelist", "primary_dataset", "has_condition", "datasets", "source_files"]],
         on="edgelist",
         how="left",
         validate="one_to_one",

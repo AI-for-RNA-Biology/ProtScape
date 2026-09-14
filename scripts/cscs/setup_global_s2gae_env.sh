@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="${PROTSCAPE_ROOT:-/users/aloistho/projects/ProtScape}"
+REPO_ROOT="${PROTSCAPE_ROOT:-/users/aloistho/projects/ProtScape_dev}"
 CONDA_ROOT="${PROTSCAPE_CONDA_ROOT:-/iopsstor/scratch/cscs/aloistho/protscape/miniconda3}"
 CONDA_ENV="${PROTSCAPE_CONDA_ENV:-/iopsstor/scratch/cscs/aloistho/protscape/conda-global-s2gae}"
 PIP_CACHE_DIR="${PROTSCAPE_PIP_CACHE:-/iopsstor/scratch/cscs/aloistho/protscape/pip-cache}"

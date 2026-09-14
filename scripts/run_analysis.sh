@@ -10,5 +10,6 @@ python -m exploration.analysis.pretraining_evaluation
 python -m exploration.analysis.consensus_analysis
 python -m exploration.analysis.corum_analysis
 python -m exploration.analysis.therapeutic_target_analysis
+python -m exploration.analysis.parkinson_inference
 python -m exploration.analysis.parkinson_target_analysis
 python -m exploration.analysis.ALS_rewiring_analysis

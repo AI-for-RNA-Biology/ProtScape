@@ -14,10 +14,7 @@
 ##     every genotype must have at least one of its two compartments present.
 ## Streams line-by-line with awk -> constant memory, no matter the file size.
 ##
-## Idempotent: if output_csv already exists, does nothing (exit 0) rather than
-## re-streaming the ~GB-scale source file - safe to run unconditionally at
-## the start of every pipeline invocation (see ALS_rewiring_analysis.py's
-## stage list). Delete output_csv yourself to force regeneration.
+## Reuses an existing subset only when it is newer than the source matrix.
 ##
 ## Usage (from anywhere):
 ##   bash 0_subset_d22.sh
@@ -38,10 +35,14 @@ get_path() {
 input_csv="$(get_path als_rewiring_raw_matrix_csv)"
 output_csv="$(get_path als_rewiring_data_root)/subset_d22_pergenotype_presentp.csv"
 
-if [ -f "$output_csv" ]; then
-    echo "Already exists, skipping: $output_csv"
+if [ -f "$input_csv" ] && [ "$output_csv" -nt "$input_csv" ]; then
+    echo "Up to date: $output_csv"
     exit 0
 fi
+
+mkdir -p "$(dirname "$output_csv")"
+subset_tmp="$(mktemp "${output_csv}.XXXXXX")"
+trap 'rm -f "$subset_tmp"' EXIT
 
 awk -F',' '
 function is_missing(v) {
@@ -64,9 +65,7 @@ NR==1 {
     n_vcp = split("s2gae_score_VCP_cyto_d22 s2gae_score_VCP_nuc_d22", vcp_cols, " ")
 
 
-    # NOTE: use numeric for-loops (1..n), never "for (k in arr)" here -
-    # awk does not guarantee insertion order for "for...in", which silently
-    # scrambled column order in an earlier version of this script.
+    # Numeric loops preserve the declared column order.
     for (k=1;k<=n_meta;k++) {
         name = meta[k]
         if (!(name in col)) { print "Missing expected column: " name > "/dev/stderr"; exit 1 }
@@ -103,6 +102,7 @@ NR==1 {
         print line
     }
 }
-' "$input_csv" > "$output_csv"
+' "$input_csv" > "$subset_tmp"
+mv "$subset_tmp" "$output_csv"
 
 echo "Done. Rows kept: $(($(wc -l < "$output_csv") - 1))"

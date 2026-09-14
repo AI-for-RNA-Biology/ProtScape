@@ -41,9 +41,6 @@ SOURCE_STYLE = {
     "savefig.transparent": True,
 }
 
-matplotlib.rcParams.update(SOURCE_STYLE)
-
-
 def save_original(
     fig,
     output: Path,
@@ -157,6 +154,7 @@ def plot_loss_correlation_scatter(ax: plt.Axes, table: pd.DataFrame) -> None:
 
 def plot_string(source, output):
     """Render STRING-validation correlations."""
+    matplotlib.rcParams.update(SOURCE_STYLE)
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     string_correlations = pd.read_csv(source / "string_correlations.csv")

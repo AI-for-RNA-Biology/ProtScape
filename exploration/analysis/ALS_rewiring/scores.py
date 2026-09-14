@@ -26,15 +26,12 @@ def _score_label(string_score_col: str) -> str:
 def get_high_confident(mydat: pd.DataFrame, cat: str, bins=np.arange(0, 1.01, 0.05),
                         n_last_bins: int = 21, string_score_col: str = "stringdb_physical_score",
                         ax_bar=None, ax_box=None):
-    """`getHighConfident()` in the R script. Bins pairs by their S2GAE score column
-    `cat`; the bar panel is, per bin, the % of pairs whose STRING
-    `string_score_col` exceeds 0.75; the box panel is the distribution of
-    (nonzero) scores in the last `n_last_bins` bins (i.e. near the top of
-    the S2GAE range). Returns the pairs in the top bin with nonzero score.
+    """Bin pairs by S2GAE score and plot STRING support.
 
-    The bar panel here averages over non-NaN scores per bin; the R
-    version's `sum(Y > 0.75)` (no `na.rm`) instead returns NA for any bin
-    containing one, silently leaving that bar blank - not reproduced here."""
+    Bars show the percentage of pairs with STRING scores above 0.75;
+    boxes show nonzero scores in the last `n_last_bins` bins.
+    Return the pairs in the top bin with nonzero STRING scores.
+    """
     subdat = mydat.dropna(subset=[cat])
     bin_of = pd.cut(subdat[cat], bins=bins, include_lowest=True)
     categories = bin_of.cat.categories

@@ -108,7 +108,7 @@ MODEL_LABELS = {
     "lr_esm": "ESM2",
     "lr_prostt5": "ProstT5",
     "pinnacle_random_fixed": "Pinnacle",
-    "pinnacle_esm_fixed": "Pinnacle-ESM2 (GAT)",
+    "pinnacle_esm_fixed": "Pinnacle-ESM2 (GATv2)",
     "pinnacle_esm2_acm": "Pinnacle-ESM2 (ACM)",
     "gae_att_fixed_do06": "ProtScape-GAE",
     "s2gae_att_k1_fixed_do04_uni": "ProtScape",

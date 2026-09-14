@@ -155,39 +155,31 @@ def robust_gmm_threshold(
     values: np.ndarray,
     *,
     quantile: float = 0.9,
-    fallback: float = 0.5,
 ) -> float:
     """Return a quantile of the lower-mean component of a two-component GMM."""
     vector = np.asarray(values, dtype=float)
-    if vector.size == 0:
-        return float(fallback)
-    if np.allclose(vector, vector[0]):
-        return float(vector[0])
+    if vector.size < 2 or np.allclose(vector, vector[0]):
+        raise ValueError("REG threshold requires a non-constant expression profile")
 
-    try:
-        gmm = BayesianGaussianMixture(n_components=2, random_state=0, max_iter=1000)
-        gmm.fit(vector.reshape(-1, 1))
-        means = gmm.means_.ravel()
-        variances = gmm.covariances_.ravel()
-        if np.any(variances <= 0):
-            raise ValueError("Non-positive GMM variance")
+    gmm = BayesianGaussianMixture(n_components=2, random_state=0, max_iter=1000)
+    gmm.fit(vector.reshape(-1, 1))
+    if not gmm.converged_:
+        raise ValueError("REG threshold GMM did not converge")
+    means = gmm.means_.ravel()
+    variances = gmm.covariances_.ravel()
+    if np.any(variances <= 0):
+        raise ValueError("Non-positive GMM variance")
+    order = np.argsort(means)
+    if np.isclose(means[order[0]], means[order[1]], atol=1e-3):
+        raise ValueError("GMM components collapsed")
 
-        order = np.argsort(means)
-        if np.isclose(means[order[0]], means[order[1]], atol=1e-3):
-            raise ValueError("GMM components collapsed")
+    from scipy.stats import norm
 
-        from scipy.stats import norm
-
-        background = order[0]
-        threshold = norm(
-            loc=means[background], scale=np.sqrt(variances[background])
-        ).ppf(quantile)
-        if np.isnan(threshold):
-            raise ValueError("GMM returned a NaN threshold")
-        return float(threshold)
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("GMM failed (%s); using %.3f", exc, fallback)
-        return float(fallback)
+    background = order[0]
+    threshold = norm(loc=means[background], scale=np.sqrt(variances[background])).ppf(quantile)
+    if not np.isfinite(threshold):
+        raise ValueError("GMM returned a non-finite threshold")
+    return float(threshold)
 
 
 def compute_reliable_genes(
@@ -200,7 +192,6 @@ def compute_reliable_genes(
     min_count: Optional[int] = None,
     log_offset: float = 1.0,
     log_matrix: Optional[np.ndarray] = None,
-    fallback_threshold: float = 0.5,
 ) -> Tuple[List[str], Dict[str, float], np.ndarray, np.ndarray]:
     """Select genes above a per-sample GMM threshold in enough samples."""
     if counts_matrix.ndim != 2:
@@ -219,9 +210,10 @@ def compute_reliable_genes(
     thresholds = {}
     expressed = np.zeros_like(log_values, dtype=bool)
     for row, sample_id in enumerate(sample_ids):
-        threshold = robust_gmm_threshold(
-            log_values[row], quantile=quantile, fallback=fallback_threshold
-        )
+        try:
+            threshold = robust_gmm_threshold(log_values[row], quantile=quantile)
+        except ValueError as exc:
+            raise ValueError(f"REG threshold failed for {sample_id}: {exc}") from exc
         thresholds[sample_id] = threshold
         expressed[row] = log_values[row] >= threshold
 

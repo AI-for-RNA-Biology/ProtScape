@@ -11,6 +11,7 @@ venv/
 .ruff_cache/
 .cache/
 .local-data/
+data/
 wandb/
 
 *.log

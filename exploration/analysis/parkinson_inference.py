@@ -13,33 +13,35 @@ from torch.utils.data import DataLoader, Dataset
 from downstream_tasks.config import (
     DEFAULT_ESM_EMBEDDINGS,
     DEFAULT_INFERENCE_ROOT,
-    DEFAULT_THERAPEUTIC_TARGET_DATASET_DIR,
+    PATHS,
     get_hc_embedding_paths,
+    load_config,
 )
 from downstream_tasks.data.datasets import collate_abmil
 from downstream_tasks.data.loaders import EmbeddingLoader
-from downstream_tasks.data.task_loaders import get_task_loader
 from downstream_tasks.models.abmil import ABMIL_LateFusion
 from downstream_tasks.models.registry import MODEL_VARIANTS
 from downstream_tasks.run_selected import find_selected_run
 from downstream_tasks.training.cv_utils import (
-    build_cv_splits,
     get_cv_train_val_indices,
     get_test_indices,
 )
-
-
-TASK_CSV = (
-    DEFAULT_THERAPEUTIC_TARGET_DATASET_DIR
-    / "therapeutic_target_MONDO_0005180.csv"
+from exploration.analysis.therapeutic_target.checkpoint_lrp import (
+    check_saved_split,
+    load_task,
 )
+
+
 ESM_PATH = DEFAULT_ESM_EMBEDDINGS
+PREDICTIONS_PATH = (
+    Path(PATHS["output_root"]) / "analysis/parkinson_target_analysis"
+    / "parkinson_global_predictions.csv.gz"
+)
 
 TASK = "therapeutic_target_mondo_0005180"
 MODEL_KEY = "abmil_hc_cell_ext_embed_gated_8_pdl"
 DEVICE = "cuda"
 BATCH_SIZE = 64
-SEED = 42
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,7 @@ class InferenceData:
     task_labels: np.ndarray
     task_global_indices: np.ndarray
     split: object
+    class_names: list[str]
 
 
 class NormalizedBagDataset(Dataset):
@@ -135,11 +138,9 @@ def build_model(
 
 
 def load_inference_data(selected: dict[str, str]) -> InferenceData:
-    task_genes, labels, _ = get_task_loader(TASK, require_file(TASK_CSV)).load()
-    task_genes = [gene.upper() for gene in task_genes]
-    if len(task_genes) != len(set(task_genes)):
-        raise RuntimeError("The Parkinson benchmark contains duplicate proteins")
-
+    config = load_config(
+        selected["embedding_inference_name"], selected["embedding_source"], "bulk"
+    )
     embedding_paths = get_hc_embedding_paths(
         DEFAULT_INFERENCE_ROOT / selected["embedding_inference_name"],
         cell_embedding_file=selected["cell_embedding_file"],
@@ -150,7 +151,7 @@ def load_inference_data(selected: dict[str, str]) -> InferenceData:
         require_file(embedding_paths["cell_embed"]),
     )
     esm_by_gene = loader.load_esm()
-    task_means, task_cells = loader.load_hc_with_cell_mean(set(task_genes))
+    task_genes, task_labels, class_names, split = load_task(TASK, config, loader)
     bags_by_gene, cells_by_gene = loader.load_hc_with_cell(set(esm_by_gene))
 
     genes = sorted(set(esm_by_gene) & set(bags_by_gene))
@@ -163,19 +164,8 @@ def load_inference_data(selected: dict[str, str]) -> InferenceData:
     esm = np.stack([esm_by_gene[gene] for gene in genes]).astype(
         np.float32, copy=False
     )
-    usable_task_genes = [
-        gene for gene in task_genes if gene in gene_to_index and gene in task_means
-    ]
-    task_row = {gene: index for index, gene in enumerate(task_genes)}
-    task_labels = labels[[task_row[gene] for gene in usable_task_genes]]
     task_global_indices = np.asarray(
-        [gene_to_index[gene] for gene in usable_task_genes]
-    )
-    split = build_cv_splits(
-        task_labels,
-        cell_ids_per_bag=[task_cells[gene] for gene in usable_task_genes],
-        seed=SEED,
-        n_splits=6,
+        [gene_to_index[gene] for gene in task_genes]
     )
     if split.n_cv_folds != 5:
         raise RuntimeError(f"Expected five fold models, found {split.n_cv_folds}")
@@ -184,10 +174,11 @@ def load_inference_data(selected: dict[str, str]) -> InferenceData:
         bags,
         cell_ids,
         esm,
-        usable_task_genes,
+        task_genes,
         task_labels,
         task_global_indices,
         split,
+        class_names,
     )
 
 
@@ -275,14 +266,19 @@ def run_global_inference() -> tuple[pd.DataFrame, pd.DataFrame]:
     score_tables = []
     shared_membership = None
     for model_name, spec in MODEL_SPECS.items():
-        selected, run_dir = find_selected_run(
+        selected, _ = find_selected_run(
             "therapeutic_targets",
             task=TASK,
             inference_key=spec.inference_key,
             readout_key=spec.readout_key,
         )
+        run_dir = (Path(PATHS["parkinson_checkpoint_root"]) / TASK
+                   / selected["source_inference_name"] / selected["selected_output_model_key"])
         config = pd.read_csv(require_file(run_dir / "model_config.csv")).iloc[0]
         data = load_inference_data(selected)
+        check_saved_split(
+            run_dir, data.task_genes, data.task_labels, data.class_names, data.split
+        )
         fold_scores = score_ensemble(data, config, run_dir / "models", device)
         membership = cohort_membership(data)
         if shared_membership is None:
@@ -311,3 +307,24 @@ def run_global_inference() -> tuple[pd.DataFrame, pd.DataFrame]:
         shared_membership, on="protein", how="left", validate="many_to_one"
     )
     return scores, shared_membership
+
+
+def load_predictions(path: Path = PREDICTIONS_PATH):
+    """Load ensemble predictions and their shared benchmark membership."""
+    scores = pd.read_csv(require_file(path), float_precision="round_trip")
+    scores["benchmark_label"] = scores["benchmark_label"].astype("Int64")
+    membership = scores[["protein", "benchmark_label", "benchmark_split"]].drop_duplicates()
+    if membership["protein"].duplicated().any():
+        raise ValueError("Prediction ensembles use different benchmark memberships.")
+    return scores, membership.reset_index(drop=True)
+
+
+def main():
+    scores, _ = run_global_inference()
+    PREDICTIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    scores.to_csv(PREDICTIONS_PATH, index=False)
+    print(f"Saved ensemble predictions: {PREDICTIONS_PATH}")
+
+
+if __name__ == "__main__":
+    main()
