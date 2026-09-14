@@ -76,7 +76,8 @@ def test_extraction_excludes_special_tokens_and_keeps_long_sequence():
     np.testing.assert_array_equal(actual[:, 0], np.r_[np.arange(1, 1025), np.arange(1, 7)])
 
 
-def test_backbone_initialization_is_unchanged(cache):
+@pytest.mark.parametrize("mode", ["mlp", "attention", "swe"])
+def test_backbone_initialization_is_unchanged(cache, mode):
     from pretraining.models.protein_modules import prot_module
     config = dict(input_dim=4, gnn_method="ACM_RandomWalk", hidden_dim=8, n_layers=2,
                   gnn_dropout=0, gnn_batchnorm=True, gnn_activation="leaky_relu", jumping_knowledge="concat")
@@ -84,11 +85,11 @@ def test_backbone_initialization_is_unchanged(cache):
     baseline = prot_module(config, "cpu")
     after_baseline = torch.rand(5)
     torch.manual_seed(42)
-    pooled = prot_module(dict(config, residue_pooling=dict(mode="attention", hidden_dim=3, cache_root=str(cache))), "cpu")
+    pooled = prot_module(dict(config, residue_pooling=dict(mode=mode, hidden_dim=3, cache_root=str(cache))), "cpu")
     torch.testing.assert_close(torch.rand(5), after_baseline)
     for key, value in baseline.state_dict().items():
         torch.testing.assert_close(pooled.state_dict()[key], value)
-    graph = Data(x=ResiduePooler(cache, "attention")(torch.arange(3)).detach(),
+    graph = Data(x=pooled.residue_pooler(torch.arange(3)).detach(),
                  residue_id=torch.arange(3), edge_index=torch.tensor([[0, 1, 1, 2], [1, 0, 2, 1]]))
     torch.testing.assert_close(baseline.eval()({0: graph.clone()})[0], pooled.eval()({0: graph.clone()})[0])
 
@@ -159,6 +160,24 @@ def test_swe_simple_transport_interpolation_permutation_and_singleton():
     expected_one = ((singleton - swe.reference) * swe.combination[:, None]).sum(0)
     together = swe(torch.cat([two, singleton]), torch.tensor([2, 1]))
     torch.testing.assert_close(together, torch.stack([expected_two, expected_one]))
+
+
+def test_node_local_bank_matches_original_and_checks_identity(cache, tmp_path, monkeypatch):
+    import shutil
+    staged = tmp_path / "node_cache"
+    staged.mkdir()
+    for file in ["residues.npy", "manifest.json"]:
+        shutil.copy2(cache / file, staged / file)
+    pooler = ResiduePooler(cache, "attention").eval()
+    ids = torch.tensor([0, 2])
+    expected = pooler(ids)
+    monkeypatch.setenv("PROTSCAPE_RESIDUE_CACHE", str(staged))
+    other = ResiduePooler(cache, "attention").eval()
+    torch.testing.assert_close(other(ids), expected)
+    assert str(other._residues.filename) == str(staged / "residues.npy")
+    (staged / "manifest.json").write_text("{}")
+    with pytest.raises(ValueError, match="does not match"):
+        ResiduePooler(cache, "attention")(ids)
 
 
 def test_cache_preserves_isoforms_gaps_and_gnn_normalization(tmp_path):

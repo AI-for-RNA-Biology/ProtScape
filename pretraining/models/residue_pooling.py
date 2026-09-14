@@ -1,6 +1,7 @@
 """Context-independent pooling of frozen ESM2 residues before the existing GNN."""
 import json
 import hashlib
+import os
 from pathlib import Path
 
 import numpy as np
@@ -102,7 +103,11 @@ class ResiduePooler(nn.Module):
 
     def _pool_ids(self, ids):
         if self._residues is None:
-            self._residues = np.load(Path(self.cache_root) / "residues.npy", mmap_mode="r")
+            root = Path(self.cache_root)
+            bank = Path(os.environ.get("PROTSCAPE_RESIDUE_CACHE", self.cache_root))
+            if bank != root and (bank / "manifest.json").read_bytes() != (root / "manifest.json").read_bytes():
+                raise ValueError("Node-local residue cache does not match the experiment")
+            self._residues = np.load(bank / "residues.npy", mmap_mode="r")
         protein_ids = ids.detach().cpu().tolist()
         arrays = [self._residues[self.offsets[i]:self.offsets[i + 1]] for i in protein_ids]
         residues = torch.from_numpy(np.concatenate(arrays)).to(self.feature_mean.device)

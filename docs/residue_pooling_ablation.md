@@ -35,7 +35,9 @@ For ProtScape pretraining, standardize using fixed mean-vector statistics on the
 global interactome, matching the original feature-normalization convention.
 Learned pooling receives these standardized residues. Deduplicate proteins in
 each sampled batch; use activation checkpointing to limit GPU memory and a
-memory-mapped residue bank shared through the host page cache. Validation caches
+memory-mapped residue bank. Each allocation stages one shared copy in node RAM
+to avoid slow random storage reads; the manifest must match the persistent cache.
+Validation caches
 pooled protein features and invalidates that cache before further training.
 
 TT (all 15 diseases) and CORUM use the release's saved cohorts and six folds,
