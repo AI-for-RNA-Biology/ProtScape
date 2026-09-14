@@ -107,3 +107,35 @@ def test_sweep_only_varies_pooling_and_learning_rates():
     assert {t["mode"] for t in trials} == {"mean", "mlp", "attention"}
     assert len(list(readouts(config["downstream"]))) == 22
     assert config["pretraining"]["seed"] == 0
+
+
+def test_cache_preserves_isoforms_gaps_and_gnn_normalization(tmp_path):
+    import pandas as pd
+    from pretraining.cache_esm2_residues import prepare, finalize
+    release, root = tmp_path / "release", tmp_path / "cache"
+    for folder in ["raw", "networks_bulk", "sequence_embeddings"]:
+        (release / "data" / folder).mkdir(parents=True)
+    pd.DataFrame({"gene_name": ["A", "B", "A"], "fasta_seq": ["AA", ".A", "AAA"]}).to_csv(
+        release / "data/raw/protein_sequences.csv.gz", index=False)
+    pd.DataFrame({"gene_name": ["A", "B", "A"], "ESM2-Embeddings": [np.zeros(2560)] * 3}).to_pickle(
+        release / "data/sequence_embeddings/gene_protein_embeddings_esm2_3B_layer33.plk")
+    (release / "data/networks_bulk/global_ppi_edgelist.txt").write_text("A B\n")
+    prepare(root, release)
+    data = np.load(root / "residues.npy", mmap_mode="r+")
+    data[:] = np.arange(7, dtype=np.float16)[:, None]
+    data.flush()
+    for index in range(3):
+        (root / "done" / f"{index}.json").write_text("{}")
+    finalize(root)
+    manifest = json.loads((root / "manifest.json").read_text())
+    assert manifest["genes"] == ["A", "B", "A"]
+    assert manifest["gnn_indices"] == [0, 1]
+    assert manifest["sequences"] == ["AA", ".A", "AAA"]
+    features = pd.read_pickle(root / "mean.plk")
+    assert [v[0] for v in features["ESM2-Embeddings"]] == [.5, 2.5, 5.]
+    stats = np.load(root / "normalization.npz")
+    np.testing.assert_allclose(stats["mean"], 1.5)
+    np.testing.assert_allclose(stats["std"], np.sqrt(2))
+    graphs = {0: Data(x=torch.zeros(2, 2560))}
+    attach_residue_ids(graphs, {"cell": SimpleNamespace(nodes=lambda: ["B", "A"])}, {"cell": 0}, root)
+    assert graphs[0].residue_id.tolist() == [1, 0]
