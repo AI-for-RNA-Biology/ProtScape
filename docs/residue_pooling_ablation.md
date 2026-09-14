@@ -66,9 +66,12 @@ readouts and TT use the canonical contextual cell vector. This is fixed across
 pooling variants, not another search dimension.
 
 Add two **frozen ESM-only** linear baselines on each task: `LR_ESM_BOS` and
-`LR_ESM_mean`. No learned-pooler-only LR baselines. Total: 1,156 downstream
-readout runs, each with five CV fits. Unchanged sequence baselines run once per
-task, not once per contextual model.
+`LR_ESM_mean`. Also evaluate `LR_ESM_MLP` and `LR_ESM_attention`: frozen ESM with
+the selected ProtScape-trained pooler, **without GNN outputs**. These two are not
+fully frozen-ESM baselines: their poolers learned under the pretraining objectives.
+Total: 1,190 downstream readout runs, each with five CV fits, plus the 12 missing
+BOS localization runs below (1,202 altogether). Unchanged sequence baselines
+run once per task, not once per contextual model.
 Existing BOS contextual TT/CORUM and localization results are reused. Only the
 12 missing BOS localization ABMIL-PDL settings are additionally fitted, using
 the released frozen encoder (no BOS pretraining).

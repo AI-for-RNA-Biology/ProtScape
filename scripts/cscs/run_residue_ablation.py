@@ -220,7 +220,7 @@ def prepare(root, release):
     prepare_cache(root / "residues", release)
     # Sequence-only readouts use the same contextual node coverage to retain the
     # frozen paper cohort; their classifiers never receive these graph features.
-    for name in ["bos", "lr_esm_bos", "lr_esm_mean"]:
+    for name in ["bos", "lr_esm_bos", "lr_esm_mean", "lr_esm_mlp", "lr_esm_attention"]:
         link = root / "inference" / name
         target = release / "embeddings/s2gae_att_k1_fixed_do04_uni5e6"
         if not link.is_symlink():
@@ -245,7 +245,7 @@ def prepare(root, release):
     downstream = []
     for mode, task, (index, readout) in itertools.product(MODES, tasks, enumerate(readouts(settings["downstream"]))):
         downstream.append(dict(key=f"{mode}_{task['task']}_{index}", command=downstream_command(root, mode, task, readout)))
-    for mode, task in itertools.product(["bos", "mean"], tasks):
+    for mode, task in itertools.product(["bos", *MODES], tasks):
         downstream.append(dict(key=f"lr_esm_{mode}_{task['task']}", command=sequence_command(root, mode, task)))
     with (root / "reference_results.csv").open() as handle:
         hpa_done = {row["readout"] for row in csv.DictReader(handle) if row["task"] == "protein_localization"}
@@ -356,6 +356,13 @@ def evaluate_one(root, mode):
     model = load_protscape_model(saved, graphs, device=torch.device("cuda")).eval()
     if mode == "mean":
         shutil.copy2(root / "residues/mean.plk", root / "sequence/mean.plk")
+    elif mode in {"mlp", "attention"}:
+        import pandas as pd
+        genes = read_json(root / "residues/manifest.json")["genes"]
+        pooler = model.prot_encoder.residue_pooler
+        with torch.no_grad():
+            vectors = pooler(torch.arange(len(genes), device="cuda")).cpu().numpy()
+        pd.DataFrame({"gene_name": genes, "ESM2-Embeddings": list(vectors)}).to_pickle(root / "sequence" / f"{mode}.plk")
     digest, rows = hashlib.sha256(), []
     with torch.no_grad():
         for cell, graph in graphs.items():
@@ -408,7 +415,7 @@ def summarize(root):
                              auprc=100 * best.test_auprc_macro_mean,
                              validation_auprc=100 * best.val_auprc_macro_mean,
                              result_path=best.result_path))
-    for mode, task in itertools.product(["bos", "mean"], inputs["tasks"]):
+    for mode, task in itertools.product(["bos", *MODES], inputs["tasks"]):
         files = list((root / "downstream" / task["task"] / f"lr_esm_{mode}").glob("*/results.csv"))
         assert len(files) == 1
         value = pd.read_csv(files[0]).iloc[0]
@@ -430,7 +437,7 @@ def summarize(root):
     result = pd.concat([result, averages], ignore_index=True)
     result.to_csv(root / "results.csv", index=False)
     overview = result[~result.task.str.startswith("therapeutic_target_")].pivot(index=["task", "readout"], columns="pooling", values="auprc").round(2)
-    (root / "RESULTS.md").write_text("# Residue pooling ablation\n\nAUPRC (%); validation-selected configurations. BOS is the released model (not retrained). LR_ESM_BOS and LR_ESM_mean use frozen ESM features.\n\n" + overview.to_markdown() + "\n\nFull disease detail: results.csv. Localization uses the preserved 37-label dev dataset, not a paper-released benchmark.\n")
+    (root / "RESULTS.md").write_text("# Residue pooling ablation\n\nAUPRC (%); validation-selected configurations. BOS is the released model (not retrained). LR_ESM_BOS and LR_ESM_mean use frozen ESM features. LR_ESM_mlp/attention use ProtScape-trained poolers, without GNN outputs.\n\n" + overview.to_markdown() + "\n\nFull disease detail: results.csv. Localization uses the preserved 37-label dev dataset, not a paper-released benchmark.\n")
     save_json(root / "COMPLETE.json", dict(**read_json(root / "PREPARED.json"), ppi_query_sha256=reference_hash))
 
 
