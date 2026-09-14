@@ -43,7 +43,7 @@ def _restore_rng_state(rng_state):
         torch.cuda.set_rng_state_all(torch_cuda_state)
 
 
-def _load_best_metric_value(metric, metric_cfg):
+def _load_best_metric_value(metric, metric_cfg, checkpoint_selection="ppi_cci"):
     metrics_score = None
     metrics_path = metric_cfg["val_metrics_path"]
     if os.path.exists(metrics_path):
@@ -55,7 +55,7 @@ def _load_best_metric_value(metric, metric_cfg):
             meta_key = f"best_val_{metric}_meta"
             ppi_value = row.get(ppi_key)
             meta_value = row.get(meta_key)
-            if metric == "ap" and ppi_value not in [None, ""] and meta_value not in [None, ""]:
+            if metric == "ap" and checkpoint_selection == "ppi_cci" and ppi_value not in [None, ""] and meta_value not in [None, ""]:
                 metrics_score = float(ppi_value) + float(meta_value)
             elif ppi_value not in [None, ""]:
                 metrics_score = float(ppi_value)
@@ -65,15 +65,16 @@ def _load_best_metric_value(metric, metric_cfg):
         ckpt = torch.load(model_path, map_location="cpu", weights_only=False)
         score = ckpt.get("score")
         score_metric = ckpt.get("score_metric")
-        if score is not None and (metric != "ap" or score_metric == "ap_ppi_plus_ap_meta" or metrics_score is None):
+        expected_score = "ap_ppi" if checkpoint_selection == "ppi" else "ap_ppi_plus_ap_meta"
+        if score is not None and (metric != "ap" or score_metric == expected_score or metrics_score is None):
             return float(score)
 
     return metrics_score
 
 
-def _restore_best_trackers(dict_save_models):
+def _restore_best_trackers(dict_save_models, checkpoint_selection="ppi_cci"):
     for metric, metric_cfg in dict_save_models.items():
-        restored_value = _load_best_metric_value(metric, metric_cfg)
+        restored_value = _load_best_metric_value(metric, metric_cfg, checkpoint_selection)
         if restored_value is not None:
             metric_cfg["value"] = restored_value
             print(f"Restored best {metric} tracker to {restored_value:.6f}")
@@ -158,6 +159,7 @@ def _parse_cli_args():
     parser.add_argument("--s2gae-decoder-dropout", type=float, default=0.0)
     parser.add_argument("--s2gae-loss-weight", type=float, default=1.0)
     parser.add_argument("--metagraph-loss-weight", type=float, default=1.0)
+    parser.add_argument("--checkpoint-selection", choices=["ppi_cci", "ppi"], default="ppi_cci")
 
     # uniformity loss controls
     parser.add_argument("--uniformity-enabled", type=_str2bool, default=False)
@@ -374,6 +376,7 @@ dict_cfg = { # mostly default settings for general learning
     'dataset_mode': dataset_mode,
     'split_mode': split_mode,
     'metagraph_loss_weight': metagraph_loss_weight,
+    'checkpoint_selection': cli_args.checkpoint_selection,
     'weighted_ppi_loss': weighted_ppi_loss,
     'ppi_loss': ppi_loss,
     'ppi_phuber_tau': ppi_phuber_tau,
@@ -467,7 +470,7 @@ def main(
                 dict_save_models[metric][f'{set_}_metrics_path'] = metrics_save_prefix + f"/df_best{metric}_global_{set_}_metrics.csv"
 
     if checkpointing:
-        _restore_best_trackers(dict_save_models)
+        _restore_best_trackers(dict_save_models, cfg.checkpoint_selection)
 
     ppi_metapaths_train = None
     best_model = None
@@ -567,7 +570,7 @@ def main(
             "weighted_ppi_loss", "ppi_loss", "ppi_phuber_tau",
             "add_virtual_node", "k_negatives", "s2gae_config",
             "uniformity_config", "protein_config", "cell_config",
-            "tissue_config", "seed",
+            "tissue_config", "seed", "checkpoint_selection",
         )
         portable_config = {key: cfg[key] for key in portable_config_keys}
         portable_config["symmetric_ppi"] = symmetric_ppi
@@ -601,6 +604,9 @@ def main(
             best_model.load_state_dict(best_model_dict['model'].state_dict()) # conversion ensuring that the weight loading process remains valid across older-newer model versions
 
             # Recompute test metrics from the selected checkpoint.
+            # Objective ablations use identical negatives regardless of training RNG history.
+            if cfg.checkpoint_selection == "ppi":
+                utils.set_seed(cfg.seed)
             train_hierarchical_model_factored.test(
                 cfg,
                 best_model,

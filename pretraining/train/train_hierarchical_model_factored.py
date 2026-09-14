@@ -271,7 +271,8 @@ def train(
         for metric in dict_save_models.keys():
             val_score = val_metrics[f'{metric}_ppi']
             score_metric = f'{metric}_ppi'
-            if metric == 'ap' and val_metrics.get('ap_meta') is not None:
+            if (metric == 'ap' and val_metrics.get('ap_meta') is not None
+                    and getattr(cfg, 'checkpoint_selection', 'ppi_cci') == 'ppi_cci'):
                 val_score = val_metrics['ap_ppi'] + val_metrics['ap_meta']
                 score_metric = 'ap_ppi_plus_ap_meta'
             
