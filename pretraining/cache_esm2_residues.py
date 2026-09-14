@@ -5,6 +5,7 @@ protein ranges in one mmap; durable per-protein markers make restarts cheap.
 """
 import hashlib
 import json
+import mmap
 from pathlib import Path
 
 import networkx as nx
@@ -117,7 +118,10 @@ def worker(root, rank, workers=4):
         if residues.shape != (int(offsets[i + 1] - offsets[i]), DIM) or not np.isfinite(residues).all():
             raise ValueError(f"Invalid residue features for {metadata['genes'][i]}")
         values[offsets[i]:offsets[i + 1]] = residues
-        values.flush()
+        # Flush only this protein's pages, not the entire ~50 GB shared bank.
+        start = values.offset + int(offsets[i]) * DIM * values.dtype.itemsize
+        aligned = start - start % mmap.PAGESIZE
+        values._mmap.flush(aligned, start + residues.nbytes - aligned)
         save_json(root / "done" / f"{i}.json", {"gene": metadata["genes"][i], "residues": len(residues)})
         print(f"Cached {metadata['genes'][i]} ({len(residues)} residues)", flush=True)
 
