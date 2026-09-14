@@ -171,6 +171,8 @@ def preserve_references(root, release):
     with np.load(partition_path("protein_localization", Path(task["csv"])), allow_pickle=False) as original:
         for family in sorted(wanted):
             group = table[table.base_model_key.eq(family)]
+            if group.empty:
+                continue  # schedule only missing BOS localization readout families
             best = group.loc[group.val_auprc_macro_mean.idxmax()]
             assert best.n_label_classes == 37
             with np.load(Path(best.result_path).parent / "split_indices.npz", allow_pickle=False) as saved:
@@ -185,6 +187,7 @@ def preserve_references(root, release):
 def prepare(root, release):
     from pretraining.cache_esm2_residues import prepare as prepare_cache, sha256
     from downstream_tasks.data.partitions import load_task_partition
+    from downstream_tasks.config import THERAPEUTIC_TARGET_IDS
     if (root / "PREPARED.json").exists() or (root / "ACTIVE.json").exists():
         raise FileExistsError("Already prepared: reuse this queue, do not regenerate it")
     for folder in ["configs", "logs", "queue", "failures", "pretraining", "inference", "ppi", "sequence"]:
@@ -205,7 +208,7 @@ def prepare(root, release):
     paths_file.write_text(yaml.safe_dump(paths, sort_keys=False))
     localization = preserve_localization(root)
     tasks = [dict(task="corum", csv=str(release / "data/downstream_tasks/corum_dataset/corum_memberships_filtered.csv"))]
-    tt = sorted((release / "data/downstream_tasks/therapeutic_target_dataset").glob("therapeutic_target_*.csv"))
+    tt = sorted(release / "data/downstream_tasks/therapeutic_target_dataset" / f"therapeutic_target_{disease}.csv" for disease in THERAPEUTIC_TARGET_IDS)
     assert len(tt) == 15, f"Expected all 15 released TT diseases, got {len(tt)}"
     tasks += [dict(task=path.stem.lower(), csv=str(path)) for path in tt]
     tasks += [dict(task="protein_localization", csv=str(localization))]
@@ -217,8 +220,8 @@ def prepare(root, release):
     prepare_cache(root / "residues", release)
     # Sequence-only readouts use the same contextual node coverage to retain the
     # frozen paper cohort; their classifiers never receive these graph features.
-    for mode in ["bos", "mean"]:
-        link = root / "inference" / f"lr_esm_{mode}"
+    for name in ["bos", "lr_esm_bos", "lr_esm_mean"]:
+        link = root / "inference" / name
         target = release / "embeddings/s2gae_att_k1_fixed_do04_uni5e6"
         if not link.is_symlink():
             link.symlink_to(target, target_is_directory=True)
@@ -244,6 +247,12 @@ def prepare(root, release):
         downstream.append(dict(key=f"{mode}_{task['task']}_{index}", command=downstream_command(root, mode, task, readout)))
     for mode, task in itertools.product(["bos", "mean"], tasks):
         downstream.append(dict(key=f"lr_esm_{mode}_{task['task']}", command=sequence_command(root, mode, task)))
+    with (root / "reference_results.csv").open() as handle:
+        hpa_done = {row["readout"] for row in csv.DictReader(handle) if row["task"] == "protein_localization"}
+    hpa = next(task for task in tasks if task["task"] == "protein_localization")
+    for index, readout in enumerate(readouts(settings["downstream"])):
+        if readout["model"] not in hpa_done:
+            downstream.append(dict(key=f"bos_protein_localization_{index}", command=downstream_command(root, "bos", hpa, readout)))
     save_json(root / "queue/downstream/tasks.json", downstream)
     save_json(root / "PREPARED.json", dict(pretraining_runs=len(trials), downstream_runs=len(downstream)))
     print(f"Prepared {len(trials)} pretraining runs and {len(downstream)} downstream readout runs")
@@ -407,6 +416,14 @@ def summarize(root):
                          auprc=100 * value.test_auprc_macro_mean,
                          validation_auprc=100 * value.val_auprc_macro_mean,
                          result_path=str(files[0])))
+    additional = list((root / "downstream/protein_localization/bos").glob("*/results.csv"))
+    if additional:
+        frame = pd.concat([pd.read_csv(path).assign(result_path=str(path)) for path in additional], ignore_index=True)
+        for family, group in frame.groupby("base_model_key"):
+            best = group.loc[group.val_auprc_macro_mean.idxmax()]
+            rows.append(dict(pooling="bos", task="protein_localization", readout=family,
+                             auprc=100 * best.test_auprc_macro_mean, validation_auprc=100 * best.val_auprc_macro_mean,
+                             result_path=best.result_path, source="Missing BOS localization readout (released encoder frozen)"))
     result = pd.DataFrame(rows)
     tt = result[result.task.str.startswith("therapeutic_target_")]
     averages = tt.groupby(["pooling", "readout"], as_index=False).auprc.mean().assign(task="TT mean (15 diseases)")
@@ -414,7 +431,7 @@ def summarize(root):
     result.to_csv(root / "results.csv", index=False)
     overview = result[~result.task.str.startswith("therapeutic_target_")].pivot(index=["task", "readout"], columns="pooling", values="auprc").round(2)
     (root / "RESULTS.md").write_text("# Residue pooling ablation\n\nAUPRC (%); validation-selected configurations. BOS is the released model (not retrained). LR_ESM_BOS and LR_ESM_mean use frozen ESM features.\n\n" + overview.to_markdown() + "\n\nFull disease detail: results.csv. Localization uses the preserved 37-label dev dataset, not a paper-released benchmark.\n")
-    save_json(root / "COMPLETE.json", dict(pretraining_configs=18, downstream_configs=1156, ppi_query_sha256=reference_hash))
+    save_json(root / "COMPLETE.json", dict(**read_json(root / "PREPARED.json"), ppi_query_sha256=reference_hash))
 
 
 def submit(root, stage="cache", allocation=1):
