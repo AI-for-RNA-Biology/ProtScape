@@ -22,12 +22,15 @@ def cache(tmp_path):
 
 
 @pytest.mark.parametrize("mode", ["mlp", "attention"])
-def test_mean_initialization_dedup_gradient_and_reload(cache, mode):
-    pooler = ResiduePooler(cache, mode, hidden_dim=3, residue_budget=3)
-    values = torch.from_numpy(np.load(cache / "residues.npy")).float()
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_mean_initialization_dedup_gradient_and_reload(cache, mode, device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+    pooler = ResiduePooler(cache, mode, hidden_dim=3, residue_budget=3).to(device)
+    values = torch.from_numpy(np.load(cache / "residues.npy")).float().to(device)
     expected = torch.stack([values[:2].mean(0), values[2:5].mean(0), values[5:].mean(0)])
     expected = (expected - 1) / 2
-    ids = torch.tensor([2, 0, 1, 0])
+    ids = torch.tensor([2, 0, 1, 0], device=device)
     output = pooler(ids)
     torch.testing.assert_close(output, expected[ids])
     output.square().sum().backward()
@@ -40,7 +43,7 @@ def test_mean_initialization_dedup_gradient_and_reload(cache, mode):
     pooler.eval()
     torch.testing.assert_close(pooler(ids), trained)
     torch.testing.assert_close(pooler(ids), trained)  # evaluation cache
-    restored = ResiduePooler(cache, mode, hidden_dim=3).eval()
+    restored = ResiduePooler(cache, mode, hidden_dim=3).to(device).eval()
     restored(ids)  # ensure loading invalidates a populated cache
     restored.load_state_dict(pooler.state_dict())
     torch.testing.assert_close(restored(ids), trained)
