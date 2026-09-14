@@ -294,6 +294,8 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--weight-decay", type=float, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--patience", type=int, default=None)
     parser.add_argument("--pdl-pmax", type=float, default=None)
     parser.add_argument("--train-selection-metric", type=str, default="auprc", choices=["auprc", "f1"])
     parser.add_argument("--no-class-weight", action="store_true")
@@ -573,6 +575,10 @@ def main():
         config.weight_decay = args.weight_decay
     if args.batch_size is not None:
         config.batch_size = args.batch_size
+    if args.epochs is not None:
+        config.epochs = args.epochs
+    if args.patience is not None:
+        config.patience = args.patience
     if args.pdl_pmax is not None:
         config.pdl_pmax = args.pdl_pmax
     if args.no_class_weight:

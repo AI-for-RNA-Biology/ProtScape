@@ -106,10 +106,59 @@ def test_sweep_only_varies_pooling_and_learning_rates():
     from scripts.cscs.run_residue_ablation import grid, readouts, REPO
     config = yaml.safe_load((REPO / "configs/residue_ablation.yaml").read_text())
     trials = grid(config["pretraining"])
-    assert len(trials) == 18 and len({t["name"] for t in trials}) == 18
-    assert {t["mode"] for t in trials} == {"mean", "mlp", "attention"}
+    assert len(trials) == 26 and len({t["name"] for t in trials}) == 26
+    assert {t["mode"] for t in trials} == {"mean", "mlp", "attention", "swe"}
+    assert {t["num_ref_points"] for t in trials if t["mode"] == "swe"} == {100, 200}
     assert len(list(readouts(config["downstream"]))) == 22
     assert config["pretraining"]["seed"] == 0
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_swe_simple_only_combination_learns_and_reloads(cache, device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+    pooler = ResiduePooler(cache, "swe", num_ref_points=3).to(device)
+    assert list(dict(pooler.named_parameters())) == ["swe.combination"]
+    assert sum(p.numel() for p in pooler.parameters()) == 3
+    frozen = {key: value.clone() for key, value in pooler.swe.named_buffers()}
+    ids = torch.tensor([2, 0, 1, 0], device=device)
+    before = pooler(ids).detach().clone()
+    pooler(ids).square().sum().backward()
+    assert torch.isfinite(pooler.swe.combination.grad).all()
+    assert pooler.swe.combination.grad.abs().sum() > 0
+    torch.optim.AdamW(pooler.parameters(), lr=.01, weight_decay=.01).step()
+    for key, value in pooler.swe.named_buffers():
+        torch.testing.assert_close(value, frozen[key], rtol=0, atol=0)
+    pooler.eval()
+    after = pooler(ids)
+    assert not torch.allclose(before, after)
+    restored = ResiduePooler(cache, "swe", num_ref_points=3).to(device).eval()
+    restored.load_state_dict(pooler.state_dict())
+    torch.testing.assert_close(after, restored(ids))
+
+
+def test_swe_simple_transport_interpolation_permutation_and_singleton():
+    from pretraining.models.residue_pooling import SlicedWassersteinPooler
+    swe = SlicedWassersteinPooler(2, 3).double()
+    with torch.no_grad():
+        swe.directions.copy_(torch.eye(2))
+        swe.reference.copy_(torch.tensor([[1., 0.], [-1., 1.], [0., -1.]]))
+        swe.combination.copy_(torch.tensor([.2, .3, .5]))
+    values = torch.tensor([[8., 10.], [2., 4.], [5., 7.]], dtype=torch.float64)
+    # Equal sizes: map sorted input back to ORIGINAL reference-element ranks.
+    ranks = swe.reference.argsort(0).argsort(0)
+    expected = ((values.sort(0).values.gather(0, ranks) - swe.reference) * swe.combination[:, None]).sum(0)
+    torch.testing.assert_close(swe(values, torch.tensor([3]))[0], expected)
+    torch.testing.assert_close(swe(values[[2, 0, 1]], torch.tensor([3]))[0], expected)
+    # Two input quantiles at 1/3, 2/3; reference quantiles at 1/4, 1/2, 3/4.
+    two = torch.tensor([[0., 4.], [4., 8.]], dtype=torch.float64)
+    interpolated = torch.tensor([[-1., 3.], [2., 6.], [5., 9.]], dtype=torch.float64)
+    expected_two = ((interpolated.gather(0, ranks) - swe.reference) * swe.combination[:, None]).sum(0)
+    torch.testing.assert_close(swe(two, torch.tensor([2]))[0], expected_two)
+    singleton = torch.tensor([[7., 3.]], dtype=torch.float64)
+    expected_one = ((singleton - swe.reference) * swe.combination[:, None]).sum(0)
+    together = swe(torch.cat([two, singleton]), torch.tensor([2, 1]))
+    torch.testing.assert_close(together, torch.stack([expected_two, expected_one]))
 
 
 def test_cache_preserves_isoforms_gaps_and_gnn_normalization(tmp_path):

@@ -2,7 +2,7 @@
 
 The released ProtScape uses the existing ESM2 BOS generator. It is a valid,
 unchanged reference; this experiment does **not** retrain it or modify that
-generator. The three new contextual models replace only the protein input
+generator. The four new contextual models replace only the protein input
 pooling, before the existing GNN:
 
 | Input | Definition | Initialization |
@@ -10,6 +10,7 @@ pooling, before the existing GNN:
 | Mean | Mean of frozen residue vectors | No learned pooling parameters |
 | MLP → mean | Residual bottleneck `R + W2 GELU(W1 R)` then mean | `W2=0`, starts at mean |
 | Gated attention | `softmax(w[tanh(VR) * sigmoid(UR)])`, weighted sum of residues | `w=0`, starts at mean |
+| SWE-Simple | Sorted/interpolated 1-D transport to a fixed reference, combined over reference points | Frozen random unit slicers and uniform reference; learned combination only |
 
 Pooling is context-independent. The same protein has the same pooled vector
 before the GNN; contextualization remains the responsibility of the existing
@@ -30,7 +31,7 @@ positions. Preserve them and their order: the original GNN uses the first record
 for a gene; the downstream feature dictionary uses the last. The new residue
 cache mirrors both conventions rather than silently changing the proteins.
 
-Standardize using the fixed mean-vector statistics on the feature-covered
+For ProtScape pretraining, standardize using fixed mean-vector statistics on the feature-covered
 global interactome, matching the original feature-normalization convention.
 Learned pooling receives these standardized residues. Deduplicate proteins in
 each sampled batch; use activation checkpointing to limit GPU memory and a
@@ -48,7 +49,8 @@ the preserved HPA 25.1 **37-label development extension**, with its existing
 
 - Backbone learning rate: **0.003, 0.01**.
 - Learned-pooler width: **64, 128**; pooler learning rate: **0.0001, 0.001**.
-- **18 pretraining runs**: 2 mean, 8 MLP, 8 attention; **300 epochs**, seed **0**.
+- SWE-Simple reference points: **100, 200**; the same two pooler learning rates.
+- **26 pretraining runs**: 2 mean, 8 MLP, 8 attention, 8 SWE-Simple; **300 epochs**, seed **0**.
 - Fixed official contextual backbone: ACM-RW 512 × 3, dropout 0.4, GraphSAINT,
   original S2GAE mask/decoder/self-loop handling, CCI/tissue/uniformity objectives.
 - Epoch and configuration selection: original **validation PPI AP + CCI AP**,
@@ -65,24 +67,56 @@ context-only ABMIL-PDL uses the pre-CCI pooled cell vector; the other five
 readouts and TT use the canonical contextual cell vector. This is fixed across
 pooling variants, not another search dimension.
 
-Add two **frozen ESM-only** linear baselines on each task: `LR_ESM_BOS` and
-`LR_ESM_mean`. Also evaluate `LR_ESM_MLP` and `LR_ESM_attention`: frozen ESM with
-the selected ProtScape-trained pooler, **without GNN outputs**. These two are not
-fully frozen-ESM baselines: their poolers learned under the pretraining objectives.
-Total: 1,190 downstream readout runs, each with five CV fits, plus the 12 missing
-BOS localization runs below (1,202 altogether). Unchanged sequence baselines
-run once per task, not once per contextual model.
+All five ESM-only baselines are **independent of ProtScape pretraining**:
+
+- `LR_ESM_BOS` and `LR_ESM_mean`: fixed ESM vectors → trained linear head.
+- `ESM_MLP_linear` and `ESM_attention_linear`: frozen ESM residues → fresh
+  pooler + linear head, trained jointly on each downstream training fold only.
+  These are learned-pooling classifiers, not strictly linear probes. They reuse
+  the pooling architecture, **never the ProtScape-trained weights or GNN**.
+  Width 64/128 × learning rate 1e-4/1e-3: four settings per family/task. Use
+  train-only mean-vector normalization, class weights and label-cluster sampling;
+  fixed seed 42, AdamW weight decay 1e-4, batch 512, 300 epochs, patience 50.
+  Select epochs and settings by validation AUPRC, never test scores.
+- `ESM_SWE_simple_linear`: a separately initialized SWE-Simple combination vector
+  and linear classifier, fitted only on downstream training folds. Frozen ESM,
+  slicers and reference; reference points 100/200 × learning rate 1e-4/1e-3.
+
+Total: 1,496 contextual readout settings + 34 frozen-feature LR settings + 204
+independent learned-pooler settings + 12 missing BOS localization settings =
+**1,746 downstream configurations**, each with five CV fits. Sequence baselines
+run once per task/configuration, not once per contextual model. Sharing the frozen
+ESM cache does not share ProtScape learning; the sequence baselines need no
+selected pretraining checkpoint, even though the queue runs them downstream.
 Existing BOS contextual TT/CORUM and localization results are reused. Only the
 12 missing BOS localization ABMIL-PDL settings are additionally fitted, using
 the released frozen encoder (no BOS pretraining).
 
 The controlled PPI comparison recomputes 1:1 context-mean test AUPRC for the
-released BOS model and three selected models, with identical query banks.
+released BOS model and four selected models, with identical query banks.
 Only train+validation topology is available when predicting test pairs.
+
+### SWE-Simple implementation
+
+Use the SWE-Simple variant of [NaderiAlizadeh & Singh (2025)](https://doi.org/10.1093/bioadv/vbaf060),
+with the [authors' implementation](https://github.com/navid-naderi/PLM_SWE/blob/b9491235444a463e4b906b5dc8fbfae0d6b95ead/model/architectures.py)
+as a reference. There is **no full/trainable-slicer SWE configuration**. Set
+`L=d=2560`; initialize frozen unit-normalized Gaussian slicers and a frozen
+reference uniform on [-1, 1]. Only the shared length-m combination vector learns:
+100 or 200 pooling parameters. Unlike MLP/attention, this does not start at mean.
+The output stays 2560-dimensional, leaving the existing GNN unchanged.
+
+Native Torch sort/linear interpolation handles unpadded variable-length proteins;
+the interior quantile grid and linear tail extrapolation follow the authors' code.
+Use the inverse reference permutation specified in paper Eq. 4 (the published code
+uses the forward permutation; they coincide for our fixed, sorted reference).
+The displacement sign follows the paper; reversing this overall sign can be
+absorbed by the learned combination. Tests cover variable lengths, singleton
+proteins, permutation invariance, frozen buffers, gradients and reloads.
 
 ## Unattended execution
 
-One Python controller and one Slurm wrapper handle cache → four short
+One Python controller and one Slurm wrapper handle cache → eight short
 end-to-end smoke runs → pretraining → validation selection/PPI evaluation/full
 embedding export → downstream → `results.csv` / `RESULTS.md`.
 
@@ -97,8 +131,10 @@ python -m scripts.cscs.run_residue_ablation submit ROOT
 The controller snapshots committed source and pins absolute data paths. Four
 workers share a locked task queue on one four-GPU node; no GPU waits on downloads
 or on another job's dependency. Completed tasks are never repeated. Time-limited
-pretraining resumes the saved model, optimizer and RNG state; interrupted
-downstream readout runs can restart, while completed runs remain untouched.
+pretraining resumes the saved model, optimizer and RNG state. Independent
+learned-pooler classifiers resume their last epoch and skip completed folds;
+other interrupted downstream readout runs can restart, while completed runs
+remain untouched.
 At allocation end the wrapper automatically submits remaining work or the next
 stage. A worker error stops stage advancement and writes `failures/*.json`.
 Per-stage allocation caps prevent unbounded retries. `ACTIVE.json` records the

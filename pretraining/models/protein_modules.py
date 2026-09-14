@@ -192,7 +192,7 @@ class prot_module(nn.Module):
 
         residue_config = protein_config.get("residue_pooling")
         self.residue_pooler = None
-        if residue_config and residue_config["mode"] in {"mlp", "attention"}:
+        if residue_config and residue_config["mode"] in {"mlp", "attention", "swe"}:
             from .residue_pooling import ResiduePooler
             # Extra pooler parameters must not change the backbone initialization.
             with torch.random.fork_rng(devices=[]):
@@ -200,6 +200,7 @@ class prot_module(nn.Module):
                     residue_config["cache_root"], residue_config["mode"],
                     residue_config["hidden_dim"],
                     manifest_sha256=residue_config.get("manifest_sha256"),
+                    num_ref_points=residue_config.get("num_ref_points", 100),
                 )
 
     def reset_parameters(self):
