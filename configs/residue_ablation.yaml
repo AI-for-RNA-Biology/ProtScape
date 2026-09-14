@@ -1,0 +1,23 @@
+# Only the input pooling changes; all other architecture/loss settings are
+# inherited from the official `protscape` entry in configs/pretraining.yaml.
+pretraining:
+  seed: 0
+  epochs: 300
+  backbone_lr: [0.003, 0.01]
+  pooler_hidden_dim: [64, 128]
+  pooler_lr: [0.0001, 0.001]
+  selection: ppi_cci
+downstream:
+  seed: 42
+  epochs: 300
+  patience: 50
+  dropout: [0, 0.2, 0.4, 0.6]
+  pdl_pmax: [0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+# Upper bounds prevent an unattended failed-to-converge workflow running forever.
+# Each normal allocation lasts at most 12h, with four independent GPU workers.
+max_allocations:
+  cache: 3
+  smoke: 2
+  train: 12
+  evaluate: 2
+  downstream: 16

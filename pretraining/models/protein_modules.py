@@ -190,6 +190,18 @@ class prot_module(nn.Module):
         
         self.reset_parameters()
 
+        residue_config = protein_config.get("residue_pooling")
+        self.residue_pooler = None
+        if residue_config and residue_config["mode"] in {"mlp", "attention"}:
+            from .residue_pooling import ResiduePooler
+            # Extra pooler parameters must not change the backbone initialization.
+            with torch.random.fork_rng(devices=[]):
+                self.residue_pooler = ResiduePooler(
+                    residue_config["cache_root"], residue_config["mode"],
+                    residue_config["hidden_dim"],
+                    manifest_sha256=residue_config.get("manifest_sha256"),
+                )
+
     def reset_parameters(self):
         for m in self.gnn_prot_layers:
             m.reset_parameters()
@@ -221,6 +233,8 @@ class prot_module(nn.Module):
         """
         Forward pass through the protein GNN for a single graph.
         """
+        if getattr(self, "residue_pooler", None) is not None:
+            batch_graph.x = self.residue_pooler(batch_graph.residue_id)
         x = batch_graph.x
 
         edge_index = getattr(batch_graph, "edge_index_mp", None)
@@ -358,6 +372,9 @@ class prot_module(nn.Module):
             layer_outputs_dict = {} if return_layer_outputs else None
             
             for celltype, graph in ppi_data.items(): # Iterate through cell-type specific PPI layers
+                if getattr(self, "residue_pooler", None) is not None:
+                    graph = graph.clone()
+                    graph.x = self.residue_pooler(graph.residue_id)
                 edge_index_raw = getattr(graph, "edge_index_mp", None)
                 edge_weight_raw = None
                 if edge_index_raw is None:

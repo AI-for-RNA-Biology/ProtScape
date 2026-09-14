@@ -170,6 +170,7 @@ def _parse_cli_args():
     parser.add_argument("--wandb-mode", choices=["disabled", "offline", "online"], default="disabled")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--residue-config", type=Path, default=None)
 
     return parser.parse_args()
 
@@ -332,6 +333,14 @@ else:
 if features_mode in ["ESM2", "ProstT5"]:
     ppi_feat_dir = _get_ppi_feat_dir(project_paths, features_mode)
 
+residue_config = None
+if cli_args.residue_config is not None:
+    with cli_args.residue_config.open() as handle:
+        residue_config = yaml.safe_load(handle)
+    if features_mode != "ESM2" or cell_pooling != "attention" or add_virtual_node:
+        raise ValueError("Residue ablation keeps the official ESM2/attention/no-virtual-node backbone")
+    ppi_feat_dir = str(Path(residue_config["cache_root"]) / "mean.plk")
+
 hierarchical_mode = 'CTassignment'
 assert hierarchical_mode in ['CTassignment']
 # will see later if we need a more informative metagraph knowledge
@@ -419,6 +428,8 @@ protein_config = {
     'n_cells': None,
     'add_virtual_node': add_virtual_node,  # Whether to add virtual node for attention-based pooling
 }
+if residue_config is not None:
+    protein_config["residue_pooling"] = residue_config
 
 cell_config = {
     'pooling': cell_pooling,
@@ -511,7 +522,15 @@ def main(
     # ppi_metapaths_train, mg_metapaths_train, ppi_metapaths_val, mg_metapaths_val = None, None, None, None
     
     if run_train:
-        params = list(model.parameters())
+        pooler = model.prot_encoder.residue_pooler
+        if pooler is None:
+            params = list(model.parameters())
+        else:
+            pooler_ids = {id(parameter) for parameter in pooler.parameters()}
+            params = [
+                {"params": [p for p in model.parameters() if id(p) not in pooler_ids]},
+                {"params": list(pooler.parameters()), "lr": float(cfg.protein_config.residue_pooling.lr)},
+            ]
         optimizer = torch.optim.Adam(params, lr = cfg.lr, weight_decay = 0.)
         
         assert cfg.reg_centerloss == 0.
@@ -639,6 +658,9 @@ if __name__ == "__main__":
         count_edge_path=count_edge_path,
         weighted_ppi_loss=weighted_ppi_loss
         )
+    if residue_config is not None:
+        from .models.residue_pooling import attach_residue_ids
+        attach_residue_ids(ppi_data, ppi_layers, celltype_map, residue_config["cache_root"])
     if input_dim is None:
         input_dim = ppi_data[0].x.shape[-1]
         protein_config['input_dim'] = input_dim

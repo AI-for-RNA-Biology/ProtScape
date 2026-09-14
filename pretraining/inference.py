@@ -196,6 +196,7 @@ def main():
 
     networks = Path(paths["networks_bulk"]).expanduser()
     features_mode = config.get("features_mode")
+    residue_config = config.get("protein_config", {}).get("residue_pooling")
     seed = int(config.get("seed", 0))
     torch.manual_seed(seed)
     if features_mode == "ESM2":
@@ -206,6 +207,8 @@ def main():
         feature_dim = int(config["input_dim"])
     else:
         raise ValueError(f"Unsupported checkpoint protein features: {features_mode}")
+    if residue_config:
+        feature_path = Path(residue_config["cache_root"]) / "mean.plk"
 
     ppi_data, mg_data, edge_types, celltype_map, tissue_neighbors, ppi_layers, _, _ = read_data(
         networks / "global_ppi_edgelist.txt",
@@ -222,6 +225,9 @@ def main():
         defer_ppi_features=model_type == "pinnacle",
         verbose=False,
     )
+    if residue_config:
+        from .models.residue_pooling import attach_residue_ids
+        attach_residue_ids(ppi_data, ppi_layers, celltype_map, residue_config["cache_root"])
 
     cell_ids = [int(cell_id) for cell_id in checkpoint.get("cell_ids", [])]
     if not cell_ids:

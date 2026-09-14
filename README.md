@@ -71,6 +71,7 @@ Detailed instructions:
 - [Pretraining and inference](pretraining/README.md)
 - [Downstream tasks](downstream_tasks/README.md)
 - [Analyses and plots](exploration/README.md)
+- [Development residue-pooling ablation](docs/residue_pooling_ablation.md)
 - [ALS rewiring and input preparation](exploration/analysis/ALS_rewiring/README.md)
 
 ## Repository structure

@@ -52,6 +52,7 @@ def generate_batch(
         
     def get_samples(data, root_gsnorm_path=None):
         full_positive_edge_index = data.edge_index
+        residue_id = getattr(data, "residue_id", None)
         if root_gsnorm_path is not None:
             # true path of saved gs statistics
             gsnorm_path = root_gsnorm_path + f'/graphsaintedgesampler_{gs_sample_coverage}.pt'
@@ -113,6 +114,7 @@ def generate_batch(
                         edge_index = pos_edge_index,
                         edge_attr=edge_type,
                         n_id = torch.arange(data.x.shape[0]),
+                        residue_id=residue_id,
                 )
                 if graph_saint_norm:
                     # Add the precomputed GraphSAINT edge and loss weights.
@@ -196,6 +198,7 @@ def generate_batch(
                     edge_attr=edge_type,
                     eval_edges = eval_edges,
                     n_id = torch.arange(data.x.shape[0]),
+                    residue_id=residue_id,
                 )
                 if weighted_ppi_loss:
                     data.loss_edge_weights = loss_edge_weights
@@ -734,4 +737,3 @@ def train_batch2dict(
         ppi_dict[cell_name] = batch.to(device)
         
     return ppi_dict
-

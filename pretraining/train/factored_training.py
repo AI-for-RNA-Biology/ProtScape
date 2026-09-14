@@ -298,6 +298,7 @@ def iterate_train_batch_hierarchical_model(
                         x=data.x,
                         edge_index=data.edge_index,
                         edge_index_mp=masked_edge_indices[celltype],
+                        residue_id=getattr(data, "residue_id", None),
                     )
 
                 emb_ppi_x, batch_ppi_x, cells_x, cells_pred, layer_outputs = model(

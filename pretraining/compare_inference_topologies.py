@@ -170,6 +170,10 @@ def load_context_data(
             verbose=False,
         )
     contexts, metagraph, _, celltype_map, _, _, _, _ = loaded
+    residue_config = config.get("protein_config", {}).get("residue_pooling")
+    if residue_config:
+        from .models.residue_pooling import attach_residue_ids
+        attach_residue_ids(contexts, loaded[5], celltype_map, residue_config["cache_root"])
     cell_ids = [int(cell_id) for cell_id in checkpoint["cell_ids"]]
     if set(cell_ids) != set(contexts):
         raise ValueError("ProtScape checkpoint and released Cell-PPIs differ.")
@@ -212,6 +216,7 @@ def encode_protscape_local(
         x=features[graph.feature_index],
         edge_index=graph.edge_index[:, message_mask],
         edge_attr=graph.edge_attr[message_mask],
+        residue_id=getattr(graph, "residue_id", None),
     ).to(device)
     pooling = model.cell_config["pooling"]
     uses_virtual_node = (
@@ -233,6 +238,9 @@ def encode_protscape_local(
     if uses_virtual_node:
         layers = [layer[:-1] for layer in layers]
     raw = local.x[: graph.num_nodes]
+    pooler = getattr(model.prot_encoder, "residue_pooler", None)
+    if pooler is not None:
+        raw = pooler(local.residue_id)
     return layers, raw
 
 
