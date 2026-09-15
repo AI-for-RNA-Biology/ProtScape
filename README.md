@@ -2,6 +2,7 @@
 
 **Authors:** Alois Thomas, Lisa Fournier, Vincent Jung, Rickie Patani, Pascal Frossard, Raphaëlle Luisier and Cédric Vincent-Cuaz<br>
 **Correspondence:** [Cédric Vincent-Cuaz](mailto:cedric.vincent-cuaz@unibe.ch)<br>
+**Preprint:** [bioRxiv](https://www.biorxiv.org/content/10.64898/2026.09.08.750135v1)<br>
 **Data and pretrained models:** [Zenodo](https://zenodo.org/records/22645081)
 
 [![Overview of ProtScape](assets/protscape_overview.png)](assets/protscape_overview.pdf)
