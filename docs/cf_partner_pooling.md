@@ -1,5 +1,10 @@
 # Pair-masked CF partner-pooling panel
 
+**Retired:** superseded by [the focused recycling experiment](cf_recycling_ablation.md).
+The running partner sweep was cancelled at the user's request. Checkpoints are
+preserved; matched completed mean/gated runs are reused read-only. No remaining
+partner-grid, partner PPI, or partner downstream jobs are to be submitted.
+
 This is a separate experiment, not a change to the running 26-configuration
 sequence-pooling sweep. Only this panel removes both orientations of masked
 training pairs (`um`). Self-loops remain in ACM message passing but are not

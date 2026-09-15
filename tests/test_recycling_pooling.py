@@ -195,3 +195,44 @@ def test_final_test_wandb_keys_are_unambiguous(monkeypatch):
     assert saved.summary["test/cell_macro_cell_encoding/auprc_k1"] == .7
     assert saved.summary["test/cell_macro_global_encoding/f1_k1"] == .6
     assert saved.summary["test/checkpoint_update"] == 10
+
+
+def test_seed_repeat_queue_uses_only_validation_selected_settings(tmp_path, monkeypatch):
+    import scripts.cscs.run_cf_residue_ablation as controller
+    config = yaml.safe_load((controller.REPO / "configs/cf_recycling_ablation.yaml").read_text())
+    trials = controller.trial_grid(config["pretraining"])
+    families = config["pretraining"]["modes"]
+    for folder in ["source/configs", "configs", "queue/repeat"]:
+        (tmp_path / folder).mkdir(parents=True, exist_ok=True)
+    (tmp_path / "source/configs/cf_recycling_ablation.yaml").write_text(yaml.safe_dump(config))
+    inputs = dict(release="/release", config_file="cf_recycling_ablation.yaml", model_families=families,
+                  modes=[f"{m}_seed{s}" for m in families for s in [0, 1, 2]])
+    controller.save_json(tmp_path / "inputs.json", inputs)
+    controller.save_json(tmp_path / "trials.json", trials)
+    for trial in trials:
+        if trial["mode"] != "mean":
+            (tmp_path / "configs" / f"{trial['name']}.yaml").write_text("mode: " + trial["mode"])
+    def selection_row(root, trial):
+        return dict(**trial, score=trial["backbone_lr"] + (trial["lr"] or 0), epoch=5,
+                    checkpoint=str(root / "pretraining" / trial["name"] / "best_model_state_dict.pt"))
+    monkeypatch.setattr(controller, "selection_row", selection_row)
+    controller.select(tmp_path)
+    repeats = controller.read_json(tmp_path / "repeats.json")
+    assert len(repeats) == 16
+    assert {t["seed"] for t in repeats} == {1, 2}
+    assert all(t["backbone_lr"] == .01 for t in repeats)
+    assert all(t["lr"] == .001 for t in repeats if t["mode"] != "mean")
+    assert not (tmp_path / "selected.json").exists()
+    controller.select_repeats(tmp_path)
+    selected = controller.read_json(tmp_path / "selected.json")
+    assert set(selected) == set(inputs["modes"])
+    assert all(len([m for m in selected if m.startswith(family + "_seed")]) == 3 for family in families)
+
+
+def test_retired_panel_cannot_resubmit(tmp_path):
+    from scripts.cscs.run_cf_residue_ablation import submit, finish
+    (tmp_path / "RETIRED.json").write_text("{}")
+    with pytest.raises(RuntimeError, match="retired"):
+        submit(tmp_path)
+    with pytest.raises(RuntimeError, match="retired"):
+        finish(tmp_path, "train", 1)
