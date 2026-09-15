@@ -21,6 +21,74 @@ def cache(tmp_path):
     return tmp_path
 
 
+def test_mlp_linear_after_mean_preserves_output_and_gradients(cache):
+    pooler = ResiduePooler(cache, "mlp", hidden_dim=3).double()
+    torch.nn.init.normal_(pooler.output.weight)
+    torch.nn.init.normal_(pooler.output.bias)
+    residues = torch.from_numpy(np.load(cache / "residues.npy")).double()
+    lengths = torch.tensor([2, 3, 2])
+    values = (residues.float() - pooler.feature_mean) / pooler.feature_std
+    old = torch.segment_reduce(values + pooler.output(torch.nn.functional.gelu(pooler.V(values))), "mean", lengths=lengths)
+    old.square().sum().backward()
+    grads = [p.grad.clone() for p in pooler.parameters()]
+    pooler.zero_grad()
+    new = pooler.pool(residues, lengths)
+    new.square().sum().backward()
+    torch.testing.assert_close(new, old)
+    for parameter, expected in zip(pooler.parameters(), grads):
+        torch.testing.assert_close(parameter.grad, expected)
+
+
+@pytest.mark.parametrize("mode", ["mlp", "attention", "swe"])
+def test_cf_pooling_global_local_mapping_gradient_and_reload(cache, mode):
+    from pretraining.global_s2gae import GlobalS2GAE
+    kwargs = dict(input_dim=4, hidden_dim=8, num_layers=2, dropout=0, decode_channels=8)
+    torch.manual_seed(7)
+    baseline = GlobalS2GAE(**kwargs)
+    next_random = torch.rand(3)
+    torch.manual_seed(7)
+    model = GlobalS2GAE(**kwargs, residue_pooling=dict(cache_root=str(cache), mode=mode, hidden_dim=3, num_ref_points=3), residue_ids=[2, 0, 1])
+    torch.testing.assert_close(torch.rand(3), next_random)
+    for key, value in baseline.state_dict().items():
+        torch.testing.assert_close(model.state_dict()[key], value)
+    edges = torch.tensor([[0, 1, 1, 2], [1, 0, 2, 1]])
+    features = torch.zeros(3, 4)
+    embeddings, _ = model.encode(features, edges)
+    embeddings.square().sum().backward()
+    assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.residue_pooler.parameters())
+    model.eval()
+    baseline.encoder.load_state_dict(model.encoder.state_dict())  # include updated BN running statistics
+    indices = torch.tensor([2, 0])
+    local_edges = torch.tensor([[0, 1], [1, 0]])
+    with pytest.raises(ValueError, match="global protein indices"):
+        model.encode(features[:2], local_edges)
+    expected, _ = baseline.eval().encode(model.residue_pooler(model.residue_ids[indices]).detach(), local_edges)
+    actual, _ = model.encode(features[:2], local_edges, protein_indices=indices)
+    torch.testing.assert_close(actual, expected)
+    restored = GlobalS2GAE(**model.model_config).eval()
+    restored.load_state_dict(model.state_dict())
+    torch.testing.assert_close(restored.encode(features[:2], local_edges, protein_indices=indices)[0], actual)
+
+
+def test_swe_cache_preserves_exact_computation_and_gradient(cache):
+    pooler = ResiduePooler(cache, "swe", num_ref_points=3, residue_budget=3)
+    residues = torch.from_numpy(np.load(cache / "residues.npy"))
+    direct = pooler.pool(residues, torch.tensor([2, 3, 2]))
+    direct.square().sum().backward()
+    expected_grad = pooler.swe.combination.grad.clone()
+    pooler.zero_grad()
+    cached = pooler(torch.arange(3))
+    cached.square().sum().backward()
+    torch.testing.assert_close(cached, direct)
+    torch.testing.assert_close(pooler.swe.combination.grad, expected_grad)
+    cache_object = pooler._swe_features
+    pooler.train()
+    assert pooler._swe_features is cache_object
+    assert pooler.__getstate__()["_swe_features"] is None
+    pooler.load_state_dict(pooler.state_dict())
+    assert pooler._swe_features is None
+
+
 @pytest.mark.parametrize("mode", ["mlp", "attention"])
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
 def test_mean_initialization_dedup_gradient_and_reload(cache, mode, device):

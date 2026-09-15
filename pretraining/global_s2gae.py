@@ -288,6 +288,8 @@ class GlobalS2GAE(nn.Module):
         decoder_layers: int = 2,
         decoder_dropout: float = 0.0,
         device: str | torch.device = "cpu",
+        residue_pooling: dict | None = None,
+        residue_ids: list[int] | None = None,
     ) -> None:
         super().__init__()
         self.model_config = {
@@ -321,6 +323,16 @@ class GlobalS2GAE(nn.Module):
             num_decoder_layers=int(decoder_layers),
             dropout=float(decoder_dropout),
         )
+        if residue_pooling is not None:
+            from .models.residue_pooling import ResiduePooler
+            if residue_ids is None:
+                raise ValueError("Learned pooling requires global protein-to-residue IDs")
+            self.model_config.update(residue_pooling=residue_pooling, residue_ids=residue_ids)
+            # Pooler initialization must not change backbone weights or the
+            # subsequent edge masking/dropout RNG stream across ablations.
+            with torch.random.fork_rng(devices=[]):
+                self.residue_pooler = ResiduePooler(**residue_pooling)
+            self.register_buffer("residue_ids", torch.tensor(residue_ids, dtype=torch.long))
 
     @property
     def embedding_dim(self) -> int:
@@ -330,7 +342,13 @@ class GlobalS2GAE(nn.Module):
         self,
         features: torch.Tensor,
         message_edge_index: torch.Tensor,
+        protein_indices: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        if hasattr(self, "residue_pooler"):
+            ids = self.residue_ids if protein_indices is None else self.residue_ids[protein_indices]
+            if len(ids) != len(features):
+                raise ValueError("Local CF encoding requires explicit global protein indices")
+            features = self.residue_pooler(ids)
         graph = Data(
             x=features,
             edge_index=message_edge_index,

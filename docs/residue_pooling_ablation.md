@@ -1,5 +1,55 @@
 # Residue pooling ablation (development branch)
 
+## Current experiment: context-free ProtScape (supersedes contextual runs)
+
+The user corrected the target to **CF ProtScape**. The contextual queue was
+cancelled; its checkpoints and cache are preserved, not treated as CF results.
+Use `configs/cf_residue_ablation.yaml` and
+`python -m scripts.cscs.run_cf_residue_ablation` for the replacement. The
+contextual protocol below is historical documentation only.
+
+The CF ablation fixes the previously validation-selected ACM-RW backbone at
+**512 hidden units, 2 layers, dropout 0.4**, with the existing S2GAE decoder
+(512 × 2), directed mask 0.5, 1:1 BCE, full-global-graph updates, seed/split seed 0.
+No CCI, tissue, uniformity or cell-embedding objective is introduced globally.
+The grid is **26 runs**: mean (2), MLP (8), attention (8), SWE-Simple (8), with
+the same two backbone LRs and pooler widths/LRs/reference sizes documented below.
+Keep CF convergence control: **5,000 updates maximum, patience 200 updates,
+minimum validation AUPRC improvement 0.0005**. Selection uses the absolute best
+global validation AUPRC, not a test score. Reuse the previous CF BOS checkpoint
+only after its graph, features and split fingerprints match the fresh release.
+
+W&B is **online**, entity `cedricvincentcuaz`, project `pinnacle`, group
+`cf_residue_pooling`; resource/smoke trials use `cf_residue_pooling_smoke`.
+Each run retains a deterministic ID across checkpoint resumes. Pooler config,
+train loss/AP/F1, validation metrics, best epoch/AP, update time and GPU memory
+are logged. A failed W&B connection is an explicit job failure, not silent
+disabled tracking.
+
+The new queue reuses the completed residue cache without another ESM pass.
+An initial four-GPU smoke stage measures one versus two concurrent fits per GPU
+for each pooling family, tests export, CF LR and independent pooler downstream
+training. Packing uses measured throughput and memory margins. Completed runs
+are skipped; unfinished runs resume the saved model, optimizer and RNG state.
+MLP's last linear layer is applied after mean (algebraically equivalent);
+SWE-Simple's fixed transport features are cached across optimization steps.
+
+Downstream uses the released fixed **LR / LR+ESM2** settings, appropriate for
+one CF vector per protein (not an artificial ABMIL bag or zero cell vector).
+All 15 TT diseases, CORUM and HPA37 remain included. Independent ESM-only
+baselines remain as described below. This gives **408 downstream configurations**
+(170 CF probes, 34 frozen ESM probes, 204 independent learned poolers), each
+with five saved-fold fits. The previous 22-setting contextual sweep is cancelled.
+PPI evaluation reports both global and per-Cell-PPI re-encoding on identical
+1:k test banks; full-reference exports are exclusively for downstream tasks.
+
+```bash
+python -m scripts.cscs.run_cf_residue_ablation prepare NEW_ROOT PREVIOUS_CONTEXTUAL_ROOT
+python -m scripts.cscs.run_cf_residue_ablation submit NEW_ROOT
+```
+
+## Historical contextual setup (cancelled)
+
 The released ProtScape uses the existing ESM2 BOS generator. It is a valid,
 unchanged reference; this experiment does **not** retrain it or modify that
 generator. The four new contextual models replace only the protein input

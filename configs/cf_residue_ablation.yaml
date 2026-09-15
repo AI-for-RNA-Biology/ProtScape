@@ -1,0 +1,31 @@
+# Fixed validation-selected CF backbone, not the contextual 3-layer backbone.
+pretraining:
+  hidden_dim: 512
+  num_layers: 2
+  dropout: 0.4
+  seed: 0
+  epochs: 5000
+  early_stopping_patience: 200
+  early_stopping_min_delta: 0.0005
+  backbone_lr: [0.003, 0.01]
+  pooler_hidden_dim: [64, 128]
+  pooler_lr: [0.0001, 0.001]
+  swe_ref_points: [100, 200]
+  selection: global_val_ap
+  wandb_entity: cedricvincentcuaz
+  wandb_project: pinnacle
+  wandb_group: cf_residue_pooling
+downstream:
+  seed: 42
+  epochs: 300
+  patience: 50
+  # CF has one vector per protein: LR, and LR + released BOS ESM2.
+  # Fresh ESM-only learned poolers remain separate downstream experiments.
+  pooler_hidden_dim: [64, 128]
+  pooler_lr: [0.0001, 0.001]
+  swe_ref_points: [100, 200]
+max_allocations:
+  smoke: 2
+  train: 16
+  evaluate: 3
+  downstream: 16

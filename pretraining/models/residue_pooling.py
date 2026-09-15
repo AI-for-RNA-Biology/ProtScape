@@ -66,13 +66,15 @@ class ResiduePooler(nn.Module):
                 nn.init.zeros_(self.output.bias)
             nn.init.zeros_(self.output.weight)
         self._residues = None
+        self._device_residues = None
+        self._swe_features = None
         self._evaluation_values = None
         self._evaluated = None
 
     def __getstate__(self):
         state = super().__getstate__().copy()
         # Full-object restart checkpoints must not copy the frozen residue bank.
-        for key in ("_residues", "_evaluation_values", "_evaluated"):
+        for key in ("_residues", "_device_residues", "_swe_features", "_evaluation_values", "_evaluated"):
             state[key] = None
         return state
 
@@ -82,6 +84,7 @@ class ResiduePooler(nn.Module):
         return super().train(mode)
 
     def _load_from_state_dict(self, *args, **kwargs):
+        self._swe_features = None
         self._evaluation_values = None
         self._evaluated = None
         return super()._load_from_state_dict(*args, **kwargs)
@@ -92,8 +95,10 @@ class ResiduePooler(nn.Module):
         if self.mode == "swe":
             return self.swe(values, lengths)
         if self.mode == "mlp":
-            values = values + self.output(torch.nn.functional.gelu(self.V(values)))
-            return torch.segment_reduce(values, "mean", lengths=lengths)
+            # A linear map commutes with mean, including its bias. Avoid the
+            # expensive residue-wise hidden -> 2560 projection and activation.
+            hidden = torch.segment_reduce(torch.nn.functional.gelu(self.V(values)), "mean", lengths=lengths)
+            return torch.segment_reduce(values, "mean", lengths=lengths) + self.output(hidden)
         scores = self.output(torch.tanh(self.V(values)) * torch.sigmoid(self.U(values))).squeeze(-1)
         maxima = torch.segment_reduce(scores, "max", lengths=lengths)
         weights = torch.exp(scores - torch.repeat_interleave(maxima, lengths))
@@ -108,11 +113,42 @@ class ResiduePooler(nn.Module):
             if bank != root and (bank / "manifest.json").read_bytes() != (root / "manifest.json").read_bytes():
                 raise ValueError("Node-local residue cache does not match the experiment")
             self._residues = np.load(bank / "residues.npy", mmap_mode="r")
+            if (self.mode != "swe" and self.feature_mean.is_cuda
+                    and os.environ.get("PROTSCAPE_RESIDUE_GPU_CACHE") == "1"):
+                free, _ = torch.cuda.mem_get_info(self.feature_mean.device)
+                if free > self._residues.nbytes + 16 * 1024**3:
+                    self._device_residues = torch.from_numpy(np.asarray(self._residues)).to(self.feature_mean.device)
         protein_ids = ids.detach().cpu().tolist()
-        arrays = [self._residues[self.offsets[i]:self.offsets[i + 1]] for i in protein_ids]
-        residues = torch.from_numpy(np.concatenate(arrays)).to(self.feature_mean.device)
-        lengths = torch.tensor([len(array) for array in arrays], device=residues.device)
+        if self.mode == "swe":
+            return self._pool_swe_ids(protein_ids)
+        return self._pool_uncached_ids(protein_ids)
+
+    def _pool_uncached_ids(self, protein_ids):
+        lengths = torch.tensor([self.offsets[i + 1] - self.offsets[i] for i in protein_ids], device=self.feature_mean.device)
+        device_bank = getattr(self, "_device_residues", None)
+        if device_bank is not None:
+            residues = torch.cat([device_bank[self.offsets[i]:self.offsets[i + 1]] for i in protein_ids])
+        else:
+            arrays = [self._residues[self.offsets[i]:self.offsets[i + 1]] for i in protein_ids]
+            residues = torch.from_numpy(np.concatenate(arrays)).to(self.feature_mean.device)
         return self.pool(residues, lengths)
+
+    def _pool_swe_ids(self, protein_ids):
+        # SWE-Simple learns only the final combination. Fixed transports stay
+        # valid across optimizer steps, but are cleared when weights reload.
+        if getattr(self, "_swe_features", None) is None:
+            self._swe_features = {}
+        missing = [i for i in protein_ids if i not in self._swe_features]
+        if missing:
+            arrays = [self._residues[self.offsets[i]:self.offsets[i + 1]] for i in missing]
+            with torch.no_grad():
+                residues = torch.from_numpy(np.concatenate(arrays)).to(self.feature_mean.device).float()
+                values = (residues - self.feature_mean) / self.feature_std
+                lengths = torch.tensor([len(array) for array in arrays], device=values.device)
+                transports = self.swe.transport(values, lengths)
+                self._swe_features.update(zip(missing, transports.unbind(0)))
+        features = torch.stack([self._swe_features[i] for i in protein_ids])
+        return (features * self.swe.combination[None, :, None]).sum(1)
 
     def _pool_chunks(self, ids):
         lengths = np.diff(self.offsets)[ids.detach().cpu().numpy()]
@@ -168,6 +204,9 @@ class SlicedWassersteinPooler(nn.Module):
         nn.init.uniform_(self.combination, -num_ref_points ** -.5, num_ref_points ** -.5)
 
     def forward(self, values, lengths):
+        return (self.transport(values, lengths) * self.combination[None, :, None]).sum(1)
+
+    def transport(self, values, lengths):
         slices = torch.nn.functional.linear(values, self.directions)
         reference_ranks = self.reference.argsort(dim=0).argsort(dim=0)
         m = len(self.reference)
@@ -187,5 +226,5 @@ class SlicedWassersteinPooler(nn.Module):
                 # Linear extrapolation at the tails matches PLM_SWE's grid.
                 quantiles = ordered[lower] + fraction * (ordered[lower + 1] - ordered[lower])
             displacement = quantiles.gather(0, reference_ranks) - self.reference
-            outputs.append((displacement * self.combination[:, None]).sum(0))
+            outputs.append(displacement)
         return torch.stack(outputs)

@@ -199,7 +199,10 @@ def encode_context_free_local(
 ) -> list[torch.Tensor]:
     local_features = features[graph.feature_index].to(device)
     message_edges = graph.edge_index[:, message_mask].to(device)
-    _, layers = model.encode(local_features, message_edges)
+    if hasattr(model, "residue_pooler"):
+        _, layers = model.encode(local_features, message_edges, protein_indices=graph.feature_index.to(device))
+    else:
+        _, layers = model.encode(local_features, message_edges)
     return layers
 
 

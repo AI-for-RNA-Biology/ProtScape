@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import shutil
 import sys
+import time
 
 import numpy as np
 import pandas as pd
@@ -126,6 +127,9 @@ def run(root, mode, task_name, width, lr, *, smoke=False):
     features = pd.read_pickle(cache / "mean.plk")
     means = np.stack(features["ESM2-Embeddings"].to_numpy()[indices]).astype(np.float32)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    started = time.monotonic()
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
     torch.set_float32_matmul_precision("high")
     ids = torch.as_tensor(indices, device=device)
     provenance = dict(baseline="ESM_SWE_simple_linear" if mode == "swe" else f"ESM_{mode}_linear", lr=lr,
@@ -171,6 +175,11 @@ def run(root, mode, task_name, width, lr, *, smoke=False):
         result.update({f"{split}_auprc_macro_mean": np.mean(scores), f"{split}_auprc_macro_std": np.std(scores)})
     pd.DataFrame([result]).to_csv(output / "results.tmp", index=False)
     (output / "results.tmp").replace(output / "results.csv")
+    if smoke:
+        (output / "resources.json").write_text(json.dumps(dict(
+            seconds=time.monotonic() - started,
+            peak_reserved_gib=torch.cuda.max_memory_reserved(device) / 2**30 if device.type == "cuda" else 0,
+        ), indent=2) + "\n")
 
 
 if __name__ == "__main__":

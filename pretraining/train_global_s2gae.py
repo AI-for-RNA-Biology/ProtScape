@@ -11,12 +11,14 @@ import os
 import random
 import resource
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import torch
 import wandb
+import yaml
 
 from .global_s2gae import (
     GlobalS2GAE,
@@ -55,6 +57,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--early-stopping-min-delta", type=float, default=0.0,
                         help="Required validation AP improvement on the 0-to-1 scale.")
     parser.add_argument("--lr", type=float, default=0.01)
+    parser.add_argument("--residue-config", help="Optional learned pooling YAML; mean uses frozen mean features")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--split-seed", type=int, default=0)
     parser.add_argument("--device", default="auto")
@@ -121,7 +124,7 @@ def write_history(path: Path, rows: list[dict]) -> None:
         return
     temporary = path.with_suffix(path.suffix + ".tmp")
     with temporary.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer = csv.DictWriter(handle, fieldnames=list(dict.fromkeys(key for row in rows for key in row)))
         writer.writeheader()
         writer.writerows(rows)
     os.replace(temporary, path)
@@ -185,6 +188,8 @@ def training_config(args: argparse.Namespace) -> dict:
             early_stopping_patience=args.early_stopping_patience,
             early_stopping_min_delta=args.early_stopping_min_delta,
         )
+    if getattr(args, "residue_config", None):
+        config["residue_pooling"] = yaml.safe_load(Path(args.residue_config).read_text())
     return config
 
 
@@ -440,6 +445,15 @@ def main() -> None:
         f"splits={data.split_counts}",
         flush=True,
     )
+    pooling, residue_ids, pooler_lr = None, None, None
+    if args.residue_config:
+        pooling = yaml.safe_load(Path(args.residue_config).read_text())
+        pooler_lr = float(pooling.pop("lr"))
+        manifest = json.loads((Path(pooling["cache_root"]) / "manifest.json").read_text())
+        lookup = {}
+        for index, gene in enumerate(manifest["genes"]):
+            lookup.setdefault(gene, index)
+        residue_ids = [lookup[gene] for gene in data.protein_names]
     model = GlobalS2GAE(
         data.features.size(1),
         hidden_dim=args.hidden_dim,
@@ -449,10 +463,19 @@ def main() -> None:
         decoder_layers=args.decoder_layers,
         decoder_dropout=args.decoder_dropout,
         device=device,
+        residue_pooling=pooling,
+        residue_ids=residue_ids,
     ).to(device)
-    if any(not key.startswith(("encoder.", "decoder.")) for key in model.state_dict()):
+    if any(not key.startswith(("encoder.", "decoder.", "residue_pooler.", "residue_ids")) for key in model.state_dict()):
         raise RuntimeError("The baseline contains parameters outside the encoder/decoder.")
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=0.0)
+    if pooling:
+        torch.testing.assert_close(model.residue_pooler.feature_mean.cpu(), data.feature_mean, rtol=0, atol=0)
+        torch.testing.assert_close(model.residue_pooler.feature_std.cpu(), data.feature_std, rtol=0, atol=0)
+        groups = [dict(params=list(model.encoder.parameters()) + list(model.decoder.parameters()), lr=args.lr),
+                  dict(params=model.residue_pooler.parameters(), lr=pooler_lr)]
+    else:
+        groups = model.parameters()
+    optimizer = torch.optim.Adam(groups, lr=args.lr, weight_decay=0.0)
 
     if not args.resume:
         run_dir.mkdir(parents=False, exist_ok=False)
@@ -492,6 +515,8 @@ def main() -> None:
     }
     wandb_run_id = tracking["run_id"]
     config["wandb_run_id"] = wandb_run_id
+    if args.residue_config:
+        config["residue_pooling"] = training_config(args)["residue_pooling"]
     if not args.resume:
         write_json(config_path, config)
 
@@ -656,6 +681,7 @@ def main() -> None:
     for epoch in range(start_epoch, args.epochs):
         if stopping.should_stop:
             break
+        started = time.monotonic()
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
         model.train()
@@ -703,6 +729,7 @@ def main() -> None:
             "global_val_roc": val_metrics["roc"],
             "global_val_acc": val_metrics["acc"],
             "cpu_peak_rss_gib": peak_rss_gib(),
+            "update_seconds": time.monotonic() - started,
         }
         if device.type == "cuda":
             row.update(
