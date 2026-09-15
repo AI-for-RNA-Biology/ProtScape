@@ -53,7 +53,7 @@ def load_checkpoint(path: Path) -> dict:
 def _validate_checkpoint(path: Path, checkpoint: dict) -> None:
     if checkpoint.get("format_version") != 3:
         raise ValueError(f"Unsupported checkpoint format: {path}")
-    if checkpoint.get("protocol") != protocol_metadata():
+    if checkpoint.get("protocol") != protocol_metadata(checkpoint.get("training_config", {}).get("mask_type", "dm")):
         raise ValueError(f"Protocol mismatch: {path}")
     if int(checkpoint["epoch"]) != int(checkpoint["best_epoch"]):
         raise ValueError(f"Best checkpoint epoch mismatch: {path}")
@@ -108,7 +108,7 @@ def select_checkpoint(args: argparse.Namespace) -> tuple[Path, dict, list[dict]]
             completion = json.load(handle)
         checkpoint = load_checkpoint(path)
         _validate_checkpoint(path, checkpoint)
-        if completion.get("protocol") != protocol_metadata():
+        if completion.get("protocol") != protocol_metadata(config["mask_type"]):
             raise ValueError(f"Completion protocol mismatch: {completion_path}")
         if checkpoint["experiment_role"] != config["experiment_role"]:
             raise ValueError(f"Checkpoint experiment role mismatch: {path}")
@@ -511,7 +511,7 @@ def update_wandb_summary(checkpoint: dict, summary: dict) -> None:
 
 
 def _validate_complete_summary(summary: dict) -> None:
-    if summary.get("protocol") != protocol_metadata():
+    if summary.get("protocol") != protocol_metadata(summary.get("mask_type", "dm")):
         raise ValueError("Existing evaluation protocol is incomplete or incompatible.")
     if sorted(int(k) for k in summary.get("global_test", {})) != list(
         GLOBAL_K_VALUES

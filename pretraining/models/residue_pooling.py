@@ -107,6 +107,13 @@ class ResiduePooler(nn.Module):
         return torch.segment_reduce(values * weights[:, None], "sum", lengths=lengths)
 
     def _pool_ids(self, ids):
+        self._load_residues()
+        protein_ids = ids.detach().cpu().tolist()
+        if self.mode == "swe":
+            return self._pool_swe_ids(protein_ids)
+        return self._pool_uncached_ids(protein_ids)
+
+    def _load_residues(self):
         if self._residues is None:
             root = Path(self.cache_root)
             bank = Path(os.environ.get("PROTSCAPE_RESIDUE_CACHE", self.cache_root))
@@ -118,10 +125,6 @@ class ResiduePooler(nn.Module):
                 free, _ = torch.cuda.mem_get_info(self.feature_mean.device)
                 if free > self._residues.nbytes + 16 * 1024**3:
                     self._device_residues = torch.from_numpy(np.asarray(self._residues)).to(self.feature_mean.device)
-        protein_ids = ids.detach().cpu().tolist()
-        if self.mode == "swe":
-            return self._pool_swe_ids(protein_ids)
-        return self._pool_uncached_ids(protein_ids)
 
     def _pool_uncached_ids(self, protein_ids):
         lengths = torch.tensor([self.offsets[i + 1] - self.offsets[i] for i in protein_ids], device=self.feature_mean.device)

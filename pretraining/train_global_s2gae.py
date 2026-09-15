@@ -208,7 +208,7 @@ def tracking_config(
             "experiment_role": args.experiment_role,
             "model": model_config,
             "training": training_config(args),
-            "protocol": protocol_metadata(),
+            "protocol": protocol_metadata(args.mask_type),
             "git_commit": os.environ.get("PROTSCAPE_GIT_COMMIT", "uncommitted"),
             "graph_fingerprint": data.graph_fingerprint,
             "feature_fingerprint": data.feature_fingerprint,
@@ -259,7 +259,7 @@ def checkpoint_payload(
         "feature_fingerprint": data.feature_fingerprint,
         "split_fingerprint": data.split_fingerprint,
         "split_counts": data.split_counts,
-        "protocol": protocol_metadata(),
+        "protocol": protocol_metadata(args.mask_type),
         "git_commit": os.environ.get("PROTSCAPE_GIT_COMMIT", "uncommitted"),
     }
     continuations = getattr(args, "continuations", None)
@@ -510,7 +510,7 @@ def main() -> None:
         "graph_fingerprint": data.graph_fingerprint,
         "feature_fingerprint": data.feature_fingerprint,
         "split_fingerprint": data.split_fingerprint,
-        "protocol": protocol_metadata(),
+        "protocol": protocol_metadata(args.mask_type),
         "git_commit": os.environ.get("PROTSCAPE_GIT_COMMIT", "uncommitted"),
     }
     wandb_run_id = tracking["run_id"]
@@ -539,7 +539,7 @@ def main() -> None:
             raise ValueError("Cannot resume: ESM2 feature means changed.")
         if not torch.equal(checkpoint["feature_std"].cpu(), data.feature_std):
             raise ValueError("Cannot resume: ESM2 feature scales changed.")
-        if checkpoint["protocol"] != protocol_metadata():
+        if checkpoint["protocol"] != protocol_metadata(args.mask_type):
             raise ValueError("Cannot resume: evaluation protocol changed.")
         if checkpoint["experiment_role"] != args.experiment_role:
             raise ValueError("Cannot resume: experiment role changed.")
@@ -800,11 +800,11 @@ def main() -> None:
         "best_epoch": best_epoch,
         "best_global_val_ap": best_global_val_ap,
         "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
-        "selection_metric": protocol_metadata()["selection_metric"],
+        "selection_metric": protocol_metadata(args.mask_type)["selection_metric"],
         "graph_fingerprint": data.graph_fingerprint,
         "feature_fingerprint": data.feature_fingerprint,
         "split_fingerprint": data.split_fingerprint,
-        "protocol": protocol_metadata(),
+        "protocol": protocol_metadata(args.mask_type),
         "git_commit": config["git_commit"],
     }
     if getattr(args, "continuations", None):

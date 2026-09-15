@@ -70,7 +70,7 @@ def _validate_checkpoint_data(checkpoint: dict, data) -> None:
         "edge split": checkpoint.get("split_fingerprint") == data.split_fingerprint,
         "feature means": torch.equal(checkpoint["feature_mean"], data.feature_mean),
         "feature scales": torch.equal(checkpoint["feature_std"], data.feature_std),
-        "training protocol": checkpoint.get("protocol") == protocol_metadata(),
+        "training protocol": checkpoint.get("protocol") == protocol_metadata(checkpoint["training_config"].get("mask_type", "dm")),
     }
     failed = [name for name, passed in checks.items() if not passed]
     if failed:

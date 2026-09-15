@@ -37,7 +37,9 @@ GLOBAL_NEGATIVE_BANK_SIZE = 500
 PROTOCOL_VERSION = "global_s2gae_unique_ppi_v3"
 
 
-def protocol_metadata() -> dict:
+def protocol_metadata(mask_type="dm") -> dict:
+    if mask_type not in {"dm", "um"}:
+        raise ValueError(f"Unknown masking protocol: {mask_type}")
     return {
         "version": PROTOCOL_VERSION,
         "selection_metric": "global_val_ap",
@@ -51,7 +53,7 @@ def protocol_metadata() -> dict:
         "reference_only_edges": "train_only",
         "validation_topology": "train",
         "test_topology": "train_plus_validation",
-        "primary_mask_type": "dm",
+        "primary_mask_type": mask_type,
     }
 
 
@@ -325,13 +327,15 @@ class GlobalS2GAE(nn.Module):
         )
         if residue_pooling is not None:
             from .models.residue_pooling import ResiduePooler
+            from .models.partner_pooling import PARTNER_MODES, PartnerResiduePooler
             if residue_ids is None:
                 raise ValueError("Learned pooling requires global protein-to-residue IDs")
             self.model_config.update(residue_pooling=residue_pooling, residue_ids=residue_ids)
             # Pooler initialization must not change backbone weights or the
             # subsequent edge masking/dropout RNG stream across ablations.
             with torch.random.fork_rng(devices=[]):
-                self.residue_pooler = ResiduePooler(**residue_pooling)
+                pooler = PartnerResiduePooler if residue_pooling["mode"] in PARTNER_MODES else ResiduePooler
+                self.residue_pooler = pooler(**residue_pooling)
             self.register_buffer("residue_ids", torch.tensor(residue_ids, dtype=torch.long))
 
     @property
@@ -348,7 +352,10 @@ class GlobalS2GAE(nn.Module):
             ids = self.residue_ids if protein_indices is None else self.residue_ids[protein_indices]
             if len(ids) != len(features):
                 raise ValueError("Local CF encoding requires explicit global protein indices")
-            features = self.residue_pooler(ids)
+            if getattr(self.residue_pooler, "graph_conditioned", False):
+                features = self.residue_pooler(ids, message_edge_index, features)
+            else:
+                features = self.residue_pooler(ids)
         graph = Data(
             x=features,
             edge_index=message_edge_index,
@@ -392,6 +399,8 @@ def masked_reconstruction_step(
         raise ValueError("k_negatives must be positive.")
     if mask_type not in {"dm", "um"}:
         raise ValueError("mask_type must be 'dm' or 'um'.")
+    if getattr(getattr(model, "residue_pooler", None), "graph_conditioned", False) and mask_type != "um":
+        raise ValueError("Partner pooling requires pairwise-hidden (um) training targets")
 
     message_edges, positive_edges, sampling_edges, mask_index = edge_mask_per_graph(
         data.train_edge_index,

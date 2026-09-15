@@ -1,0 +1,30 @@
+# Separate pair-masked panel. Never mix its results with the ongoing DM sweep
+# when attributing gains to partner pooling rather than a changed objective.
+pretraining:
+  modes: [mean, attention, partner, self_query, post_fusion, partner_dispersion, partner_mean_mlp, partner_slots, pma4]
+  hidden_dim: 512
+  num_layers: 2
+  dropout: 0.4
+  mask_type: um
+  seed: 0
+  epochs: 5000
+  early_stopping_patience: 200
+  early_stopping_min_delta: 0.0005
+  backbone_lr: [0.003, 0.01]
+  pooler_hidden_dim: [64, 128]
+  pooler_lr: [0.0001, 0.001]
+  max_partners: 16
+  query_chunk_size: 32
+  selection: global_val_ap
+  wandb_entity: cedricvincentcuaz
+  wandb_project: pinnacle
+  wandb_group: cf_partner_pooling_pairmasked
+downstream:
+  seed: 42
+  epochs: 300
+  patience: 50
+max_allocations:
+  smoke: 2
+  train: 24
+  evaluate: 4
+  downstream: 6
