@@ -188,6 +188,7 @@ def smoke_one(root, mode):
     release = Path(read_json(root / "inputs.json")["release"])
     export_embeddings(root / "smoke" / name / "best_model_state_dict.pt", release / "data/networks_bulk",
                       features(root, mode), root / "inference" / name, torch.device("cuda"))
+    torch.cuda.empty_cache()
     task = read_json(root / "inputs.json")["tasks"][0]
     run(downstream_command(root, name, task, smoke=True), root / "logs" / f"{mode}_downstream_smoke.log")
     if mode != "mean":
@@ -351,7 +352,17 @@ def summarize(root):
 def gpu_worker(root, stage):
     count = 1
     if stage in {"train", "downstream"}:
-        count = read_json(root / "packing.json")[stage]
+        policy = read_json(root / "packing.json")
+        # Optional measured execution choice: one GPU-resident residue bank is
+        # faster than two CPU-fed fits. Never allocate two copies of that bank.
+        override = root / "execution.json"
+        if override.exists():
+            policy.update(read_json(override))
+        count = policy[stage]
+        if policy.get(stage + "_gpu_cache", False):
+            if count != 1:
+                raise ValueError("GPU residue caching requires one process per GPU")
+            os.environ["PROTSCAPE_RESIDUE_GPU_CACHE"] = "1"
     children = [subprocess.Popen([GNN, "-m", "scripts.cscs.run_cf_residue_ablation", "worker", str(root), stage]) for _ in range(count)]
     codes = [child.wait() for child in children]
     if any(codes):
