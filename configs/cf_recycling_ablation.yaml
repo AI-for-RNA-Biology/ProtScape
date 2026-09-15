@@ -1,0 +1,32 @@
+# One recycle, eight families, matched UM masking. Fixed architectural widths;
+# select learning rates with seed 0, then repeat selected settings with seeds 1/2.
+pretraining:
+  modes: [mean, mlp, attention, swe, slots4, recycle_memory, recycle_residues, recycle_no_graph]
+  hidden_dim: 512
+  num_layers: 2
+  dropout: 0.4
+  mask_type: um
+  seed: 0
+  paired_seeds: [0, 1, 2]
+  epochs: 5000
+  early_stopping_patience: 200
+  early_stopping_min_delta: 0.0005
+  backbone_lr: [0.003, 0.01]
+  pooler_hidden_dim: [128]
+  baseline_hidden_dim: 64
+  pooler_lr: [0.0001, 0.001]
+  num_ref_points: [100]
+  selection: global_val_ap
+  wandb_entity: cedricvincentcuaz
+  wandb_project: pinnacle
+  wandb_group: cf_recycling_pairmasked
+downstream:
+  seed: 42
+  epochs: 300
+  patience: 50
+max_allocations:
+  smoke: 2
+  train: 12
+  repeat: 8
+  evaluate: 8
+  downstream: 12

@@ -26,9 +26,11 @@ cleanup_residues() {
     fi
 }
 trap cleanup_residues EXIT
-cp --reflink=never "${root}/residues/residues.npy" "${residue_node_cache}/residues.npy"
-cp "${root}/residues/manifest.json" "${residue_node_cache}/manifest.json"
-export PROTSCAPE_RESIDUE_CACHE="${residue_node_cache}"
+if [[ "${stage}" != downstream ]]; then
+    cp --reflink=never "${root}/residues/residues.npy" "${residue_node_cache}/residues.npy"
+    cp "${root}/residues/manifest.json" "${residue_node_cache}/manifest.json"
+    export PROTSCAPE_RESIDUE_CACHE="${residue_node_cache}"
+fi
 export RESIDUE_DEADLINE="$(( $(date +%s) + 42000 ))"
 python_bin=/iopsstor/scratch/cscs/aloistho/protscape/conda-global-s2gae/bin/python
 pids=()

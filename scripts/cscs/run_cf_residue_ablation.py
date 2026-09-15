@@ -38,10 +38,18 @@ def trial_grid(config):
     trials = []
     for mode in config["modes"]:
         widths = [None] if mode == "mean" else config["pooler_hidden_dim"]
+        if "paired_seeds" in config and mode in {"mlp", "attention"}:
+            widths = [config["baseline_hidden_dim"]]
+        if mode == "swe":
+            widths = config["num_ref_points"]
         rates = [None] if mode == "mean" else config["pooler_lr"]
         for lr, width, rate in itertools.product(config["backbone_lr"], widths, rates):
-            name = f"{mode}_lr{lr}" + (f"_h{width}_plr{rate}" if width else "")
-            trials.append(dict(name=name, mode=mode, backbone_lr=lr, hidden_dim=width, lr=rate))
+            tag = "ref" if mode == "swe" else "h"
+            name = f"{mode}_lr{lr}" + (f"_{tag}{width}_plr{rate}" if width else "")
+            trial = dict(name=name, mode=mode, backbone_lr=lr, hidden_dim=width, lr=rate)
+            if mode == "swe":
+                trial["num_ref_points"] = width
+            trials.append(trial)
     return trials
 
 
@@ -64,6 +72,8 @@ def train_command(root, trial, *, smoke_name=None):
     for key in ["hidden_dim", "num_layers", "dropout", "seed", "early_stopping_patience",
                 "early_stopping_min_delta", "wandb_entity", "wandb_project", "wandb_group"]:
         value = config[key]
+        if key == "seed":
+            value = trial.get("seed", value)
         if key == "wandb_group" and smoke_name:
             value += "_smoke"
         args += ["--" + key.replace("_", "-"), str(value)]
@@ -114,9 +124,11 @@ def prepare(root, previous, panel="sequence"):
     inputs.update(workflow="context_free_residue_pooling", contextual_runs_preserved=str(previous),
                   git_commit=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip(),
                   bos_checkpoint=read_json(BOS)["selected_checkpoint"])
-    if panel == "partner":
-        inputs.update(workflow="cf_partner_pairmasked", config_file="cf_partner_ablation.yaml", reuse_sequence_baselines_from=str(previous))
-        inputs["modes"] = yaml.safe_load((root / "source/configs/cf_partner_ablation.yaml").read_text())["pretraining"]["modes"]
+    if panel in {"partner", "recycle"}:
+        filename = "cf_partner_ablation.yaml" if panel == "partner" else "cf_recycling_ablation.yaml"
+        inputs.update(workflow="cf_partner_pairmasked" if panel == "partner" else "cf_recycling_pairmasked",
+                      config_file=filename, reuse_sequence_baselines_from=str(previous))
+        inputs["modes"] = yaml.safe_load((root / "source/configs" / filename).read_text())["pretraining"]["modes"]
     elif panel != "sequence":
         raise ValueError(f"Unknown experiment panel: {panel}")
     save_json(root / "inputs.json", inputs)
@@ -142,13 +154,13 @@ def prepare(root, previous, panel="sequence"):
             pool["num_ref_points"] = trial["num_ref_points"]
         else:
             pool["hidden_dim"] = trial["hidden_dim"]
-        if trial["mode"] not in MODES:
+        if panel == "partner" and trial["mode"] not in MODES:
             pool.update(max_partners=config["pretraining"]["max_partners"], query_chunk_size=config["pretraining"]["query_chunk_size"])
         (root / "configs" / f"{trial['name']}.yaml").write_text(yaml.safe_dump(pool))
     def command(action, *args):
         return [GNN, "-m", "scripts.cscs.run_cf_residue_ablation", action, str(root), *map(str, args)]
     queues = {
-        "smoke": [dict(key=m, command=command("partner_smoke" if panel == "partner" else "smoke_one", m)) for m in modes(root) if m != "bos"],
+        "smoke": [dict(key=m, command=command("partner_smoke" if panel != "sequence" else "smoke_one", m)) for m in modes(root) if m != "bos"],
         "train": [dict(key=t["name"], command=command("train_one", i)) for i, t in enumerate(trials)],
         "evaluate": [dict(key=m, command=command("evaluate_one", m)) for m in modes(root)],
         "downstream": [dict(key=f"{m}_{t['task']}", command=downstream_command(root, m, t))
@@ -159,12 +171,25 @@ def prepare(root, previous, panel="sequence"):
     else:
         save_json(root / "execution.json", dict(train=1, train_gpu_cache=True, evaluate=1, evaluate_gpu_cache=True,
             reason="One frozen-residue GPU bank per process; validated by panel smoke. No persistent graph-derived cache."))
+    if panel == "recycle":
+        # Reuse only genuinely matching completed UM baseline configurations.
+        inputs["model_families"] = inputs["modes"]
+        inputs["modes"] = [f"{m}_seed{s}" for m in inputs["model_families"] for s in config["pretraining"]["paired_seeds"]]
+        save_json(root / "inputs.json", inputs)
+        reuse = reuse_pairmasked_baselines(root, previous.parent / "protscape-cf-partner-pooling", trials)
+        queues["train"] = [task for task in queues["train"] if task["key"] not in reuse]
+        queues["repeat"] = []  # populated after validation selection, never from test scores
+        queues["evaluate"] = [dict(key=m, command=command("evaluate_one", m)) for m in modes(root)]
+        queues["downstream"] = [dict(key=f"{m}_{t['task']}", command=downstream_command(root, m, t))
+                                for m, t in itertools.product(modes(root), inputs["tasks"])]
     for stage, tasks in queues.items():
         (root / "queue" / stage).mkdir()
         save_json(root / "queue" / stage / "tasks.json", tasks)
     n_downstream = len(inputs["tasks"]) * (2 * len(modes(root)) + (14 if panel == "sequence" else 0))
     save_json(root / "PREPARED.json", dict(pretraining_runs=len(trials), downstream_configs=n_downstream,
-                                          downstream_queue_tasks=len(queues["downstream"])))
+                                          downstream_queue_tasks=len(queues["downstream"]),
+                                          repeat_runs=2 * len(inputs.get("model_families", [])),
+                                          reused_pretraining_runs=len(trials) - len(queues["train"])))
     print(f"Prepared {len(trials)} CF training configurations; {n_downstream} downstream configurations", flush=True)
 
 
@@ -190,15 +215,25 @@ def partner_smoke(root, mode):
     saved = torch.load(directory / "best_model_state_dict.pt", weights_only=True, map_location="cpu")
     assert saved["training_config"]["mask_type"] == saved["protocol"]["primary_mask_type"] == "um"
     if mode != "mean":
-        key = "residue_pooler.slot_output.weight" if mode == "pma4" else "residue_pooler.output.weight"
+        key = ("residue_pooler.output_projection.weight" if mode.startswith("recycle_") or mode == "slots4"
+               else "residue_pooler.swe.combination" if mode == "swe"
+               else "residue_pooler.slot_output.weight" if mode == "pma4" else "residue_pooler.output.weight")
         weights = saved["model_state_dict"][key]
         assert torch.isfinite(weights).all() and weights.abs().sum() > 0
         if mode in {"partner", "self_query", "partner_slots", "partner_dispersion", "partner_mean_mlp"}:
             assert saved["model_state_dict"]["residue_pooler.query.weight"].abs().sum() > 0
+        if mode.startswith("recycle_"):
+            latest = torch.load(directory / "latest_checkpoint.pt", weights_only=False, map_location="cpu")
+            assert latest["model_state_dict"]["residue_pooler.query_update.2.weight"].abs().sum() > 0
+            del latest
     history = pd.read_csv(directory / "history.csv")
     peak = float(history.gpu_peak_reserved_gib.max())
     if peak >= 88:
         raise RuntimeError(f"{mode} exceeds the reserved-memory safety budget: {peak:.2f} GiB")
+    if mode == "recycle_residues":
+        run(["/usr/bin/env", "-u", "PROTSCAPE_RESIDUE_CACHE", "-u", "PROTSCAPE_RESIDUE_GPU_CACHE",
+             GNN, "-m", "pytest", "tests/test_recycling_pooling.py", "-q"],
+            root / "logs" / "recycling_gpu_unit_tests.log")
     release = Path(read_json(root / "inputs.json")["release"])
     export_embeddings(directory / "best_model_state_dict.pt", release / "data/networks_bulk",
                       features(root, mode), root / "inference" / name, torch.device("cuda"))
@@ -208,6 +243,40 @@ def partner_smoke(root, mode):
     save_json(root / "smoke" / f"{mode}_checked.json", dict(
         mask_type="um", peak_reserved_gib=peak, update_seconds=float(history.update_seconds.iloc[1:].median()),
         completed_updates=len(history), export_checked=True, downstream_checked=True))
+
+
+def reuse_pairmasked_baselines(root, old_root, trials):
+    """Retired experiments remain recoverable; imported checkpoints are read-only."""
+    import torch
+    reused = {}
+    config = settings(root)["pretraining"]
+    for trial in trials:
+        if trial["mode"] not in {"mean", "attention"}:
+            continue
+        folder = old_root / "pretraining" / trial["name"]
+        if not (folder / "completed.json").exists():
+            continue
+        saved = torch.load(folder / "best_model_state_dict.pt", weights_only=True, map_location="cpu")
+        train = saved["training_config"]
+        expected = dict(mask_type="um", seed=0, split_seed=0, lr=trial["backbone_lr"],
+                        mask_ratio=.5, k_negatives=1, epochs=5000,
+                        early_stopping_patience=config["early_stopping_patience"],
+                        early_stopping_min_delta=config["early_stopping_min_delta"])
+        if any(train.get(k) != v for k, v in expected.items()):
+            raise ValueError(f"Reusable baseline does not match settings: {folder}")
+        expected_model = dict(hidden_dim=512, num_layers=2, dropout=.4, decode_channels=512,
+                              decoder_layers=2, decoder_dropout=0.)
+        if any(saved["model_config"].get(k) != v for k, v in expected_model.items()):
+            raise ValueError(f"Reusable backbone does not match: {folder}")
+        if trial["mode"] != "mean":
+            old_pool = train["residue_pooling"]
+            new_pool = yaml.safe_load((root / "configs" / f"{trial['name']}.yaml").read_text())
+            if {k: v for k, v in old_pool.items() if k != "cache_root"} != {k: v for k, v in new_pool.items() if k != "cache_root"}:
+                raise ValueError(f"Reusable pooler config differs: {folder}")
+        (root / "pretraining" / trial["name"]).symlink_to(folder)
+        reused[trial["name"]] = str(folder)
+    save_json(root / "reused_baselines.json", reused)
+    return reused
 
 
 def smoke_one(root, mode):
@@ -301,20 +370,55 @@ def benchmark_probes(root, mode):
     save_json(root / "smoke" / f"{mode}_downstream_packing.json", results)
 
 
-def select(root):
+def selection_row(root, trial):
     import torch
-    rows = []
-    for trial in read_json(root / "trials.json"):
-        folder = root / "pretraining" / trial["name"]
-        completed = read_json(folder / "completed.json")
-        assert completed["selection_metric"] == "global_val_ap"
-        saved = torch.load(folder / "best_model_state_dict.pt", map_location="cpu", weights_only=True)
-        assert saved["best_global_val_ap"] == completed["best_global_val_ap"]
-        rows.append(dict(**trial, score=saved["best_global_val_ap"], epoch=saved["epoch"] + 1,
-                         completed_updates=completed["completed_epochs"], stop_reason=completed["stop_reason"],
-                         checkpoint=str(folder / "best_model_state_dict.pt")))
+    folder = root / "pretraining" / trial["name"]
+    completed = read_json(folder / "completed.json")
+    assert completed["selection_metric"] == "global_val_ap"
+    saved = torch.load(folder / "best_model_state_dict.pt", map_location="cpu", weights_only=True)
+    assert saved["best_global_val_ap"] == completed["best_global_val_ap"]
+    assert saved["training_config"]["seed"] == trial.get("seed", 0)
+    return dict(**trial, score=saved["best_global_val_ap"], epoch=saved["epoch"] + 1,
+                completed_updates=completed["completed_epochs"], stop_reason=completed["stop_reason"],
+                checkpoint=str(folder / "best_model_state_dict.pt"))
+
+
+def select(root):
+    rows = [selection_row(root, t) for t in read_json(root / "trials.json")]
     save_json(root / "pretraining_grid.json", rows)
-    save_json(root / "selected.json", {m: max((r for r in rows if r["mode"] == m), key=lambda r: r["score"]) for m in modes(root) if m != "bos"})
+    families = read_json(root / "inputs.json").get("model_families", modes(root))
+    selected = {m: max((r for r in rows if r["mode"] == m), key=lambda r: r["score"]) for m in families if m != "bos"}
+    if "model_families" not in read_json(root / "inputs.json"):
+        save_json(root / "selected.json", selected)
+        return
+    save_json(root / "selected_seed0.json", selected)
+    repeats = []
+    for family, winner in selected.items():
+        trial = next(t for t in read_json(root / "trials.json") if t["name"] == winner["name"])
+        for seed in settings(root)["pretraining"]["paired_seeds"][1:]:
+            name = f"{trial['name']}_seed{seed}"
+            repeats.append({**trial, "name": name, "seed": seed})
+            if family != "mean":
+                path = root / "configs" / f"{name}.yaml"
+                if not path.exists():
+                    path.symlink_to(root / "configs" / f"{trial['name']}.yaml")
+    save_json(root / "repeats.json", repeats)
+    save_json(root / "queue/repeat/tasks.json", [dict(key=t["name"], command=[GNN, "-m",
+        "scripts.cscs.run_cf_residue_ablation", "repeat_one", str(root), str(i)]) for i, t in enumerate(repeats)])
+
+
+def repeat_one(root, index):
+    trial = read_json(root / "repeats.json")[int(index)]
+    if not (root / "pretraining" / trial["name"] / "completed.json").exists():
+        run(train_command(root, trial), root / "logs" / f"fit_{trial['name']}.log")
+
+
+def select_repeats(root):
+    selected = {f"{m}_seed0": {**row, "seed": 0} for m, row in read_json(root / "selected_seed0.json").items()}
+    for trial in read_json(root / "repeats.json"):
+        selected[f"{trial['mode']}_seed{trial['seed']}"] = selection_row(root, trial)
+    assert set(selected) == set(modes(root))
+    save_json(root / "selected.json", selected)
 
 
 def evaluate_one(root, mode):
@@ -323,7 +427,7 @@ def evaluate_one(root, mode):
     import torch
     from pretraining.evaluate_global_s2gae import build_model
     from pretraining.export_global_s2gae_embeddings import export_embeddings, _validate_checkpoint_data
-    from pretraining.global_s2gae import load_global_ppi_data
+    from pretraining.global_s2gae import load_global_ppi_data, evaluate_global_edges
     from pretraining.compare_inference_topologies import load_context_data, encode_context_free_local, score_decoder, split_masks
     from pretraining.contextwise_ppi import sample_structured_negatives, metrics_from_pos_neg
     inputs = read_json(root / "inputs.json")
@@ -340,6 +444,8 @@ def evaluate_one(root, mode):
     rows, digest = [], hashlib.sha256()
     with torch.no_grad():
         _, global_layers = model.encode(data.features.to(device), data.train_val_edge_index.to(device))
+        unique_test = evaluate_global_edges(model, data, split="test", k_values=[1, 10, 50, 100, 500],
+                                            device=device, seed=0, layer_embeddings=global_layers)
         for cell, graph in graphs.items():
             message, query = split_masks(graph, "test")
             positive = graph.edge_index[:, query]
@@ -359,16 +465,34 @@ def evaluate_one(root, mode):
                     metrics = metrics_from_pos_neg(positives, negatives[:, :k].ravel())
                     rows.append(dict(cell=cells[cell], inference=inference, k=k,
                                      auprc=metrics["ap"], f1=metrics["f1"]))
-    save_json(root / "ppi" / f"{mode}.json", dict(query_sha256=digest.hexdigest(), rows=rows))
+    result = dict(query_sha256=digest.hexdigest(), rows=rows, global_unique_test=unique_test)
+    save_json(root / "ppi" / f"{mode}.json", result)
+    log_test_summary(saved, result)
     del model, graphs, global_layers, local_layers, data, values
     torch.cuda.empty_cache()
     export_embeddings(path, release / "data/networks_bulk", features(root, mode), root / "inference" / mode, device)
 
 
-def summarize(root):
-    import numpy as np
+def log_test_summary(checkpoint, result):
+    """Final selected-checkpoint test metrics, not selection signals or curves."""
     import pandas as pd
-    from downstream_tasks.data.partitions import partition_path
+    import wandb
+    tracking = checkpoint["wandb"]
+    tracked = wandb.Api().run(f"{tracking['entity']}/{tracking['project']}/{tracking['run_id']}")
+    tracked.summary["test/selected_checkpoint"] = True
+    tracked.summary["test/checkpoint_update"] = checkpoint["epoch"] + 1
+    for k, values in result["global_unique_test"].items():
+        for metric in ["ap", "f1"]:
+            tracked.summary[f"test/global_unique/{metric}_k{k}"] = float(values[metric])
+    frame = pd.DataFrame(result["rows"]).groupby(["inference", "k"])[["auprc", "f1"]].mean()
+    for (inference, k), values in frame.iterrows():
+        for metric in ["auprc", "f1"]:
+            tracked.summary[f"test/cell_macro_{inference}_encoding/{metric}_k{k}"] = float(values[metric])
+    tracked.update()
+
+
+def summarize_ppi(root):
+    import pandas as pd
     frames, hashes = [], set()
     for mode in modes(root):
         value = read_json(root / "ppi" / f"{mode}.json")
@@ -377,13 +501,30 @@ def summarize(root):
     assert len(hashes) == 1, "PPI query banks changed between pooling modes"
     ppi = pd.concat(frames).groupby(["pooling", "inference", "k"], as_index=False)[["auprc", "f1"]].mean()
     ppi.to_csv(root / "ppi_summary.csv", index=False)
+    inputs = read_json(root / "inputs.json")
+    plot_modes = modes(root)
+    if "model_families" in inputs:
+        ppi["seed"] = ppi.pooling.str.rsplit("_seed", n=1).str[-1].astype(int)
+        ppi["pooling"] = ppi.pooling.str.rsplit("_seed", n=1).str[0]
+        ppi.to_csv(root / "ppi_per_seed.csv", index=False)
+        paired_differences(ppi, ["inference", "k"], "auprc").to_csv(root / "ppi_paired_differences.csv", index=False)
+        averaged = ppi.groupby(["pooling", "inference", "k"])[["auprc", "f1"]].agg(["mean", "std"])
+        averaged.to_csv(root / "ppi_three_seed_summary.csv")
+        ppi = ppi.groupby(["pooling", "inference", "k"], as_index=False)[["auprc", "f1"]].mean()
+        plot_modes = inputs["model_families"]
+        unique_rows = []
+        for mode in modes(root):
+            for k, values in read_json(root / "ppi" / f"{mode}.json")["global_unique_test"].items():
+                unique_rows.append(dict(pooling=mode.rsplit("_seed", 1)[0], seed=int(mode.rsplit("_seed", 1)[1]),
+                                        k=int(k), auprc=values["ap"], f1=values["f1"]))
+        pd.DataFrame(unique_rows).to_csv(root / "ppi_global_unique_per_seed.csv", index=False)
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     for metric in ["auprc", "f1"]:
         fig, axes = plt.subplots(1, 2, figsize=(8, 3), sharey=True)
         for ax, inference in zip(axes, ["global", "cell"]):
-            for mode in modes(root):
+            for mode in plot_modes:
                 frame = ppi[(ppi.pooling == mode) & (ppi.inference == inference)]
                 ax.plot(range(5), 100 * frame[metric], marker="o", label=mode)
             ax.set(xticks=range(5), xticklabels=[1, 10, 50, 100, 500], title=f"CF / {inference} encoding", xlabel="Negatives per positive", ylabel=metric.upper() + " (%)")
@@ -391,6 +532,24 @@ def summarize(root):
         fig.tight_layout()
         fig.savefig(root / f"ppi_{metric}.png", dpi=200)
         plt.close(fig)
+
+
+def paired_differences(frame, keys, metric):
+    """C−B and C−D within each training seed; no unpaired fold pseudo-replicates."""
+    import pandas as pd
+    selected = frame[frame.pooling.isin(["recycle_memory", "recycle_residues", "recycle_no_graph"])]
+    wide = selected.pivot(index=[*keys, "seed"], columns="pooling", values=metric)
+    if wide.isna().any().any():
+        raise ValueError("Missing paired recycling control")
+    return pd.DataFrame({"C_minus_B": wide.recycle_residues - wide.recycle_memory,
+                         "C_minus_D": wide.recycle_residues - wide.recycle_no_graph}).reset_index()
+
+
+def summarize(root):
+    import numpy as np
+    import pandas as pd
+    from downstream_tasks.data.partitions import partition_path
+    summarize_ppi(root)
     rows = []
     for task in read_json(root / "inputs.json")["tasks"]:
         files = list((root / "downstream" / task["task"]).glob("*/*/results.csv"))
@@ -412,25 +571,48 @@ def summarize(root):
     overview = best.assign(auprc=100 * best.test_auprc_macro_mean)[["task", "pooling", "readout", "auprc"]]
     tt = overview[overview.task.str.startswith("therapeutic_target_")].groupby(["pooling", "readout"], as_index=False).auprc.mean().assign(task="TT mean (15)")
     overview = pd.concat([overview[~overview.task.str.startswith("therapeutic_target_")], tt])
+    if "model_families" in read_json(root / "inputs.json"):
+        overview["seed"] = overview.pooling.str.rsplit("_seed", n=1).str[-1].astype(int)
+        overview["pooling"] = overview.pooling.str.rsplit("_seed", n=1).str[0]
+        overview.to_csv(root / "downstream_per_seed.csv", index=False)
+        paired_differences(overview, ["task", "readout"], "auprc").to_csv(root / "downstream_paired_differences.csv", index=False)
+        overview = overview.groupby(["task", "pooling", "readout"], as_index=False).agg(
+            auprc_mean=("auprc", "mean"), auprc_std=("auprc", "std"), seeds=("seed", "nunique"))
+        assert (overview.seeds == 3).all()
+        overview.to_csv(root / "downstream_three_seed_summary.csv", index=False)
+        resource_rows = []
+        for mode, selected in read_json(root / "selected.json").items():
+            directory = Path(selected["checkpoint"]).parent
+            history = pd.read_csv(directory / "history.csv")
+            resource_rows.append(dict(model=mode, selected_update=selected["epoch"],
+                completed_updates=selected["completed_updates"],
+                parameters=read_json(directory / "completed.json")["parameter_count"],
+                median_train_val_seconds=float(history.update_seconds.iloc[1:].median()),
+                peak_reserved_gib=float(history.gpu_peak_reserved_gib.max())))
+        pd.DataFrame(resource_rows).to_csv(root / "pretraining_resources.csv", index=False)
     partner_panel = read_json(root / "inputs.json").get("workflow") == "cf_partner_pairmasked"
     title = "Pair-masked CF partner pooling" if partner_panel else "CF residue pooling ablation"
     protocol = ("All models here use unordered-pair training masking (UM); compare additions to the matched mean/gated controls, not directly to the earlier DM sweep. Independent sequence baselines are reused from the original pipeline."
                 if partner_panel else "Independent ESM poolers are freshly learned on downstream training folds.")
+    if "model_families" in read_json(root / "inputs.json"):
+        title = "CF graph-guided residue recycling"
+        protocol = "Matched UM masking throughout. Mean ± sample SD over three paired pretraining seeds; readout seed/folds are fixed. C−B tests residue access; C−D tests graph feedback. See paired-difference CSVs and resource table. Earlier DM results are historical, not matched controls."
     (root / "RESULTS.md").write_text(f"# {title}\n\nAUPRC (%). Same released task cohorts/folds; localization is the preserved 37-label development benchmark. CF poolers are learned on global PPI only. {protocol}\n\n" + overview.round(2).to_markdown(index=False) + "\n")
     save_json(root / "COMPLETE.json", read_json(root / "PREPARED.json"))
 
 
 def gpu_worker(root, stage):
     count = 1
-    if stage in {"train", "downstream", "evaluate"}:
+    if stage in {"train", "repeat", "downstream", "evaluate"}:
         policy = read_json(root / "packing.json")
         # Optional measured execution choice: one GPU-resident residue bank is
         # faster than two CPU-fed fits. Never allocate two copies of that bank.
         override = root / "execution.json"
         if override.exists():
             policy.update(read_json(override))
-        count = policy.get(stage, 1)
-        if policy.get(stage + "_gpu_cache", False):
+        policy_stage = "train" if stage == "repeat" else stage
+        count = policy.get(policy_stage, 1)
+        if policy.get(policy_stage + "_gpu_cache", False):
             if count != 1:
                 raise ValueError("GPU residue caching requires one process per GPU")
             os.environ["PROTSCAPE_RESIDUE_GPU_CACHE"] = "1"
@@ -441,9 +623,12 @@ def gpu_worker(root, stage):
 
 
 def submit(root, stage="smoke", allocation=1):
+    if (root / "RETIRED.json").exists():
+        raise RuntimeError("This experiment was retired; no further submissions are allowed")
     if int(allocation) > settings(root)["max_allocations"][stage]:
         raise RuntimeError(f"{stage} allocation cap reached; manual review required")
-    prefix = "cf-partner" if read_json(root / "inputs.json").get("workflow") == "cf_partner_pairmasked" else "cf-pool"
+    workflow = read_json(root / "inputs.json").get("workflow")
+    prefix = {"cf_partner_pairmasked": "cf-partner", "cf_recycling_pairmasked": "cf-recycle"}.get(workflow, "cf-pool")
     job = subprocess.check_output(["sbatch", "--parsable", "--job-name", f"{prefix}-{stage}",
         "--output", str(root / "logs" / f"{stage}_%j.slurm.log"),
         str(root / "source/scripts/cscs/run_cf_residue_ablation.sbatch"), str(root), stage, str(allocation)], text=True).strip().split(";")[0]
@@ -452,6 +637,8 @@ def submit(root, stage="smoke", allocation=1):
 
 
 def finish(root, stage, allocation):
+    if (root / "RETIRED.json").exists():
+        raise RuntimeError("This experiment was retired")
     if list((root / "failures").glob("*.json")):
         raise RuntimeError("Worker failure: inspect failures/ before continuing")
     folder = root / "queue" / stage
@@ -459,8 +646,9 @@ def finish(root, stage, allocation):
         submit(root, stage, int(allocation) + 1)
         return
     if stage == "smoke":
-        if read_json(root / "inputs.json").get("workflow") == "cf_partner_pairmasked":
-            checks = {m: read_json(root / "smoke" / f"{m}_checked.json") for m in modes(root)}
+        if read_json(root / "inputs.json").get("workflow") in {"cf_partner_pairmasked", "cf_recycling_pairmasked"}:
+            families = read_json(root / "inputs.json").get("model_families", modes(root))
+            checks = {m: read_json(root / "smoke" / f"{m}_checked.json") for m in families}
             assert all(c["peak_reserved_gib"] < 88 for c in checks.values())
             save_json(root / "packing.json", dict(train=1, downstream=2, measured_pretraining=checks,
                 downstream_policy="Two frozen-vector LR fits per GPU; no learned residue pooler or residue bank downstream"))
@@ -478,10 +666,15 @@ def finish(root, stage, allocation):
                                                measurements=measurements, downstream_measurements=probes, memory_margin_gib=6))
     elif stage == "train":
         select(root)
+    elif stage == "repeat":
+        select_repeats(root)
+    elif stage == "evaluate":
+        summarize_ppi(root)
     elif stage == "downstream":
         summarize(root)
         return
-    submit(root, STAGES[STAGES.index(stage) + 1])
+    stages = ["smoke", "train", "repeat", "evaluate", "downstream"] if "model_families" in read_json(root / "inputs.json") else STAGES
+    submit(root, stages[stages.index(stage) + 1])
 
 
 if __name__ == "__main__":

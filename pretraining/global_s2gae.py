@@ -328,14 +328,18 @@ class GlobalS2GAE(nn.Module):
         if residue_pooling is not None:
             from .models.residue_pooling import ResiduePooler
             from .models.partner_pooling import PARTNER_MODES, PartnerResiduePooler
+            from .models.recycling_pooling import RECYCLING_MODES, RecyclingResiduePooler
             if residue_ids is None:
                 raise ValueError("Learned pooling requires global protein-to-residue IDs")
             self.model_config.update(residue_pooling=residue_pooling, residue_ids=residue_ids)
             # Pooler initialization must not change backbone weights or the
             # subsequent edge masking/dropout RNG stream across ablations.
             with torch.random.fork_rng(devices=[]):
-                pooler = PartnerResiduePooler if residue_pooling["mode"] in PARTNER_MODES else ResiduePooler
-                self.residue_pooler = pooler(**residue_pooling)
+                if residue_pooling["mode"] in RECYCLING_MODES:
+                    self.residue_pooler = RecyclingResiduePooler(**residue_pooling, graph_dim=self.embedding_dim)
+                else:
+                    pooler = PartnerResiduePooler if residue_pooling["mode"] in PARTNER_MODES else ResiduePooler
+                    self.residue_pooler = pooler(**residue_pooling)
             self.register_buffer("residue_ids", torch.tensor(residue_ids, dtype=torch.long))
 
     @property
@@ -352,10 +356,22 @@ class GlobalS2GAE(nn.Module):
             ids = self.residue_ids if protein_indices is None else self.residue_ids[protein_indices]
             if len(ids) != len(features):
                 raise ValueError("Local CF encoding requires explicit global protein indices")
+            if getattr(self.residue_pooler, "recycling", False):
+                slots = self.residue_pooler.read_residues(ids)
+                first_features = self.residue_pooler.protein_features(slots, features)
+                first_embeddings, first_layers = self._encode_graph(first_features, message_edge_index)
+                if self.residue_pooler.variant == "slots4":
+                    return first_embeddings, first_layers
+                refined = self.residue_pooler.refine(ids, slots, first_embeddings)
+                final_features = self.residue_pooler.protein_features(refined, features)
+                return self._encode_graph(final_features, message_edge_index)
             if getattr(self.residue_pooler, "graph_conditioned", False):
                 features = self.residue_pooler(ids, message_edge_index, features)
             else:
                 features = self.residue_pooler(ids)
+        return self._encode_graph(features, message_edge_index)
+
+    def _encode_graph(self, features, message_edge_index):
         graph = Data(
             x=features,
             edge_index=message_edge_index,
