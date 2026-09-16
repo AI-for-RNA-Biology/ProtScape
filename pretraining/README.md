@@ -35,9 +35,12 @@ The pretraining and downstream entry points run the required generator when a co
 
 ## Training
 
-The context-free global-interactome S2GAE ablation, including its released
-leakage-controlled split, 54-point ACM sweep, matched Cell-PPI evaluation, and
-CSCS launchers, is documented in [`GLOBAL_S2GAE.md`](GLOBAL_S2GAE.md).
+Development experiments: CF training settings are in `configs/global_s2gae_*.yaml`;
+residue pooling and recycling settings are in `configs/cf_residue_ablation.yaml`
+and `configs/cf_recycling_ablation.yaml`. Launchers are under `scripts/cscs/`.
+The recycling comparison uses undirected-pair masking; the original CF sweep
+uses directed masking. Keep their results separate. Run artifacts belong under
+`projects/outputs/`, not in this repository.
 
 From the repository root, run the main ProtScape configuration with:
 
