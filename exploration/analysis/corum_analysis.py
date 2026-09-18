@@ -141,7 +141,7 @@ def main() -> None:
         del data, result
         gc.collect()
 
-    # pHuber and L1 were trained with the pooled pre-CCI cell export.
+    # Evaluate pHuber and L1 using their selected cell representation.
     for model_key in ("s2gae_phuber_uni", "s2gae_l1_uni"):
         data_by_embedding = {}
         for readout in LOSS_READOUTS[model_key]:
