@@ -1,5 +1,10 @@
 #!/usr/bin/env python
-"""Build therapeutic-target labels from fixed Open Targets clinical and lookup tables."""
+"""Build disease labels from one Open Targets release and approved DrugBank targets.
+
+Positive: phase III/IV, approved, or completed phase-II clinical evidence.
+Negative: approved DrugBank targets without non-literature disease associations.
+Open Targets Platform: https://platform-docs.opentargets.org/data-access/datasets
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,7 @@ import json
 import warnings
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Sequence, Set, Tuple
+from typing import Dict, Iterable, List, Sequence, Set, Tuple
 
 import pandas as pd
 
@@ -16,20 +21,14 @@ from ..config import (
     DEFAULT_GLOBAL_PPI,
     DEFAULT_OUTPUT_ROOT,
     DEFAULT_THERAPEUTIC_TARGET_DRUGBANK_TARGETS,
-    DEFAULT_THERAPEUTIC_TARGET_EVIDENCE_DIR,
-    DEFAULT_THERAPEUTIC_TARGET_OT_ASSOCIATIONS_DIR,
-    DEFAULT_THERAPEUTIC_TARGET_OT_DISEASES_DIR,
     DEFAULT_THERAPEUTIC_TARGET_OT_RELEASE,
-    DEFAULT_THERAPEUTIC_TARGET_OT_TARGETS_DIR,
+    DEFAULT_THERAPEUTIC_TARGET_OT_ROOT,
     THERAPEUTIC_TARGET_IDS,
 )
 
 
-def detect_output_dir() -> Path:
-    return DEFAULT_OUTPUT_ROOT / "data" / "therapeutic_target_dataset"
-
-
 def read_global_ppi_genes(path: Path) -> Set[str]:
+    """Read the proteins represented in the global interactome."""
     genes: Set[str] = set()
     with path.open(encoding="utf-8") as handle:
         for line in handle:
@@ -88,7 +87,8 @@ def detect_table_files(path: Path, requested_format: str) -> Tuple[List[Path], s
     raise ValueError(f"No {requested_format} table parts found in {path}")
 
 
-def iter_records(files: Sequence[Path], table_format: str) -> Iterator[Dict[str, object]]:
+def iter_records(files, table_format, columns=None, filters=None):
+    """Read table parts; parquet filters avoid loading unrelated diseases."""
     if table_format == "json":
         for path in files:
             with path.open(encoding="utf-8") as handle:
@@ -98,7 +98,7 @@ def iter_records(files: Sequence[Path], table_format: str) -> Iterator[Dict[str,
         return
 
     for path in files:
-        yield from pd.read_parquet(path).to_dict(orient="records")
+        yield from pd.read_parquet(path, columns=columns, filters=filters).to_dict(orient="records")
 
 
 def load_disease_descendants(
@@ -106,10 +106,11 @@ def load_disease_descendants(
     diseases: Iterable[str],
     table_format: str,
 ) -> Dict[str, Set[str]]:
+    """Find each requested disease and its descendants in the same snapshot."""
     requested = set(diseases)
     files, detected = detect_table_files(path, table_format)
     descendants: Dict[str, Set[str]] = {}
-    for record in iter_records(files, detected):
+    for record in iter_records(files, detected, columns=["id", "descendants"]):
         disease_id = str(record.get("id", ""))
         if disease_id not in requested:
             continue
@@ -132,7 +133,7 @@ def load_target_symbols(
     files, detected = detect_table_files(path, table_format)
     symbols: Dict[str, str] = {}
     obsolete = {}
-    for record in iter_records(files, detected):
+    for record in iter_records(files, detected, columns=["id", "approvedSymbol", "obsoleteSymbols"]):
         target_id = str(record.get("id", "")).strip()
         symbol = str(record.get("approvedSymbol", "")).strip().upper()
         if target_id and symbol:
@@ -172,8 +173,8 @@ def load_target_symbols(
             ambiguous.add(target_id)
     if ambiguous:
         warnings.warn(
-            f"Retained approved names outside the PPI for {len(ambiguous)} targets with "
-            f"ambiguous HGNC aliases: {', '.join(sorted(ambiguous))}", stacklevel=2,
+            f"Kept approved names for {len(ambiguous)} targets with ambiguous HGNC aliases.",
+            stacklevel=2,
         )
     return symbols
 
@@ -191,7 +192,9 @@ def load_association_scores(
     unresolved = set()
     files, detected = detect_table_files(path, table_format)
 
-    for record in iter_records(files, detected):
+    for record in iter_records(
+        files, detected, filters=[("diseaseId", "in", sorted(requested))]
+    ):
         disease_id = str(record.get("diseaseId", ""))
         if disease_id not in requested:
             continue
@@ -239,19 +242,8 @@ def non_literature_targets(
     }
 
 
-def load_associated_targets(
-    path: Path,
-    diseases: Iterable[str],
-    target_symbols: Dict[str, str],
-    table_format: str,
-) -> Dict[str, Set[str]]:
-    """Load non-literature indirect associations for each root disease."""
-    return non_literature_targets(
-        load_association_scores(path, diseases, target_symbols, table_format)
-    )
-
-
 def clinically_relevant(phase: object, status: object) -> bool:
+    """Keep phase III/IV and completed phase-II evidence in the 24.03 schema."""
     try:
         phase_value = float(phase)
     except (TypeError, ValueError):
@@ -265,52 +257,63 @@ def collect_evidence(
     files: Sequence[Path],
     table_format: str,
     disease_ids: Set[str],
+    ot_release: str = DEFAULT_THERAPEUTIC_TARGET_OT_RELEASE,
+    clinical_reports: Path | None = None,
 ) -> pd.DataFrame:
+    """Read clinical evidence once, keeping the disease and target identifiers."""
+    completed_trials = set()
+    if ot_release == "26.03":
+        report_files, report_format = detect_table_files(clinical_reports, "auto")
+        completed_trials = {
+            record["id"]
+            for record in iter_records(
+                report_files, report_format, columns=["id", "trialOverallStatus"]
+            )
+            if str(record.get("trialOverallStatus", "")).upper() == "COMPLETED"
+        }
+
     rows = []
+    phase_field = "clinicalPhase" if ot_release == "24.03" else "clinicalStage"
     for record in iter_records(files, table_format):
+        if phase_field not in record:
+            raise ValueError(f"Clinical evidence does not match Open Targets {ot_release}: missing {phase_field}")
         mapped_id = str(record.get("diseaseFromSourceMappedId", ""))
         disease_id = str(record.get("diseaseId", ""))
         if mapped_id not in disease_ids and disease_id not in disease_ids:
             continue
-        if not clinically_relevant(
-            record.get("clinicalPhase"), record.get("clinicalStatus")
-        ):
+        if ot_release == "24.03":
+            relevant = clinically_relevant(record.get("clinicalPhase"), record.get("clinicalStatus"))
+        else:
+            stage = record.get("clinicalStage")
+            relevant = stage in {"PHASE_3", "PHASE_4", "APPROVAL"} or (
+                stage == "PHASE_2" and record.get("clinicalReportId") in completed_trials
+            )
+        if not relevant:
             continue
         target_id = record.get("targetId")
         if target_id is not None and not pd.isna(target_id):
-            rows.append(
-                {
-                    "diseaseFromSourceMappedId": record.get(
-                        "diseaseFromSourceMappedId"
-                    ),
-                    "diseaseId": record.get("diseaseId"),
-                    "targetId": target_id,
-                    "targetFromSourceId": record.get("targetFromSourceId"),
-                    "clinicalPhase": record.get("clinicalPhase"),
-                    "clinicalStatus": record.get("clinicalStatus"),
-                    "drugId": record.get("drugId"),
-                }
-            )
-    return pd.DataFrame(rows).drop_duplicates()
+            rows.append({
+                "diseaseFromSourceMappedId": mapped_id,
+                "diseaseId": disease_id,
+                "targetId": str(target_id),
+            })
+    return pd.DataFrame(rows, columns=[
+        "diseaseFromSourceMappedId", "diseaseId", "targetId"
+    ]).drop_duplicates()
 
 
 def resolve_positive_targets(
     evidence: pd.DataFrame,
     target_symbols: Dict[str, str],
 ) -> Set[str]:
+    """Map eligible clinical target identifiers to approved gene symbols."""
     target_ids = set(evidence["targetId"].dropna().astype(str))
     missing = sorted(target_ids - set(target_symbols))
     if missing:
         raise ValueError(
-            f"{len(missing)} ChEMBL target IDs are absent from the Open Targets target table"
+            f"{len(missing)} clinical target IDs are absent from the Open Targets target table"
         )
     return {target_symbols[target_id] for target_id in target_ids}
-
-
-def write_json(path: Path, payload: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, sort_keys=True)
 
 
 def build_dataset(
@@ -318,18 +321,20 @@ def build_dataset(
     descendants: Set[str],
     associated_targets: Set[str],
     target_symbols: Dict[str, str],
-    evidence_files: Sequence[Path],
-    evidence_format: str,
+    evidence: pd.DataFrame,
     ppi_genes: Set[str],
     druggable_targets: Set[str],
     output_dir: Path,
-    processed_dir: Path,
     min_proteins_per_label: int,
-    lookup_release: str = DEFAULT_THERAPEUTIC_TARGET_OT_RELEASE,
+    ot_release: str = DEFAULT_THERAPEUTIC_TARGET_OT_RELEASE,
 ) -> Dict[str, object]:
-    evidence = collect_evidence(evidence_files, evidence_format, descendants)
+    """Write one disease's labels after applying the common interactome filter."""
+    evidence = evidence[
+        evidence["diseaseId"].isin(descendants)
+        | evidence["diseaseFromSourceMappedId"].isin(descendants)
+    ]
     if evidence.empty:
-        raise RuntimeError(f"No clinically relevant 24.03 evidence for {disease}")
+        raise RuntimeError(f"No clinically relevant evidence for {disease} in {ot_release}")
 
     positive_raw = resolve_positive_targets(evidence, target_symbols)
     positive = positive_raw & ppi_genes
@@ -341,19 +346,6 @@ def build_dataset(
             f"{disease}: insufficient labels ({len(positive)} positive, "
             f"{len(negative)} negative)"
         )
-
-    write_json(
-        processed_dir / f"positive_proteins_global_{disease}.json",
-        {"GLOBAL": sorted(positive)},
-    )
-    write_json(
-        processed_dir / f"negative_proteins_global_{disease}.json",
-        {"GLOBAL": sorted(negative)},
-    )
-    write_json(
-        processed_dir / f"raw_targets_global_{disease}.json",
-        sorted(positive_raw),
-    )
 
     records = [
         {"protein": protein, "label": 1, "disease_id": disease}
@@ -374,86 +366,52 @@ def build_dataset(
     return {
         "disease_id": disease,
         "n_descendants_including_root": len(descendants),
-        "n_evidence_rows": len(evidence),
+        "n_clinical_target_disease_pairs": len(evidence),
         "n_positive_raw": len(positive_raw),
         "n_positive": len(positive),
         "n_negative": len(negative),
         "n_total": len(positive) + len(negative),
         "dataset_csv": output_csv.name,
-        "clinical_evidence_release": "24.03",
-        "lookup_release": lookup_release,
+        "open_targets_release": ot_release,
     }
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Build therapeutic-target labels from fixed Open Targets tables."
-    )
-    parser.add_argument(
-        "--ot-release", choices=["24.03", "26.03"],
-        default=DEFAULT_THERAPEUTIC_TARGET_OT_RELEASE,
-        help="Release of the disease, target and association lookup tables.",
-    )
-    parser.add_argument(
-        "--drugbank-targets",
-        type=Path,
-        default=DEFAULT_THERAPEUTIC_TARGET_DRUGBANK_TARGETS,
-    )
-    parser.add_argument(
-        "--evidence-dir",
-        type=Path,
-        default=DEFAULT_THERAPEUTIC_TARGET_EVIDENCE_DIR,
-    )
-    parser.add_argument(
-        "--ot-diseases-dir",
-        type=Path,
-        default=DEFAULT_THERAPEUTIC_TARGET_OT_DISEASES_DIR,
-    )
-    parser.add_argument(
-        "--ot-targets-dir",
-        type=Path,
-        default=DEFAULT_THERAPEUTIC_TARGET_OT_TARGETS_DIR,
-    )
-    parser.add_argument(
-        "--ot-associations-dir",
-        type=Path,
-        default=DEFAULT_THERAPEUTIC_TARGET_OT_ASSOCIATIONS_DIR,
-    )
+def parse_args():
+    """Read the fixed release, disease IDs and input/output paths."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--ot-release", choices=["24.03", "26.03"],
+                        default=DEFAULT_THERAPEUTIC_TARGET_OT_RELEASE)
+    parser.add_argument("--ot-root", type=Path, default=DEFAULT_THERAPEUTIC_TARGET_OT_ROOT,
+                        help="Parent of the 24.03/ and 26.03/ snapshot directories.")
+    parser.add_argument("--drugbank-targets", type=Path,
+                        default=DEFAULT_THERAPEUTIC_TARGET_DRUGBANK_TARGETS)
     parser.add_argument("--global-ppi-path", type=Path, default=DEFAULT_GLOBAL_PPI)
-    parser.add_argument("--output-dir", type=Path, default=None)
-    parser.add_argument(
-        "--diseases", nargs="+", default=list(THERAPEUTIC_TARGET_IDS)
-    )
-    parser.add_argument(
-        "--evidence-format", choices=["auto", "json", "parquet"], default="auto"
-    )
-    parser.add_argument(
-        "--ot-format", choices=["auto", "json", "parquet"], default="auto"
-    )
-    parser.add_argument("--processed-subdir", default="processed")
-    parser.add_argument("--min-proteins-per-label", type=int, default=10)
+    parser.add_argument("--output-dir", type=Path,
+                        default=DEFAULT_OUTPUT_ROOT / "data" / "therapeutic_target_dataset")
+    parser.add_argument("--diseases", nargs="+", default=list(THERAPEUTIC_TARGET_IDS))
     return parser.parse_args()
 
 
 def main() -> None:
+    """Build labels and disease-association annotations from one release."""
     args = parse_args()
-    diseases = [disease.strip() for disease in args.diseases if disease.strip()]
-    output_dir = args.output_dir or detect_output_dir()
-    processed_dir = output_dir / args.processed_subdir
-
-    evidence_files, evidence_format = detect_table_files(
-        args.evidence_dir, args.evidence_format
-    )
-    descendants = load_disease_descendants(
-        args.ot_diseases_dir, diseases, args.ot_format
-    )
+    diseases = args.diseases
+    output_dir = args.output_dir
+    snapshot = args.ot_root / args.ot_release
+    descendants = load_disease_descendants(snapshot / "disease", diseases, "auto")
     ppi_genes = read_global_ppi_genes(args.global_ppi_path)
-    target_symbols = load_target_symbols(args.ot_targets_dir, args.ot_format, ppi_genes)
+    target_symbols = load_target_symbols(snapshot / "target", "auto", ppi_genes)
     associations = load_association_scores(
-        args.ot_associations_dir, diseases, target_symbols, args.ot_format, args.ot_release
+        snapshot / "association_by_datatype_indirect", diseases, target_symbols,
+        "auto", args.ot_release
     )
     associated_targets = non_literature_targets(associations)
     druggable_targets = load_druggable_targets(args.drugbank_targets)
+    evidence_files, evidence_format = detect_table_files(snapshot / "evidence", "auto")
+    evidence = collect_evidence(
+        evidence_files, evidence_format, set().union(*descendants.values()),
+        args.ot_release, snapshot / "clinical_report",
+    )
 
     rows = [
         build_dataset(
@@ -461,14 +419,12 @@ def main() -> None:
             descendants=descendants[disease],
             associated_targets=associated_targets[disease],
             target_symbols=target_symbols,
-            evidence_files=evidence_files,
-            evidence_format=evidence_format,
+            evidence=evidence,
             ppi_genes=ppi_genes,
             druggable_targets=druggable_targets,
             output_dir=output_dir,
-            processed_dir=processed_dir,
-            min_proteins_per_label=args.min_proteins_per_label,
-            lookup_release=args.ot_release,
+            min_proteins_per_label=10,
+            ot_release=args.ot_release,
         )
         for disease in diseases
     ]

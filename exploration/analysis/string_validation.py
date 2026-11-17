@@ -51,12 +51,14 @@ PAIR_CHUNK_SIZE = 2_000_000
 
 
 def require_file(path: Path) -> Path:
+    """Check a required consensus output before reading it."""
     if not path.is_file():
         raise FileNotFoundError(f"Missing required analysis input: {path}")
     return path
 
 
 def read_gene_order() -> list[str]:
+    """Read the unique gene order defining the packed pair arrays."""
     require_file(GLOBAL_GENE_ORDER)
     genes = [
         line.strip().upper()
@@ -69,6 +71,7 @@ def read_gene_order() -> list[str]:
 
 
 def load_pair_inputs() -> tuple[np.ndarray, np.ndarray]:
+    """Load consensus counts and STRING scores with matching pair-array dimensions."""
     require_file(PAIR_CLASS_COUNTS)
     counts = np.load(PAIR_CLASS_COUNTS, mmap_mode="r")
     if counts.ndim != 3 or counts.shape[:2] != (2, len(CLASS_NAMES)):
@@ -91,6 +94,7 @@ def load_pair_inputs() -> tuple[np.ndarray, np.ndarray]:
 
 
 def empty_string_stats() -> dict[str, float]:
+    """Start accumulators for STRING coverage and score thresholds."""
     return {
         "n_items": 0,
         "score_sum": 0.0,
@@ -101,6 +105,7 @@ def empty_string_stats() -> dict[str, float]:
 
 
 def add_string_stats(stats: dict[str, float], scores: np.ndarray) -> None:
+    """Accumulate STRING score sums and supported-pair counts for one batch."""
     stats["n_items"] += int(scores.size)
     stats["score_sum"] += float(scores.sum())
     stats["n_score_gt0"] += int((scores > 0).sum())
@@ -109,6 +114,7 @@ def add_string_stats(stats: dict[str, float], scores: np.ndarray) -> None:
 
 
 def string_stats_row(stats: dict[str, float]) -> dict[str, float]:
+    """Convert accumulated STRING counts into coverage fractions and mean scores."""
     total = int(stats["n_items"])
     supported = int(stats["n_score_gt0"])
     return {
@@ -212,6 +218,7 @@ def build_string_support_tables() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def make_test_mask(n_pairs: int) -> np.ndarray:
+    """Create the fixed shuffled holdout used to evaluate STRING-score regression."""
     folds = np.arange(n_pairs, dtype=np.int64) % int(1 / TEST_FRACTION)
     np.random.default_rng(SPLIT_SEED).shuffle(folds)
     return folds == 0
@@ -220,6 +227,7 @@ def make_test_mask(n_pairs: int) -> np.ndarray:
 def standardized_ols_predictions(
     features: np.ndarray, target: np.ndarray, test: np.ndarray
 ) -> np.ndarray:
+    """Fit OLS with training-only feature scaling and return held-out predictions."""
     train_features = features[~test]
     feature_mean = train_features.mean(axis=0)
     feature_scale = train_features.std(axis=0)
@@ -308,6 +316,7 @@ def build_string_correlation_table() -> pd.DataFrame:
 
 
 def write_table(table: pd.DataFrame, path: Path) -> None:
+    """Save an analysis CSV without a pandas index."""
     path.parent.mkdir(parents=True, exist_ok=True)
     table.to_csv(path, index=False)
     print(f"Saved {path}", flush=True)
@@ -327,6 +336,7 @@ def render_plots() -> None:
 
 
 def write_results() -> None:
+    """Export STRING coverage, score bands and regression correlations, then draw them."""
     coverage, score_bands = build_string_support_tables()
     write_table(coverage, ANALYSIS_DIR / "string_coverage.csv")
     write_table(score_bands, ANALYSIS_DIR / "string_score_bands.csv")
@@ -339,6 +349,7 @@ def write_results() -> None:
 
 def main() -> None:
     # Run inference before reducing the STRING statistics.
+    """Run consensus inference before reducing its outputs to STRING validation tables."""
     from exploration.analysis.consensus_analysis import main as run_analysis
 
     run_analysis()

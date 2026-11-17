@@ -19,18 +19,18 @@ from torchmetrics import AUROC, AveragePrecision, Accuracy
 
 
 def set_seed(seed):
-    # Seed
+    """Seed Python, NumPy and torch before splitting data or initializing a model."""
     print("SEED:", seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed) 
+    torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
     random.seed(seed)
-    # torch.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
 
 
 def setup_wandb(cfg, experiment_name):
+    """Initialize the optional run log from the training configuration."""
     config_dict = omegaconf.OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
     kwargs = {'project': 'ProtScape',
               'config': config_dict,
@@ -43,10 +43,11 @@ def setup_wandb(cfg, experiment_name):
     return cfg
 
 def calc_individual_metrics(pred, y):
-    try: 
+    """Return AUROC, average precision, accuracy and macro F1 for binary predictions."""
+    try:
         roc_score = roc_auc_score(y, pred)
-    except ValueError: 
-        roc_score = 0.5 
+    except ValueError:
+        roc_score = 0.5
     ap_score = average_precision_score(y, pred)
     acc = accuracy_score(y, pred > 0.5)
     f1 = f1_score(y, pred > 0.5, average='macro', labels=[0, 1], zero_division=0)
@@ -54,14 +55,15 @@ def calc_individual_metrics(pred, y):
 
 
 def calc_individual_metrics_torch(pred, y):
+    """Compute the same four binary metrics directly from tensors."""
     y=y.to(dtype=torch.int32, device=pred.device)
     roc_auc_score_ = AUROC(task='binary').to(pred.device)
     average_precision_score_ = AveragePrecision(task='binary').to(pred.device)
     accuracy_score_ = Accuracy(task='binary').to(pred.device)
-    try: 
+    try:
         roc_score = roc_auc_score_(pred, y).item()
-    except ValueError: 
-        roc_score = 0.5 
+    except ValueError:
+        roc_score = 0.5
     ap_score = average_precision_score_(pred, y).item()
     acc = accuracy_score_(pred, y).item()
     # TorchMetrics ignores ``average='macro'`` for ``task='binary'`` and
@@ -75,6 +77,7 @@ def calc_individual_metrics_torch(pred, y):
     fn = torch.sum(~pred_label & y_bool).float()
 
     def class_f1(true_positive, false_positive, false_negative):
+        """Return the class F1 score, using zero when the class has no predicted or true positives."""
         denominator = 2 * true_positive + false_positive + false_negative
         return torch.where(
             denominator > 0,
@@ -87,11 +90,12 @@ def calc_individual_metrics_torch(pred, y):
 
 
 def calc_metrics_factored(mg_pred, mg_data, ppi_preds, ppi_labels):
-    
+
+    """Average PPI metrics across cells and score CCI predictions when provided."""
     levels = ['ppi']
     if mg_pred is not None:
         levels.append('meta')
-    
+
     list_metrics = ['roc', 'ap', 'acc', 'f1']
     metrics = {}
     for level in levels:
@@ -128,6 +132,7 @@ def calc_metrics_factored(mg_pred, mg_data, ppi_preds, ppi_labels):
 
 
 def calc_metrics(mg_pred, mg_data, ppi_preds, ppi_data, version='numpy'):
+    """Average per-cell PPI metrics and score metagraph edges using their stored labels."""
     assert version in ['numpy', 'torch']
     metrics = {
         'roc_ppi': [],
@@ -160,7 +165,7 @@ def calc_metrics(mg_pred, mg_data, ppi_preds, ppi_data, version='numpy'):
             curr_roc_score, curr_ap_score, curr_acc, curr_f1 = calc_individual_metrics(
                 ppi.numpy(), ppi_data[celltype]["y"].numpy())
         else:
-            
+
             curr_roc_score, curr_ap_score, curr_acc, curr_f1 = calc_individual_metrics_torch(
                 ppi, ppi_data[celltype]["y"])
         metrics['roc_ppi'].append(curr_roc_score)
@@ -181,7 +186,8 @@ def metrics_per_rel_factored(
     ppi_preds, ppi_labels,
     edge_attr_dict, celltype_map,
     split):
-    
+
+    """Log per-cell PPI and CCI metrics and return a one-row results table."""
     celltype_map = {v: k for k, v in celltype_map.items()}
 
     df_metrics = {}
@@ -200,7 +206,7 @@ def metrics_per_rel_factored(
             local_res = [('roc', roc_meta), ('ap', ap_meta), ('acc', acc_meta), ('f1', f1_meta)]
             for name_metric, metric_value in local_res:
                 df_metrics[f'metagraph_cci_{split}_{name_metric}'] = [metric_value]
-                    
+
     # Compute metrics per rel per PPI layer
     for celltype in ppi_preds.keys():
         ppi = ppi_preds[celltype]
@@ -208,10 +214,10 @@ def metrics_per_rel_factored(
         attr = 'ppi'
         roc_per_rel, ap_per_rel, acc_per_rel, f1_per_rel = calc_individual_metrics_torch(
             ppi, y_per_rel)
-    
-        
+
+
         wandb.log({"%s_%s_%s_roc" % (celltype_map[celltype], attr, split): roc_per_rel, "%s_%s_%s_ap" % (celltype_map[celltype], attr, split): ap_per_rel, "%s_%s_%s_acc" % (celltype_map[celltype], attr, split): acc_per_rel, "%s_%s_%s_f1" % (celltype_map[celltype], attr, split): f1_per_rel})
-            
+
         local_res = [('roc', roc_per_rel), ('ap', ap_per_rel), ('acc', acc_per_rel), ('f1', f1_per_rel)]
         for name_metric, metric_value in local_res:
             df_metrics[f'cell{celltype}_ppi_{split}_{name_metric}'] = [metric_value]
@@ -225,7 +231,8 @@ def metrics_per_rel(
     ppi_preds, ppi_data,
     edge_attr_dict, celltype_map,
     split, version='numpy'):
-    
+
+    """Log metrics for each cell/relation and return a one-row results table."""
     assert version in ['numpy', 'torch']
 
     celltype_map = {v: k for k, v in celltype_map.items()}
@@ -249,14 +256,14 @@ def metrics_per_rel(
                     pred_per_rel = mg_pred.detach()[mask]
                     y_per_rel = mg_data["y"].detach()[mask]
                     roc_per_rel, ap_per_rel, acc_per_rel, f1_per_rel = calc_individual_metrics_torch(pred_per_rel, y_per_rel)
-                
+
                 wandb.log({"%s_%s_roc" % (attr, split): roc_per_rel, "%s_%s_ap" % (attr, split): ap_per_rel, "%s_%s_acc" % (attr, split): acc_per_rel, "%s_%s_f1" % (attr, split): f1_per_rel})
-                
+
                 # build df with metrics to save
                 local_res = [('roc', roc_per_rel), ('ap', ap_per_rel), ('acc', acc_per_rel), ('f1', f1_per_rel)]
                 for name_metric, metric_value in local_res:
                     df_metrics[f'metagraph_rel_{attr}_{split}_{name_metric}'] = [metric_value]
-                    
+
     # Compute metrics per rel per PPI layer
     for celltype, ppi in ppi_preds.items():
         for attr, idx in edge_attr_dict.items():
@@ -276,10 +283,10 @@ def metrics_per_rel(
                 y_per_rel = ppi_data[celltype]["y"][mask]
                 roc_per_rel, ap_per_rel, acc_per_rel, f1_per_rel = calc_individual_metrics_torch(
                     pred_per_rel, y_per_rel)
-            
-            
+
+
             wandb.log({"%s_%s_%s_roc" % (celltype_map[celltype], attr, split): roc_per_rel, "%s_%s_%s_ap" % (celltype_map[celltype], attr, split): ap_per_rel, "%s_%s_%s_acc" % (celltype_map[celltype], attr, split): acc_per_rel, "%s_%s_%s_f1" % (celltype_map[celltype], attr, split): f1_per_rel})
-                
+
             local_res = [('roc', roc_per_rel), ('ap', ap_per_rel), ('acc', acc_per_rel), ('f1', f1_per_rel)]
             for name_metric, metric_value in local_res:
                 df_metrics[f'cell{celltype}_ppi_{split}_{name_metric}'] = [metric_value]
@@ -288,20 +295,8 @@ def metrics_per_rel(
     return df_metrics
 
 
-
 def construct_metapath(metapaths, edge_index, edge_type, num_nodes, verbose=False):
-    """ 
-    Construct metapath adjacency matrices from edge_index and edge_type.
-    Args:
-        metapaths (list): List of metapaths, where each metapath is a list of edge types.
-            - Example: [[0, 1], [1, 2]] for two metapaths with edge types 0->1 and 1->2.
-            This applies for metapaths between tissues and cell types.
-            - For proteins, metapaths=ppi_metapaths, with only [4] as edge type
-        edge_index (torch.Tensor): Edge index tensor of shape [2, num_edges].
-        edge_type (torch.Tensor): Edge type tensor of shape [num_edges].
-        num_nodes (int): Number of nodes in the graph.
-    Returns:
-        mp_adjs (list): List of metapath adjacency matrices, where each matrix is a SparseTensor."""
+    """Compose relation adjacency matrices and return one edge-index tensor per metapath."""
     unique_edge_types = edge_type.unique()
     if verbose:
         print('unique_edge_types:', unique_edge_types)
@@ -320,7 +315,7 @@ def construct_metapath(metapaths, edge_index, edge_type, num_nodes, verbose=Fals
         for idx in metapath:
             if verbose:
                 print('idx in metapath:', idx)
-            
+
             if idx not in adjs:
                 continue
             if mp_adj:
@@ -340,29 +335,25 @@ def construct_metapath(metapaths, edge_index, edge_type, num_nodes, verbose=Fals
 
 @torch.no_grad()
 def get_embeddings(model, ppi_x, mg_x, ppi_metapaths, mg_metapaths, ppi_edge_index, mg_edge_index, tissue_neighbors):
+    """Run PINNACLE in evaluation mode and return protein and metagraph embeddings."""
     model.eval()
     ppi_x, mg_x = model(ppi_x, mg_x, ppi_metapaths, mg_metapaths, ppi_edge_index, mg_edge_index, tissue_neighbors)
-    return ppi_x, mg_x 
+    return ppi_x, mg_x
 
 
 def calc_cluster_metrics(ppi_x: dict) -> tuple:
-    """
-    Calculate Calinski-Harabasz score and Davies-Bouldin score of PPI embeddings.
-    
-    :param ppi_x: PPI node embeddings output from the model.
-    
-    :return: calinski_harabasz, and davies_bouldin scores.
-    """
+    """Measure separation of cell-specific protein embeddings with CH and DB scores."""
     X = torch.cat(list(ppi_x.values())).detach().cpu().numpy()
     labels = np.concatenate([[key] * x.shape[0] for key, x in ppi_x.items()])
-    
+
     if len(np.unique(labels))==1:
         return 0, 0
 
     return calinski_harabasz_score(X, labels), davies_bouldin_score(X, labels)
 
 
-def _fmt_float(val: float) -> str:
+def format_float(val: float) -> str:
+    """Format a hyperparameter for existing run names, e.g. 0.5 becomes 05."""
     normalized = format(Decimal(str(val)), "f")
     if "." not in normalized:
         return normalized

@@ -8,9 +8,8 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-from exploration.plotting.fonts import register_arial
+from exploration.plotting.fonts import FONT_NAME
 
-register_arial()
 matplotlib.rcParams["pdf.fonttype"] = 42
 matplotlib.rcParams["ps.fonttype"] = 42
 
@@ -39,16 +38,16 @@ LEGEND_SIZE = 6.0
 PLOT_RC = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
-    "font.family": "Arial",
-    "font.sans-serif": ["Arial"],
+    "font.family": FONT_NAME,
+    "font.sans-serif": [FONT_NAME],
     "font.size": 7.0,
     "mathtext.fontset": "custom",
-    "mathtext.rm": "Arial",
-    "mathtext.it": "Arial:italic",
-    "mathtext.bf": "Arial:bold",
-    "mathtext.cal": "Arial:italic",
-    "mathtext.sf": "Arial",
-    "mathtext.tt": "Arial",
+    "mathtext.rm": FONT_NAME,
+    "mathtext.it": f"{FONT_NAME}:italic",
+    "mathtext.bf": f"{FONT_NAME}:bold",
+    "mathtext.cal": f"{FONT_NAME}:italic",
+    "mathtext.sf": FONT_NAME,
+    "mathtext.tt": FONT_NAME,
     "text.color": "#111111",
     "axes.labelcolor": "#111111",
     "axes.edgecolor": "#111111",
@@ -152,10 +151,12 @@ N_DISEASES = 15
 
 
 def figure_size(width_cm: float, height_cm: float) -> tuple[float, float]:
+    """Convert figure dimensions from centimeters to inches."""
     return width_cm * CM, height_cm * CM
 
 
 def clean_axes(ax: plt.Axes) -> None:
+    """Apply the shared axis lines and ticks, omitting the upper and right borders."""
     ax.grid(False)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -174,6 +175,7 @@ def clean_axes(ax: plt.Axes) -> None:
 
 
 def save_figure(fig: plt.Figure, output: Path, stem: str) -> None:
+    """Save PDF and PNG versions, then close the figure."""
     options = {"bbox_inches": "tight", "pad_inches": 0.03}
     fig.savefig(output / f"{stem}.pdf", **options)
     fig.savefig(output / f"{stem}.png", dpi=300, **options)
@@ -181,6 +183,7 @@ def save_figure(fig: plt.Figure, output: Path, stem: str) -> None:
 
 
 def plot_average_legend(rows: pd.DataFrame, output: Path) -> None:
+    """Save the model-color legend for the mean disease-performance panels."""
     inference_order = [key for key in MODEL_ORDER if key in set(rows["inference_key"])]
     handles = [
         Patch(
@@ -217,6 +220,7 @@ def plot_average_legend(rows: pd.DataFrame, output: Path) -> None:
 
 
 def plot_average_metric(rows: pd.DataFrame, metric: str, output: Path) -> None:
+    """Compare readouts using equally weighted disease means and variation across diseases."""
     sub = rows.loc[
         rows["metric"].eq(metric)
         & rows["inference_key"].isin([*BASELINES, *MODEL_ORDER])
@@ -325,6 +329,7 @@ def plot_average_metric(rows: pd.DataFrame, metric: str, output: Path) -> None:
 
 
 def loss_rows(rows: pd.DataFrame, metric: str) -> pd.DataFrame:
+    """Select the requested metric and ordered loss/readout combinations."""
     sub = rows.loc[
         rows["metric"].eq(metric)
         & rows["inference_key"].isin(LOSS_MODEL_ORDER)
@@ -347,6 +352,7 @@ def loss_rows(rows: pd.DataFrame, metric: str) -> pd.DataFrame:
 
 
 def add_loss_legend(ax: plt.Axes) -> None:
+    """Add loss-variant color markers to an existing axis."""
     handles = [
         Patch(
             facecolor=MODEL_COLORS[key],
@@ -374,6 +380,7 @@ def plot_loss_metric(
     *,
     include_legend: bool = False,
 ) -> None:
+    """Compare disease-averaged readout scores across the three ProtScape loss variants."""
     sub = loss_rows(rows, metric)
     bar_width = 0.25
     group_width = bar_width * len(LOSS_MODEL_ORDER)
@@ -452,6 +459,7 @@ def plot_loss_metric(
 
 
 def plot_loss_legend(output: Path) -> None:
+    """Save a standalone legend for loss-variant comparisons."""
     handles = [
         Patch(
             facecolor=MODEL_COLORS[key],
@@ -492,6 +500,7 @@ def scatter_models(
     y: np.ndarray,
     size: float,
 ) -> None:
+    """Place model scores on the shared per-disease comparison axis."""
     for index, key in enumerate(keys):
         ax.scatter(
             100.0 * comparison[key],
@@ -505,6 +514,7 @@ def scatter_models(
 
 
 def delta_color(delta: float, p_value: float) -> str:
+    """Color improvement labels by their direction and paired-test significance."""
     if delta < 0.0:
         return "#777777"
     if p_value < 0.05:
@@ -513,6 +523,7 @@ def delta_color(delta: float, p_value: float) -> str:
 
 
 def comparison_bounds(comparison: pd.DataFrame, keys: list[str]) -> tuple[float, float]:
+    """Choose a shared percentage axis covering all selected model scores."""
     values = 100.0 * comparison[keys].to_numpy().ravel()
     low = max(0.0, np.floor((values.min() - 4.0) / 5.0) * 5.0)
     high = min(100.0, np.ceil((values.max() + 4.0) / 5.0) * 5.0)
@@ -524,6 +535,7 @@ def comparison_bounds(comparison: pd.DataFrame, keys: list[str]) -> tuple[float,
 
 
 def add_comparison_deltas(ax: plt.Axes, comparison: pd.DataFrame, y: np.ndarray) -> None:
+    """Annotate ProtScape score differences against PINNACLE and ESM2."""
     for y_pos, row in zip(y, comparison.itertuples(index=False)):
         pinnacle_value = "" if pd.isna(row.stars_vs_pinnacle) else str(row.stars_vs_pinnacle)
         esm2_value = "" if pd.isna(row.stars_vs_esm2) else str(row.stars_vs_esm2)
@@ -568,15 +580,16 @@ def add_comparison_deltas(ax: plt.Axes, comparison: pd.DataFrame, y: np.ndarray)
 
 
 def plot_disease_comparisons(comparison: pd.DataFrame, output: Path) -> None:
+    """Plot disease-level AUPRC with model differences and significance annotations."""
     y = np.arange(len(comparison), dtype=float)[::-1]
-    original = ["lr_esm", "pinnacle_random_fixed", "s2gae_att_k1_fixed_do04_uni"]
+    core_models = ["lr_esm", "pinnacle_random_fixed", "s2gae_att_k1_fixed_do04_uni"]
     all_models = ["lr_esm", *MODEL_ORDER]
-    x_low, x_high = comparison_bounds(comparison, original)
+    x_low, x_high = comparison_bounds(comparison, core_models)
 
     fig, ax = plt.subplots(figsize=figure_size(DOUBLE_COLUMN_WIDTH_CM, MAX_FIGURE_HEIGHT_CM))
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
-    scatter_models(ax, comparison, original, y, 54)
+    scatter_models(ax, comparison, core_models, y, 54)
     add_comparison_deltas(ax, comparison, y)
     ax.set_xlim(x_low, x_high)
     ax.set_ylim(-0.8, len(comparison) + 0.7)
@@ -597,7 +610,7 @@ def plot_disease_comparisons(comparison: pd.DataFrame, output: Path) -> None:
             markersize=7.8 if key == "s2gae_att_k1_fixed_do04_uni" else 7.4,
             label=MODEL_LABELS[key],
         )
-        for key in original
+        for key in core_models
     ]
     ax.legend(
         handles=handles,
@@ -642,7 +655,7 @@ def plot_disease_comparisons(comparison: pd.DataFrame, output: Path) -> None:
     fig, ax = plt.subplots(figsize=figure_size(DOUBLE_COLUMN_WIDTH_CM, MAX_FIGURE_HEIGHT_CM))
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
-    scatter_models(ax, comparison, original, y, 88)
+    scatter_models(ax, comparison, core_models, y, 88)
     add_comparison_deltas(ax, comparison, y)
     ax.set_xlim(x_low, x_high)
     ax.set_ylim(-0.8, len(comparison) + 0.7)
@@ -674,6 +687,7 @@ def plot_disease_comparisons(comparison: pd.DataFrame, output: Path) -> None:
 
 
 def plot_performance(source: Path, output: Path) -> None:
+    """Draw mean-readout, loss-variant and per-disease performance comparisons."""
     output.mkdir(parents=True, exist_ok=True)
     with matplotlib.rc_context(PLOT_RC):
         mean = pd.read_csv(source / "mean_performance.csv")

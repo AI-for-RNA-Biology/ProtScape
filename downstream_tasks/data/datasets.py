@@ -1,5 +1,4 @@
-# datasets.py
-# Dataset classes for downstream tasks
+"""Represent proteins as bags of cell contexts for attention pooling."""
 
 from typing import Dict, List, Optional, Tuple
 import numpy as np
@@ -23,12 +22,6 @@ class ABMILDataset(Dataset):
         esm_vecs: Optional[np.ndarray],
         labels: np.ndarray,
     ):
-        """
-        Args:
-            ctx_bags: List of numpy arrays, each of shape (n_cells, ctx_dim)
-            esm_vecs: Optional array of shape (n_samples, esm_dim), can be None for context-only
-            labels: Array of shape (n_samples, n_classes)
-        """
         self.ctx_bags = [torch.as_tensor(bag, dtype=torch.float32) for bag in ctx_bags]
         self.esm_vecs = (
             torch.as_tensor(esm_vecs, dtype=torch.float32) if esm_vecs is not None else None
@@ -49,17 +42,7 @@ class ABMILDataset(Dataset):
 
 
 def collate_abmil(batch: List[Tuple[Dict, torch.Tensor]]) -> Tuple[Dict, torch.Tensor]:
-    """
-    Collate function for ABMIL batches.
-
-    Handles variable-size context bags by keeping them as a list.
-
-    Args:
-        batch: List of (x_dict, label) tuples
-
-    Returns:
-        Tuple of (collated_dict, labels_tensor)
-    """
+    """Concatenate context bags and record their protein indices and offsets."""
     items = [b[0] for b in batch]
     labels = torch.stack([b[1] for b in batch])
 
@@ -79,42 +62,3 @@ def collate_abmil(batch: List[Tuple[Dict, torch.Tensor]]) -> Tuple[Dict, torch.T
     out = {"ctx": ctx, "ctx_batch": ctx_batch, "ctx_ptr": ctx_ptr, "esm": esm}
 
     return out, labels
-
-
-class LinearDataset(Dataset):
-    """
-    Dataset for linear probe models.
-
-    Each sample consists of:
-    - Features: fixed-size feature vector (pooled embeddings)
-    - Labels: multi-label classification targets
-    """
-
-    def __init__(self, features: np.ndarray, labels: np.ndarray):
-        """
-        Args:
-            features: Array of shape (n_samples, feature_dim)
-            labels: Array of shape (n_samples, n_classes)
-        """
-        self.features = torch.from_numpy(features).float()
-        self.labels = torch.from_numpy(labels).float()
-
-    def __len__(self) -> int:
-        return len(self.labels)
-
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        return self.features[idx], self.labels[idx]
-
-
-def subset_bags(bags: List[np.ndarray], indices: np.ndarray) -> List[np.ndarray]:
-    """
-    Subset a list of bags by indices.
-
-    Args:
-        bags: List of numpy arrays
-        indices: Array of indices to select
-
-    Returns:
-        Subsetted list of bags
-    """
-    return [bags[i] for i in indices]

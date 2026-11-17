@@ -9,9 +9,8 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-from exploration.plotting.fonts import register_arial
+from exploration.plotting.fonts import FONT_NAME
 
-register_arial()
 matplotlib.rcParams["pdf.fonttype"] = 42
 matplotlib.rcParams["ps.fonttype"] = 42
 
@@ -65,16 +64,16 @@ STRING_CATEGORY_LABELS = {
 PLOT_RC = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
-    "font.family": "Arial",
-    "font.sans-serif": ["Arial"],
+    "font.family": FONT_NAME,
+    "font.sans-serif": [FONT_NAME],
     "font.size": 7.0,
     "mathtext.fontset": "custom",
-    "mathtext.rm": "Arial",
-    "mathtext.it": "Arial:italic",
-    "mathtext.bf": "Arial:bold",
-    "mathtext.cal": "Arial:italic",
-    "mathtext.sf": "Arial",
-    "mathtext.tt": "Arial",
+    "mathtext.rm": FONT_NAME,
+    "mathtext.it": f"{FONT_NAME}:italic",
+    "mathtext.bf": f"{FONT_NAME}:bold",
+    "mathtext.cal": f"{FONT_NAME}:italic",
+    "mathtext.sf": FONT_NAME,
+    "mathtext.tt": FONT_NAME,
     "text.color": "#111111",
     "axes.labelcolor": "#111111",
     "axes.edgecolor": "#111111",
@@ -108,10 +107,12 @@ PLOT_RC = {
 
 
 def figure_size(width_cm: float, height_cm: float) -> tuple[float, float]:
+    """Convert figure dimensions from centimeters to inches."""
     return width_cm * CM, height_cm * CM
 
 
 def clean_axes(ax: plt.Axes, grid_axis: str | None = None) -> None:
+    """Apply the shared axis lines and ticks, omitting the upper and right borders."""
     ax.grid(False)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -129,6 +130,7 @@ def clean_axes(ax: plt.Axes, grid_axis: str | None = None) -> None:
 
 
 def save_figure(fig: plt.Figure, output_dir: Path, stem: str) -> None:
+    """Save PDF and PNG versions, then close the figure."""
     output_dir.mkdir(parents=True, exist_ok=True)
     options = {"bbox_inches": "tight", "pad_inches": 0.03}
     fig.savefig(output_dir / f"{stem}.pdf", **options)
@@ -143,6 +145,7 @@ def lighten_color(color: str, white_fraction: float = 0.58) -> tuple[float, ...]
 
 
 def plot_candidate_recovery(source: Path, output: Path) -> None:
+    """Compare held-out target recovery as each ensemble's ranked list is screened."""
     curve = pd.read_csv(source / "parkinson_candidate_recovery_curve.csv")
     summary = pd.read_csv(source / "parkinson_candidate_recovery_summary.csv").set_index("model")
     colors = {"protscape": PROTSCAPE_COLOR, "pinnacle": PINNACLE_COLOR}
@@ -189,6 +192,7 @@ def plot_candidate_recovery(source: Path, output: Path) -> None:
 
 
 def plot_external_support(source: Path, output: Path) -> None:
+    """Compare candidate support from the configured Open Targets and DrugBank exports."""
     summary = pd.read_csv(source / "parkinson_candidate_external_support.csv")
     support_order = [
         "current_opentargets_parkinson_association_non_literature_only",
@@ -238,9 +242,8 @@ def plot_external_support(source: Path, output: Path) -> None:
     save_figure(fig, output, "parkinson_candidate_external_support")
 
 
-
-
 def plot_synaptic_completion(source: Path, output: Path) -> None:
+    """Show how far each model ranks to recover the selected synaptic gene families."""
     table = pd.read_csv(source / "parkinson_synaptic_group_completion.csv")
     complete = table[["protscape_completion_rank", "pinnacle_completion_rank"]].notna().all(axis=1)
     if not complete.all():
@@ -287,6 +290,7 @@ def plot_synaptic_completion(source: Path, output: Path) -> None:
 
 
 def network_graph(source: Path) -> tuple[nx.Graph, pd.DataFrame]:
+    """Read the STRING interactions and annotated Parkinson module membership."""
     edges = pd.read_csv(source / "parkinson_string_network_edges.csv")
     nodes = pd.read_csv(source / "parkinson_leiden_nodes.csv")
     graph = nx.from_pandas_edgelist(
@@ -294,11 +298,12 @@ def network_graph(source: Path) -> tuple[nx.Graph, pd.DataFrame]:
         edge_attr=["experimental_score", "combined_score"],
     )
     if set(graph) != set(nodes["protein"]):
-        raise ValueError("Released connected network nodes and edges disagree")
+        raise ValueError("Connected network nodes and edges disagree")
     return graph, nodes
 
 
 def annotate_network(ax: plt.Axes, graph: nx.Graph, position: dict[str, np.ndarray]) -> None:
+    """Place selected protein labels using the fixed network annotation offsets."""
     for node, (horizontal, vertical) in NETWORK_LABEL_OFFSETS.items():
         if node not in graph:
             continue
@@ -319,6 +324,7 @@ def annotate_network(ax: plt.Axes, graph: nx.Graph, position: dict[str, np.ndarr
 
 
 def plot_role_network(source: Path, output: Path, stem: str, known_color: str) -> None:
+    """Draw the candidate network colored by known-target or candidate membership."""
     graph, nodes = network_graph(source)
     position = nx.spring_layout(graph, seed=42, k=1.2 / graph.number_of_nodes() ** 0.5)
     fig, ax = plt.subplots(figsize=figure_size(18.0, 15.5))
@@ -341,10 +347,12 @@ def plot_role_network(source: Path, output: Path, stem: str, known_color: str) -
 
 
 def module_color(module_id: int):
+    """Use the chosen module palette, falling back to tab20 for additional modules."""
     return MODULE_COLORS.get(module_id, plt.get_cmap("tab20")((module_id - 1) % 20))
 
 
 def plot_leiden_network(source: Path, output: Path) -> None:
+    """Draw the same STRING network colored by Leiden module."""
     graph, nodes = network_graph(source)
     position = nx.spring_layout(graph, seed=42, k=1.2 / graph.number_of_nodes() ** 0.5)
     cluster = nodes.set_index("protein")["leiden_cluster"].astype(int).to_dict()
@@ -374,7 +382,7 @@ def plot_leiden_network(source: Path, output: Path) -> None:
 
 
 def plot_leiden_legend(source: Path, output: Path) -> None:
-    """Render the separate role/module legend emitted by the source script."""
+    """Save a separate legend for protein roles and network modules."""
     nodes = pd.read_csv(source / "parkinson_leiden_nodes.csv")
     module_labels = nodes.groupby("leiden_cluster")["leiden_cluster_label"].first()
     fig, ax = plt.subplots(figsize=figure_size(18.0, 10.0))
@@ -410,6 +418,7 @@ def plot_leiden_legend(source: Path, output: Path) -> None:
 
 
 def plot_string_enrichment(source: Path, output: Path) -> None:
+    """Display selected STRING terms and their candidate-set enrichment."""
     terms = pd.read_csv(source / "parkinson_string_selected_terms.csv")
     display = pd.read_csv(source / "parkinson_string_main_enrichment.csv")
     terms = terms.sort_values(["category_order", "term_order"]).reset_index(drop=True)
@@ -496,6 +505,7 @@ def plot_string_enrichment(source: Path, output: Path) -> None:
 
 
 def plot_reactome_modules(source: Path, output: Path) -> None:
+    """Save enriched Reactome pathways and known-target/candidate hit composition per module."""
     display = pd.read_csv(source / "parkinson_reactome_module_enrichment.csv")
     for module_id in sorted(display["leiden_cluster"].unique()):
         rows = display[display["leiden_cluster"].eq(module_id)].sort_values(
@@ -548,6 +558,7 @@ def plot_reactome_modules(source: Path, output: Path) -> None:
 
 
 def plot_reactome_hit_composition_legend(output: Path) -> None:
+    """Save the legend for known-target and candidate pathway hits."""
     color = "#555555"
     handles = [
         Patch(
@@ -578,6 +589,7 @@ def plot_reactome_hit_composition_legend(output: Path) -> None:
 
 
 def plot_all(source: Path, output: Path) -> None:
+    """Draw the Parkinson recovery, support, network and pathway-enrichment panels."""
     source = Path(source)
     output = Path(output)
     with matplotlib.rc_context(PLOT_RC):

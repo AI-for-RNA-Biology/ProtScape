@@ -48,6 +48,7 @@ DRIVER_SPECS = [
 
 
 def dataset_tables() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Count complex sizes and memberships per protein in the filtered CORUM dataset."""
     complexes = pd.read_csv(CORUM_COMPLEXES, dtype={"complex_id": str})
     memberships = pd.read_csv(CORUM_MEMBERSHIPS, dtype={"complex_id": str})
     valid_ids = set(complexes["complex_id"])
@@ -93,10 +94,12 @@ def dataset_tables() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 
 
 def sorted_edge(a: str, b: str) -> tuple[str, str]:
+    """Represent an undirected interaction with the alphabetically first gene first."""
     return (a, b) if a <= b else (b, a)
 
 
 def read_ppi(path: Path) -> tuple[set[str], set[tuple[str, str]]]:
+    """Read uppercase protein names and unique undirected interactions, omitting self-loops."""
     nodes: set[str] = set()
     edges: set[tuple[str, str]] = set()
     with path.open() as handle:
@@ -112,6 +115,7 @@ def read_ppi(path: Path) -> tuple[set[str], set[tuple[str, str]]]:
 
 
 def complex_members() -> tuple[pd.DataFrame, dict[str, set[str]]]:
+    """Read each complex and its set of HGNC member names."""
     complexes = pd.read_csv(CORUM_COMPLEXES, dtype={"complex_id": str})
     members = {
         row.complex_id: {
@@ -125,6 +129,7 @@ def complex_members() -> tuple[pd.DataFrame, dict[str, set[str]]]:
 
 
 def build_topology_and_cell_coverage() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Measure induced PPI density and mean member/edge coverage across cell networks."""
     complexes, members_by_complex = complex_members()
     _, global_edges = read_ppi(GLOBAL_PPI)
     pairs = {
@@ -187,6 +192,7 @@ def equal_count_bins(
     value_column: str,
     n_bins: int = 10,
 ) -> tuple[pd.DataFrame, list[str]]:
+    """Split sorted complexes into equal-count bins, resolving value ties by complex ID."""
     rows = rows.replace([np.inf, -np.inf], np.nan).dropna(subset=[value_column]).copy()
     rows = rows.sort_values([value_column, "complex_id"], kind="mergesort")
     labels = [f"bin_{index}" for index in range(n_bins)]
@@ -202,6 +208,7 @@ def equal_count_bins(
 def driver_tables(
     per_complex: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Relate per-complex AUPRC to topology and coverage using bins and Spearman correlations."""
     evaluable = set(
         per_complex.loc[
             per_complex["inference_key"].eq("s2gae_bce_uni")

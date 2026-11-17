@@ -8,9 +8,8 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-from exploration.plotting.fonts import register_arial
+from exploration.plotting.fonts import FONT_NAME
 
-register_arial()
 matplotlib.rcParams["pdf.fonttype"] = 42
 matplotlib.rcParams["ps.fonttype"] = 42
 
@@ -43,8 +42,8 @@ CLASS_LABELS = [
 SENSITIVITY_RC = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
-    "font.family": "Arial",
-    "font.sans-serif": ["Arial"],
+    "font.family": FONT_NAME,
+    "font.sans-serif": [FONT_NAME],
     "font.size": 7,
     "axes.titlesize": 8,
     "axes.labelsize": 8,
@@ -82,11 +81,8 @@ AXIS_LABEL_FONT_SIZE = SENSITIVITY_RC["axes.labelsize"]
 TICK_FONT_SIZE = SENSITIVITY_RC["xtick.labelsize"]
 
 
-def read_table(source: Path, filename: str) -> pd.DataFrame:
-    return pd.read_csv(source / filename)
-
-
 def save_sensitivity_figure(fig: plt.Figure, output: Path, stem: str) -> None:
+    """Save PDF and PNG versions, then close the figure."""
     fig.savefig(output / f"{stem}.pdf", bbox_inches="tight", pad_inches=0.03)
     fig.savefig(
         output / f"{stem}.png",
@@ -98,6 +94,7 @@ def save_sensitivity_figure(fig: plt.Figure, output: Path, stem: str) -> None:
 
 
 def short_count(value: float) -> str:
+    """Format large pair counts with compact k, M or B suffixes."""
     if value >= 1_000_000_000:
         return f"{value / 1_000_000_000:.1f}B"
     if value >= 1_000_000:
@@ -110,6 +107,7 @@ def short_count(value: float) -> str:
 
 
 def heatmap_text_color(value: float, norm: LogNorm) -> str:
+    """Choose dark or white annotations from the heatmap cell luminance."""
     red, green, blue, _ = plt.get_cmap(HEATMAP_CMAP)(norm(value))
     luminance = 0.299 * red + 0.587 * green + 0.114 * blue
     return "#111111" if luminance > 0.55 else "white"
@@ -125,6 +123,7 @@ def plot_split_count_heatmap(
     reverse_x: bool,
     set_ax_labels: bool = False,
 ) -> None:
+    """Plot context-specific consensus classes against each pair's modal class."""
     matrix = (
         table.set_index("context_independent_consensus_class")
         .reindex(index=CLASS_NAMES, columns=CLASS_NAMES)
@@ -184,6 +183,7 @@ def plot_split_count_heatmap(
 
 
 def style_sensitivity_axis(ax: plt.Axes) -> None:
+    """Apply the shared axis lines and ticks to the stability panels."""
     ax.grid(False)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -199,6 +199,7 @@ def style_sensitivity_axis(ax: plt.Axes) -> None:
 
 
 def stability_count_label(value: float) -> str:
+    """Format the effective pair count displayed above each stability bar."""
     if value >= 1_000_000:
         return f"{value / 1_000_000:.2f}M"
     if value >= 1_000:
@@ -207,6 +208,7 @@ def stability_count_label(value: float) -> str:
 
 
 def draw_stability_panel(ax: plt.Axes, table: pd.DataFrame, label: str) -> None:
+    """Show stable and unstable fractions for each modal consensus class."""
     class_names = CLASS_NAMES if label == "Labelled positive" else list(reversed(CLASS_NAMES))
     class_labels = CLASS_LABELS if label == "Labelled positive" else list(reversed(CLASS_LABELS))
     panel = table[table["label"] == label].set_index("modal_class").reindex(class_names)
@@ -235,6 +237,7 @@ def draw_stability_panel(ax: plt.Axes, table: pd.DataFrame, label: str) -> None:
 
 
 def plot_stability_outputs(table: pd.DataFrame, output: Path) -> None:
+    """Save paired stability panels for labelled edges and non-edges."""
     fig, axes = plt.subplots(1, 2, figsize=(18.0 * CM, 8.3 * CM), sharey=True)
     draw_stability_panel(axes[0], table, "Labelled positive")
     draw_stability_panel(axes[1], table, "Labelled negative")
@@ -257,9 +260,9 @@ def plot_consensus(source: str | Path, output: str | Path) -> None:
     """Render the consensus heatmap and stability plots."""
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
-    positive = read_table(source, "labelled_positive_class_counts.csv")
-    negative = read_table(source, "labelled_negative_class_counts.csv")
-    stability = read_table(source, "edge_stability.csv")
+    positive = pd.read_csv(source / "labelled_positive_class_counts.csv")
+    negative = pd.read_csv(source / "labelled_negative_class_counts.csv")
+    stability = pd.read_csv(source / "edge_stability.csv")
 
     with plt.rc_context(SENSITIVITY_RC):
         plot_split_count_heatmap(

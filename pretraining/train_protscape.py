@@ -1,7 +1,6 @@
 import os
 import shutil
 import csv
-import random
 import argparse
 import torch
 import wandb
@@ -9,41 +8,21 @@ import numpy as np
 
 from .data_handler.generate_input import read_data
 from .models.hierarchical_model import hierarchical_model
-from .checkpoints import save_portable_checkpoint
+from .checkpoints import restore_rng_state, save_portable_checkpoint
 
 from . import utils
 from .train import train_hierarchical_model_factored
 from .train import factored_batching as batch_utils
 
 from omegaconf import DictConfig
-import pickle 
+import pickle
 from itertools import product
 import yaml
 from pathlib import Path
 
 
-def _restore_rng_state(rng_state):
-    if not rng_state:
-        return
-
-    python_state = rng_state.get("python")
-    if python_state is not None:
-        random.setstate(python_state)
-
-    numpy_state = rng_state.get("numpy")
-    if numpy_state is not None:
-        np.random.set_state(numpy_state)
-
-    torch_state = rng_state.get("torch")
-    if torch_state is not None:
-        torch.set_rng_state(torch_state)
-
-    torch_cuda_state = rng_state.get("torch_cuda")
-    if torch_cuda_state is not None and torch.cuda.is_available():
-        torch.cuda.set_rng_state_all(torch_cuda_state)
-
-
-def _load_best_metric_value(metric, metric_cfg):
+def load_best_metric(metric, metric_cfg):
+    """Read the saved validation score so resumed training keeps its best model."""
     metrics_score = None
     metrics_path = metric_cfg["val_metrics_path"]
     if os.path.exists(metrics_path):
@@ -71,37 +50,19 @@ def _load_best_metric_value(metric, metric_cfg):
     return metrics_score
 
 
-def _restore_best_trackers(dict_save_models):
-    for metric, metric_cfg in dict_save_models.items():
-        restored_value = _load_best_metric_value(metric, metric_cfg)
-        if restored_value is not None:
-            metric_cfg["value"] = restored_value
-            print(f"Restored best {metric} tracker to {restored_value:.6f}")
-
-
-def _normalize_features_mode(raw_value):
-    feature_mode_aliases = {
-        'random': 'random',
-        'esm2': 'ESM2',
-        'prostt5': 'ProstT5',
-        'prosst5': 'ProstT5',
-    }
-    normalized = feature_mode_aliases.get(str(raw_value).strip().lower())
-    if normalized is None:
-        raise ValueError(f"Unsupported features_mode: {raw_value}")
-    return normalized
-
-
-def _get_ppi_feat_dir(paths, features_mode):
+def get_feature_path(paths, features_mode, esm2_pooling="bos"):
+    """Select the configured ESM-2 or ProstT5 table; random features need no file."""
     if features_mode == "ESM2":
-        return str(Path(paths["esm2_embeddings"]).expanduser())
+        key = "esm2_embeddings" if esm2_pooling == "bos" else "esm2_mean_embeddings"
+        return str(Path(paths[key]).expanduser())
     elif features_mode == "ProstT5":
         return str(Path(paths["prostt5_embeddings"]).expanduser())
     else:
         return None
 
 
-def _str2bool(raw):
+def parse_boolean(raw):
+    """Parse explicit true/false values for command-line training options."""
     if isinstance(raw, bool):
         return raw
     value = str(raw).strip().lower()
@@ -112,55 +73,53 @@ def _str2bool(raw):
     raise argparse.ArgumentTypeError(f"Invalid boolean value: {raw}")
 
 
-def _parse_csv(raw_value, cast):
-    return [cast(x) for x in str(raw_value).split(",")]
+def parse_args():
+    """Read model, training and output options for a ProtScape run."""
+    parser = argparse.ArgumentParser(description="Train ProtScape on cell-specific PPI and cell-cell graphs.")
 
-
-def _parse_cli_args():
-    parser = argparse.ArgumentParser(description="Run factored hierarchical PINNACLE pretraining.")
-
-    # positional model-hyperparameters
-    parser.add_argument("gnn_method", type=str, choices=["GATv2", "GIN", "ACM_RandomWalk"])
-    parser.add_argument("jumping_knowledge", type=str, help="Comma-separated JK values, e.g. concat or concat_full")
-    parser.add_argument("hidden_dim", type=str, help="Comma-separated hidden dims, e.g. 512")
-    parser.add_argument("gnn_dropout", type=str, help="Comma-separated dropouts, e.g. 0.2")
-    parser.add_argument("gnn_n_layers", type=str, help="Comma-separated layer counts, e.g. 3")
-    parser.add_argument("reg_CTassignment", type=str, help="Comma-separated CTassignment regs, e.g. 1")
-    parser.add_argument("cell_pooling", type=str, choices=["attention", "mean", "vn", "learnedvn"])
-    parser.add_argument("features_mode", type=str, help="random|ESM2|ProstT5")
-    parser.add_argument("add_virtual_node", type=int, choices=[0, 1])
-    parser.add_argument("s2gae_enabled", nargs="?", type=int, default=0, choices=[0, 1])
-    parser.add_argument("s2gae_decode_channels", nargs="?", type=int, default=512)
-    parser.add_argument("s2gae_decoder_layers", nargs="?", type=int, default=2)
-    parser.add_argument("graph_saint_norm", nargs="?", type=int, default=0, choices=[0, 1])
+    # Model hyperparameters
+    parser.add_argument("--gnn-method", choices=["GATv2", "GIN", "ACM_RandomWalk"], default="ACM_RandomWalk")
+    parser.add_argument("--jumping-knowledge", default="concat", help="Comma-separated JK values, e.g. concat or concat_full")
+    parser.add_argument("--hidden-dim", default="512", help="Comma-separated hidden dims, e.g. 512")
+    parser.add_argument("--gnn-dropout", default="0.4", help="Comma-separated dropouts, e.g. 0.2")
+    parser.add_argument("--gnn-n-layers", default="3", help="Comma-separated layer counts, e.g. 3")
+    parser.add_argument("--reg-CTassignment", default="1", help="Comma-separated CTassignment regs, e.g. 1")
+    parser.add_argument("--cell-pooling", choices=["attention", "mean", "vn", "learnedvn"], default="attention")
+    parser.add_argument("--features-mode", choices=["random", "ESM2", "ProstT5"], default="ESM2")
+    parser.add_argument("--esm2-pooling", choices=["bos", "mean"], default="bos")
+    parser.add_argument("--add-virtual-node", type=int, choices=[0, 1], default=0)
+    parser.add_argument("--s2gae-enabled", type=int, default=1, choices=[0, 1])
+    parser.add_argument("--s2gae-decode-channels", type=int, default=512)
+    parser.add_argument("--s2gae-decoder-layers", type=int, default=2)
+    parser.add_argument("--graph-saint-norm", type=int, default=0, choices=[0, 1])
 
     # runtime/training controls
     parser.add_argument("--dataset-mode", type=str, default="bulk", choices=["bulk", "legacy"])
     parser.add_argument("--epochs", type=int, default=500)
-    parser.add_argument("--checkpointing", type=_str2bool, default=False)
-    parser.add_argument("--eval-only", type=_str2bool, default=False)
+    parser.add_argument("--checkpointing", type=parse_boolean, default=False)
+    parser.add_argument("--eval-only", type=parse_boolean, default=False)
     parser.add_argument("--eval-save-prefix", type=str, default=None)
     parser.add_argument("--eval-output-prefix", type=str, default=None)
     parser.add_argument("--k-negatives", type=int, default=1)
-    parser.add_argument("--use-metagraph", type=_str2bool, default=True)
+    parser.add_argument("--use-metagraph", type=parse_boolean, default=True)
     parser.add_argument("--loader", type=str, default="graphsaint")
     parser.add_argument("--split-mode", type=str, default="global", choices=["context", "global"])
     parser.add_argument("--lr", type=float, default=0.01)
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--weighted-ppi-loss", type=_str2bool, default=False)
+    parser.add_argument("--weighted-ppi-loss", type=parse_boolean, default=False)
     parser.add_argument("--ppi-loss", type=str, default="bce", choices=["bce", "l1", "phuber"])
     parser.add_argument("--ppi-phuber-tau", type=float, default=10.0)
 
     # S2GAE controls
     parser.add_argument("--s2gae-mask-ratio", type=float, default=0.5)
-    parser.add_argument("--s2gae-mask-type", type=str, default="dm", choices=["um", "dm"])
+    parser.add_argument("--s2gae-mask-type", type=str, default="um", choices=["um", "dm"])
     parser.add_argument("--s2gae-decoder-type", type=str, default="cross_layer", choices=["cross_layer", "simple"])
     parser.add_argument("--s2gae-decoder-dropout", type=float, default=0.0)
     parser.add_argument("--s2gae-loss-weight", type=float, default=1.0)
     parser.add_argument("--metagraph-loss-weight", type=float, default=1.0)
 
     # uniformity loss controls
-    parser.add_argument("--uniformity-enabled", type=_str2bool, default=False)
+    parser.add_argument("--uniformity-enabled", type=parse_boolean, default=False)
     parser.add_argument("--uniformity-lambda-reg", type=float, default=0.0005)
     parser.add_argument("--uniformity-t", type=float, default=2.0)
     parser.add_argument("--uniformity-dim", type=int, default=128)
@@ -174,7 +133,7 @@ def _parse_cli_args():
 
 # Configuration
 
-cli_args = _parse_cli_args()
+cli_args = parse_args()
 
 # Fixed cell-memory setting.
 cell_memory = 'average'
@@ -185,15 +144,15 @@ k_negatives_str = '' if k_negatives == 1 else f'_kneg{str(k_negatives)}'
 
 # Model hyperparameters
 gnn_method = str(cli_args.gnn_method)
-list_jumping_knowledge = _parse_csv(cli_args.jumping_knowledge, str)
+list_jumping_knowledge = cli_args.jumping_knowledge.split(',')
 assert all(x in ['concat', 'concat_full', 'max', 'lstm', 'sum', 'none'] for x in list_jumping_knowledge)
 
-list_hidden_dim = _parse_csv(cli_args.hidden_dim, int)
-list_gnn_dropout = _parse_csv(cli_args.gnn_dropout, float)
-list_gnn_n_layers = _parse_csv(cli_args.gnn_n_layers, int)
-list_reg_CTassignment = [float(x) if float(x)!=1. else int(x) for x in _parse_csv(cli_args.reg_CTassignment, float)]
+list_hidden_dim = [int(x) for x in cli_args.hidden_dim.split(',')]
+list_gnn_dropout = [float(x) for x in cli_args.gnn_dropout.split(',')]
+list_gnn_n_layers = [int(x) for x in cli_args.gnn_n_layers.split(',')]
+list_reg_CTassignment = [1 if float(x) == 1 else float(x) for x in cli_args.reg_CTassignment.split(',')]
 cell_pooling = str(cli_args.cell_pooling)
-features_mode = _normalize_features_mode(cli_args.features_mode)
+features_mode = cli_args.features_mode
 add_virtual_node = bool(int(cli_args.add_virtual_node))
 print('--add_virtual_node:', add_virtual_node)
 
@@ -206,7 +165,7 @@ if add_virtual_node:
 input_dim = None
 ppi_feat_dir = None
 
-# S2GAE positional controls
+# Masked graph reconstruction
 S2GAE_ENABLED = bool(int(cli_args.s2gae_enabled))
 print('-- S2GAE enabled:', S2GAE_ENABLED)
 s2gae_decode_channels = int(cli_args.s2gae_decode_channels)
@@ -226,13 +185,7 @@ if ppi_loss == "phuber" and ppi_phuber_tau <= 1.0:
 # S2GAE and loss hyperparameters
 s2gae_mask_ratio = float(cli_args.s2gae_mask_ratio)
 s2gae_mask_type = str(cli_args.s2gae_mask_type)
-if s2gae_mask_type not in {"um", "dm"}:
-    raise ValueError(f"Invalid s2gae_mask_type={s2gae_mask_type!r}; expected 'um' or 'dm'.")
 s2gae_decoder_type = str(cli_args.s2gae_decoder_type)
-if s2gae_decoder_type not in {"cross_layer", "simple"}:
-    raise ValueError(
-        f"Invalid s2gae_decoder_type={s2gae_decoder_type!r}; expected 'cross_layer' or 'simple'."
-    )
 s2gae_decoder_dropout = float(cli_args.s2gae_decoder_dropout)
 s2gae_loss_weight = float(cli_args.s2gae_loss_weight)
 metagraph_loss_weight = float(cli_args.metagraph_loss_weight)
@@ -249,10 +202,10 @@ if uniformity_enabled and uniformity_dim < 0:
     raise ValueError("--uniformity-dim must be >= 0.")
 s2gae_str = (
     f"s2gae_{s2gae_mask_type}"
-    f"_mr{utils._fmt_float(s2gae_mask_ratio)}"
+    f"_mr{utils.format_float(s2gae_mask_ratio)}"
     f"_dc{s2gae_decode_channels}"
     f"_dl{s2gae_decoder_layers}"
-    f"_do{utils._fmt_float(s2gae_decoder_dropout)}"
+    f"_do{utils.format_float(s2gae_decoder_dropout)}"
 ) if S2GAE_ENABLED else ''
 
 print('gnn_method: %s / list_jumping_knowledge %s / list_hidden_dim %s / list_gnn_dropout %s / list_gnn_n_layers %s / list_reg_CTassignment %s / cell pooling : %s '%(
@@ -264,7 +217,6 @@ utils.set_seed(seed)
 
 # Dataset mode (controls data-specific tweaks, e.g. bulk CL IDs vs legacy naming)
 dataset_mode = str(cli_args.dataset_mode).lower()
-assert dataset_mode in ["bulk", "legacy"]
 
 print("Dataset mode:", dataset_mode)
 # Use CCI metagraph or PPI only
@@ -280,7 +232,6 @@ epochs = int(cli_args.epochs)
 checkpointing = bool(cli_args.checkpointing)
 loader = str(cli_args.loader)
 split_mode = str(cli_args.split_mode)
-assert split_mode in ['context', 'global']
 # context: corresponds to initial pinnacle split with allowing edge leakage across contexts
 # global: defines splits over the global ppi, stratified by edge frequencies across contexts, preventing edge leakage across contexts.
 
@@ -294,12 +245,12 @@ weighted_ppi_loss_str = '_weightedppiloss' if weighted_ppi_loss else ''
 if ppi_loss == 'bce':
     ppi_loss_str = ''
 elif ppi_loss == 'phuber':
-    ppi_loss_str = f'_phubertau{utils._fmt_float(ppi_phuber_tau)}'
+    ppi_loss_str = f'_phubertau{utils.format_float(ppi_phuber_tau)}'
 else:
     ppi_loss_str = f'_{ppi_loss}'
 if graph_saint_norm:
     assert not weighted_ppi_loss
-    
+
 optim_str = lr_str + batch_size_str + epochs_str + loader_str + weighted_ppi_loss_str + graph_saint_norm_str + cell_memory_str + k_negatives_str + ppi_loss_str
 
 split_mode_str = '' if split_mode == 'context' else f'{split_mode}split_'
@@ -328,18 +279,16 @@ else:
     count_edge_path = None
 
 if features_mode in ["ESM2", "ProstT5"]:
-    ppi_feat_dir = _get_ppi_feat_dir(project_paths, features_mode)
+    ppi_feat_dir = get_feature_path(project_paths, features_mode, cli_args.esm2_pooling)
 
 hierarchical_mode = 'CTassignment'
-assert hierarchical_mode in ['CTassignment']
-# will see later if we need a more informative metagraph knowledge
 
 if features_mode == "random":
-    input_dim = 1024 # default values in pinnacle for testing
+    input_dim = 1024
 
 
 if cell_pooling == 'attention':
-    cell_att_embedding_dim = 128 #256
+    cell_att_embedding_dim = 128
     cell_str = f'_{cell_pooling}{cell_att_embedding_dim}'
 elif cell_pooling == 'mean':
     cell_att_embedding_dim = None
@@ -347,14 +296,14 @@ elif cell_pooling == 'mean':
 elif cell_pooling in ['vn', 'learnedvn']:
     cell_att_embedding_dim = None
     cell_str = f'_{cell_pooling}'
-    
+
 device = (
     "cuda" if cli_args.device == "auto" and torch.cuda.is_available()
     else "cpu" if cli_args.device == "auto"
     else cli_args.device
 )
 plot = False
-symmetric_ppi = True #False only for original Pinnacle
+symmetric_ppi = True
 n_jobs = None # number of cpus used for parallel dataloading
 # Setup
 
@@ -366,7 +315,8 @@ dict_cfg = { # mostly default settings for general learning
     'batch_size': batch_size,  # Batch size for training
     'lr': lr,  # Learning rate for the optimizer
     'use_scheduler': use_scheduler,  # Whether to use a learning rate scheduler
-    'features_mode': features_mode,  # Mode for generating features (random, ESM2 or ProstT5)
+    'features_mode': features_mode,
+    'esm2_pooling': cli_args.esm2_pooling,
     'hierarchical_mode': hierarchical_mode, # Mode to handle the metagraph
     'reg_centerloss' : 0., # regularization coefficient for the center loss (default is 0.)
     'reg_CTassignment' : None, # regularization coefficient for the CT multi-label assingments
@@ -441,10 +391,11 @@ def main(
     evaluation_mode='global',
     checkpointing=False,
     ):
+    """Initialize or resume ProtScape, select its best checkpoint and evaluate held-out edges."""
     assert evaluation_mode in ['global', 'local']
-    
+
     print('--- start main / device:', device)
-    # saving folders 
+    # saving folders
     save_latest_model = cfg.save_prefix + "/latest_model_save.pth"
     metrics_save_prefix = str(getattr(cfg, "eval_output_prefix", None) or cfg.save_prefix)
     os.makedirs(metrics_save_prefix, exist_ok=True)
@@ -467,12 +418,16 @@ def main(
                 dict_save_models[metric][f'{set_}_metrics_path'] = metrics_save_prefix + f"/df_best{metric}_global_{set_}_metrics.csv"
 
     if checkpointing:
-        _restore_best_trackers(dict_save_models)
+        for metric, metric_cfg in dict_save_models.items():
+            restored_value = load_best_metric(metric, metric_cfg)
+            if restored_value is not None:
+                metric_cfg["value"] = restored_value
+                print(f"Restored best {metric} tracker to {restored_value:.6f}")
 
     ppi_metapaths_train = None
     best_model = None
 
-    
+
     if run_train or run_test:
         if cfg.hierarchical_mode == 'CTassignment':
             s2gae_config = getattr(cfg, 's2gae_config', None)
@@ -502,15 +457,14 @@ def main(
                 if cci_edge_index is not None:
                     model.set_cci_graph(cci_edge_index.to(device), mg_data.num_nodes)
         else:
-            raise f'not implemented hierarchical mode : {cfg.hierarchical_mode}'    
-        
+            raise NotImplementedError(f'Unsupported hierarchical mode: {cfg.hierarchical_mode}')
+
     # values instantiated before updates at train or test time
-    # ppi_metapaths_train, mg_metapaths_train, ppi_metapaths_val, mg_metapaths_val = None, None, None, None
-    
+
     if run_train:
         params = list(model.parameters())
         optimizer = torch.optim.Adam(params, lr = cfg.lr, weight_decay = 0.)
-        
+
         assert cfg.reg_centerloss == 0.
         center_loss_labels, train_mask, val_mask, test_mask = None, None, None, None
 
@@ -523,7 +477,7 @@ def main(
             ckpt = torch.load(save_latest_model, map_location="cpu", weights_only=False)
             model.load_state_dict(ckpt['model'].state_dict())
             optimizer.load_state_dict(ckpt['optimizer'].state_dict())
-            _restore_rng_state(ckpt.get('rng_state'))
+            restore_rng_state(ckpt.get('rng_state'))
             start_epoch = ckpt['epoch'] + 1
             print(f"Resuming training from epoch {start_epoch}/{cfg.epochs}")
 
@@ -561,7 +515,7 @@ def main(
         cell_ids = list(ppi_data)
         portable_config_keys = (
             "epochs", "loader", "graph_saint_norm", "batch_size", "lr",
-            "use_scheduler", "features_mode", "hierarchical_mode",
+            "use_scheduler", "features_mode", "esm2_pooling", "hierarchical_mode",
             "reg_centerloss", "reg_CTassignment", "use_metagraph",
             "dataset_mode", "split_mode", "metagraph_loss_weight",
             "weighted_ppi_loss", "ppi_loss", "ppi_phuber_tau",
@@ -581,9 +535,9 @@ def main(
         )
 
     if run_test:
-            
+
         # Load best model for different metric checkpoints
-        
+
         for metric in dict_save_models.keys():
             save_best_model = dict_save_models[metric]['model_path']
             if not os.path.exists(save_best_model):
@@ -614,11 +568,10 @@ def main(
                 device=device,
                 n_jobs=n_jobs,
                 split='test')
-            
-        
-        
+
+
 if __name__ == "__main__":
-    
+
     # setup data
     ppi_data, mg_data, edge_attr_dict, celltype_map, tissue_neighbors, ppi_layers, metagraph, CT_map = read_data(
         global_ppi_edges,
@@ -655,11 +608,11 @@ if __name__ == "__main__":
             split_ratios=(0.8, 0.1, 0.1),
             seed=seed,
         )
-    
+
     tissue_config = {
         'n_tissues': CT_map[0]['onehot'].shape[0]
     }
-    
+
     tested_hyperparameters = {
         'gnn_method':[gnn_method],
         'jumping_knowledge': list_jumping_knowledge,
@@ -668,13 +621,13 @@ if __name__ == "__main__":
         'gnn_n_layers': list_gnn_n_layers,
         'reg_CTassignment': list_reg_CTassignment
     }
-    
+
     # iterate over all hyperparameters
     for gnn_method, jumping_knowledge, hidden_dim, gnn_dropout, gnn_n_layers, reg_CTassignment in product(
         *(tested_hyperparameters[key] for key in tested_hyperparameters.keys())):
-        
+
         print(gnn_method, jumping_knowledge, hidden_dim, gnn_dropout, gnn_n_layers, reg_CTassignment)
-        
+
         utils.set_seed(seed)
 
         protein_config['gnn_method'] = gnn_method
@@ -682,28 +635,29 @@ if __name__ == "__main__":
         protein_config['gnn_dropout'] = gnn_dropout
         protein_config['n_layers'] = gnn_n_layers
         protein_config['jumping_knowledge'] = jumping_knowledge
-        
+
         dict_cfg['reg_CTassignment'] = reg_CTassignment
-        
+
         gnn_dropout_str = '' if gnn_dropout == 0 else '_dropout%s'%(str(gnn_dropout).replace('.', ''))
         reg_CTassignment_str = '_regCTassignment%s'%(str(reg_CTassignment).replace('.', ''))
         symmetric_ppi_str = 'symmetricPPI' if symmetric_ppi else ''
         mg_str = 'MG' if use_metagraph else 'noMG'
         mg_weight_str = ''
         if use_metagraph and metagraph_loss_weight != 1.0:
-            mg_weight_str = f'_mgw{utils._fmt_float(metagraph_loss_weight)}'
+            mg_weight_str = f'_mgw{utils.format_float(metagraph_loss_weight)}'
         uni_str = ''
         if uniformity_enabled and uniformity_lambda_reg > 0.0:
             uni_str = (
-                f'_unil{utils._fmt_float(uniformity_lambda_reg)}'
-                f'_unit{utils._fmt_float(uniformity_t)}'
+                f'_unil{utils.format_float(uniformity_lambda_reg)}'
+                f'_unit{utils.format_float(uniformity_t)}'
                 f'_unid{uniformity_dim}'
             )
-        
+
         add_virtual_node_str = '_addVN' if add_virtual_node else ''
         gnn_str = f'{gnn_method}{jumping_knowledge}{add_virtual_node_str}_H{hidden_dim}L{gnn_n_layers}{gnn_dropout_str}{reg_CTassignment_str}{mg_weight_str}{uni_str}'
         s2gae_name_str = f'_{s2gae_str}' if s2gae_str else ''
-        experiment_name = f'/HC{hierarchical_mode}{split_mode_str}{features_mode}{symmetric_ppi_str}{cell_str}{s2gae_name_str}_{mg_str}_{dataset_mode}'
+        feature_name = features_mode + ('_mean' if features_mode == 'ESM2' and cli_args.esm2_pooling == 'mean' else '')
+        experiment_name = f'/HC{hierarchical_mode}{split_mode_str}{feature_name}{symmetric_ppi_str}{cell_str}{s2gae_name_str}_{mg_str}_{dataset_mode}'
         if optim_str == '':
             experiment_name += f'_{gnn_str}'
         else:
@@ -714,7 +668,7 @@ if __name__ == "__main__":
         eval_output_prefix = str(cli_args.eval_output_prefix) if cli_args.eval_output_prefix is not None else None
         config_file = save_prefix + '/config_dict_seed%s.pkl'%seed
         print('experiment_name:', experiment_name)
-        
+
         run_train = True
         run_test = True
         if bool(cli_args.eval_only):
@@ -742,7 +696,7 @@ if __name__ == "__main__":
                     f"Experiment already exists: {save_prefix}. Use --checkpointing, "
                     "--eval-only, or --overwrite."
                 )
-            
+
         print('save_prefix:', save_prefix)
         os.makedirs(save_prefix, exist_ok=True)
         if eval_output_prefix is not None:
@@ -752,20 +706,20 @@ if __name__ == "__main__":
         dict_cfg['protein_config'] = protein_config.copy()
         dict_cfg['cell_config'] = cell_config.copy()
         dict_cfg['tissue_config'] = tissue_config.copy()
-        dict_cfg['save_prefix'] = save_prefix 
+        dict_cfg['save_prefix'] = save_prefix
         dict_cfg['eval_output_prefix'] = eval_output_prefix
         dict_cfg['seed'] = seed
-        
+
         cfg = DictConfig(dict_cfg)
-        
+
         # save config
         if not bool(cli_args.eval_only):
             with open(config_file, 'wb') as f:
                 pickle.dump(dict_cfg, f)
-        
+
         # setup wandb tracker
         utils.setup_wandb(cfg, experiment_name)
-            
+
         main(
             cfg,
             ppi_data,

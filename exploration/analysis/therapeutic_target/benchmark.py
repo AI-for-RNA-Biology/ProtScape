@@ -65,6 +65,7 @@ def write_performance_tables(performance: pd.DataFrame, output: Path) -> pd.Data
 
 
 def dataset_statistics() -> pd.DataFrame:
+    """Count labels and the embedding-aligned cohort for each disease."""
     rows = []
     for task, disease_id, disease in TASKS:
         path = THERAPEUTIC_TARGET_DATASET_DIR / f"therapeutic_target_{disease_id}.csv"
@@ -80,8 +81,8 @@ def dataset_statistics() -> pd.DataFrame:
                 "disease_id": disease_id,
                 "disease": disease,
                 "positive_label_source": (
-                    "Open Targets 24.03 phase >=3 or completed phase 2 "
-                    "evidence over root and descendants"
+                    "Open Targets phase >=3 or completed phase 2; "
+                    "disease and descendants"
                 ),
                 "negative_label_source": (
                     "October 2022 approved-human DrugBank targets without a "
@@ -101,6 +102,7 @@ def dataset_statistics() -> pd.DataFrame:
 
 
 def mean_performance(performance: pd.DataFrame) -> pd.DataFrame:
+    """Average folds within each disease before averaging across diseases."""
     identifiers = [
         "task",
         "readout_key",
@@ -135,6 +137,7 @@ def mean_performance(performance: pd.DataFrame) -> pd.DataFrame:
 
 
 def significance(p_value: float) -> str:
+    """Convert a p-value into the significance marks used in the comparison plot."""
     if p_value < 1e-3:
         return "***"
     if p_value < 1e-2:
@@ -145,6 +148,7 @@ def significance(p_value: float) -> str:
 
 
 def disease_model_comparison(performance: pd.DataFrame) -> pd.DataFrame:
+    """Compare disease AUPRC using matched folds for paired t-tests."""
     rows = []
     for task, _, _ in TASKS:
         task_rows = performance.loc[performance["task"].eq(task)]

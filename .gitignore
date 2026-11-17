@@ -27,7 +27,6 @@ wandb/
 *.npz
 *.parquet
 
-# Guard against accidental local outputs; normal runs use the external path
-# configured in configs/paths.yaml.
+# Generated results.
 outputs/
 outputs_protscape_repo/

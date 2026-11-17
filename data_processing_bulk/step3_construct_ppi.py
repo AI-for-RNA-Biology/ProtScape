@@ -32,7 +32,8 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def _resolve_reliable_gene_file(base_dir: str, override: str | None) -> str:
+def resolve_reliable_gene_file(base_dir: str, override: str | None) -> str:
+    """Choose an explicit gene list, otherwise prefer the specificity-filtered Step 2b output."""
     if override:
         return override
     for filename in ("reliable_genes_specific.json", "reliable_genes.json"):
@@ -43,7 +44,8 @@ def _resolve_reliable_gene_file(base_dir: str, override: str | None) -> str:
 
 
 @lru_cache(None)
-def _load_cl_names() -> dict[str, str]:
+def load_cl_names() -> dict[str, str]:
+    """Read Cell Ontology names once for informative PPI filenames."""
     if not os.path.exists(CL_PATH):
         logger.warning("Cell Ontology file not found: %s", CL_PATH)
         return {}
@@ -58,12 +60,14 @@ def _load_cl_names() -> dict[str, str]:
 
 
 def normalize_gene_identifier(value: object) -> str:
+    """Strip whitespace and Ensembl version suffixes before gene matching."""
     if value is None or pd.isna(value):
         return ""
     return str(value).strip().split(".", 1)[0]
 
 
 def is_ensembl_identifier(value: str) -> bool:
+    """Recognize Ensembl gene IDs so unmapped IDs are not treated as gene symbols."""
     return value.strip().upper().startswith(("ENSG", "ENST", "ENSRN", "ENSMUSG"))
 
 
@@ -81,12 +85,14 @@ def extract_cl_id(cell_type: str) -> str:
 
 
 def load_global_ppi(path: str) -> nx.Graph:
+    """Read the undirected reference interactome from its edge list."""
     graph = nx.read_edgelist(path, nodetype=str)
     logger.info("Loaded global PPI: %d nodes, %d edges", graph.number_of_nodes(), graph.number_of_edges())
     return graph
 
 
-def _clean_symbol(value: object) -> str | None:
+def clean_symbol(value: object) -> str | None:
+    """Return a stripped gene symbol, treating missing-value strings as absent."""
     if value is None or pd.isna(value):
         return None
     symbol = str(value).strip()
@@ -103,7 +109,7 @@ def map_genes(adata: sc.AnnData, gene_metadata_path: str | None) -> dict[str, st
         (name for name in ("gene_symbol", "symbol", "gene_name", "hgnc_symbol") if name in genes),
         None,
     )
-    symbols = genes[symbol_column].map(_clean_symbol) if symbol_column else None
+    symbols = genes[symbol_column].map(clean_symbol) if symbol_column else None
 
     if symbols is None and gene_metadata_path and os.path.exists(gene_metadata_path):
         metadata = pd.read_csv(gene_metadata_path)
@@ -123,7 +129,7 @@ def map_genes(adata: sc.AnnData, gene_metadata_path: str | None) -> dict[str, st
         if id_column and metadata_symbol_column:
             metadata = metadata[[id_column, metadata_symbol_column]].dropna()
             metadata[id_column] = metadata[id_column].map(normalize_gene_identifier)
-            metadata[metadata_symbol_column] = metadata[metadata_symbol_column].map(_clean_symbol)
+            metadata[metadata_symbol_column] = metadata[metadata_symbol_column].map(clean_symbol)
             lookup = (
                 metadata.loc[metadata[id_column] != ""]
                 .drop_duplicates(id_column)
@@ -132,7 +138,7 @@ def map_genes(adata: sc.AnnData, gene_metadata_path: str | None) -> dict[str, st
             symbols = genes["gene_id_normalized"].map(lookup)
 
     if symbols is None:
-        symbols = genes["gene_id"].map(_clean_symbol)
+        symbols = genes["gene_id"].map(clean_symbol)
 
     symbols = symbols.astype(object)
     genes["symbol"] = symbols.where(symbols.notna(), genes["gene_id"]).astype(str).str.strip()
@@ -158,6 +164,7 @@ def map_genes(adata: sc.AnnData, gene_metadata_path: str | None) -> dict[str, st
 
 
 def map_to_symbols(gene_ids: list[str], mapping: dict[str, str]) -> list[str]:
+    """Resolve genes to unique uppercase symbols, preserving order and excluding unmapped Ensembl IDs."""
     symbols = []
     seen = set()
     for gene_id in gene_ids:
@@ -175,7 +182,8 @@ def map_to_symbols(gene_ids: list[str], mapping: dict[str, str]) -> list[str]:
     return symbols
 
 
-def _summary_row(cell_type: str, genes: list[str], symbols: list[str], genes_in_ppi: list[str]) -> dict:
+def summary_row(cell_type: str, genes: list[str], symbols: list[str], genes_in_ppi: list[str]) -> dict:
+    """Summarize gene-to-symbol and interactome coverage for one cell type."""
     return {
         "cell_type": cell_type,
         "input_genes": len(genes),
@@ -211,7 +219,7 @@ def build_ppi_networks(
     for cell_type, genes in sorted(gene_sets.items()):
         symbols = sorted(set(map_to_symbols(genes, gene_mapping)))
         genes_in_ppi = [symbol for symbol in symbols if symbol in global_ppi]
-        row = _summary_row(cell_type, genes, symbols, genes_in_ppi)
+        row = summary_row(cell_type, genes, symbols, genes_in_ppi)
         if not genes_in_ppi:
             logger.warning("%s: no mapped genes in the global PPI", cell_type)
             summary.append(row)
@@ -262,10 +270,11 @@ def build_ppi_networks(
     return node_sets, graphs, summary_df, thresholds
 
 
-def _edgelist_filename(cell_type: str) -> str:
+def edgelist_filename(cell_type: str) -> str:
+    """Combine the CL name and ID into a filename while retaining context suffixes."""
     standardized = extract_cl_id(cell_type)
     if re.match(r"^CL_\d+$", standardized):
-        cl_name = _load_cl_names().get(standardized.replace("_", ":", 1), "unknown")
+        cl_name = load_cl_names().get(standardized.replace("_", ":", 1), "unknown")
         filename = f"{cl_name}_[{standardized}]"
     else:
         filename = standardized
@@ -284,6 +293,7 @@ def write_outputs(
     graphs: dict[str, nx.Graph],
     summary: pd.DataFrame,
 ) -> None:
+    """Write per-context edge lists, the cell/protein index and PPI summary table."""
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
 
@@ -304,7 +314,8 @@ def write_outputs(
     summary.to_csv(output / "ppi_summary.csv", index=False)
 
 
-def _save_figure(fig: plt.Figure, directory: Path, filename: str) -> None:
+def save_figure(fig: plt.Figure, directory: Path, filename: str) -> None:
+    """Save a compact QC figure and close it to release plotting memory."""
     fig.tight_layout()
     fig.savefig(directory / filename, dpi=150)
     plt.close(fig)
@@ -354,7 +365,7 @@ def generate_qc(
     ax.axvline(kept["lcc_size"].median(), color="black", linestyle="--", label="Median LCC")
     ax.set(xlabel="LCC size (nodes)", ylabel="Cell types", title="Distribution of LCC sizes")
     ax.legend()
-    _save_figure(fig, qc_dir, "lcc_size_distribution.png")
+    save_figure(fig, qc_dir, "lcc_size_distribution.png")
 
     ordered = kept.sort_values("lcc_size", ascending=False)
     positions = np.arange(len(ordered))
@@ -367,7 +378,7 @@ def generate_qc(
     ax.set_xticklabels(ordered["cell_type"], rotation=90, ha="right", fontsize=8)
     ax.set(xlabel="Cell type (sorted by LCC size)", ylabel="Number of nodes", title="PPI size per cell type (LCC vs total subgraph)")
     ax.legend()
-    _save_figure(fig, qc_dir, "lcc_vs_total_nodes.png")
+    save_figure(fig, qc_dir, "lcc_vs_total_nodes.png")
 
     fig, ax = plt.subplots(figsize=(9, 5))
     ax.hist(kept["lcc_median_degree"], bins=15, color="seagreen", edgecolor="black", alpha=0.7)
@@ -375,7 +386,7 @@ def generate_qc(
     ax.axvline(kept["global_median_degree"].median(), color="orange", linestyle="--", label="Global median")
     ax.set(xlabel="Median degree (cell-type LCC)", ylabel="Cell types", title="Median degree across retained networks")
     ax.legend()
-    _save_figure(fig, qc_dir, "median_degree_distribution.png")
+    save_figure(fig, qc_dir, "median_degree_distribution.png")
 
     fig, ax = plt.subplots(figsize=(9, 5))
     scatter = ax.scatter(kept["subgraph_nodes"], kept["lcc_size"], c=kept["ks_distance"], cmap="viridis", alpha=0.7)
@@ -384,7 +395,7 @@ def generate_qc(
     ax.set(xlabel="Total nodes before LCC", ylabel="LCC size", title="Relationship between induced subgraph size and LCC size")
     fig.colorbar(scatter, ax=ax, label="KS distance")
     ax.legend()
-    _save_figure(fig, qc_dir, "subgraph_vs_lcc.png")
+    save_figure(fig, qc_dir, "subgraph_vs_lcc.png")
 
     fig, ax = plt.subplots(figsize=(10, 6))
     scatter = ax.scatter(kept["lcc_size"], kept["lcc_edges"], c=kept["lcc_size"], cmap="viridis", alpha=0.75, edgecolor="k", linewidth=0.2)
@@ -394,7 +405,7 @@ def generate_qc(
     ax.set(xlabel="Number of nodes (LCC size)", ylabel="Number of edges (LCC)", title="Network size: nodes vs. edges")
     ax.legend(loc="upper left")
     fig.colorbar(scatter, ax=ax, label="LCC size")
-    _save_figure(fig, qc_dir, "nodes_vs_edges.png")
+    save_figure(fig, qc_dir, "nodes_vs_edges.png")
 
     fig, ax = plt.subplots(figsize=(9, 5))
     ax.scatter(kept["global_median_degree"], kept["lcc_median_degree"], c="purple", alpha=0.7)
@@ -402,7 +413,7 @@ def generate_qc(
     ax.plot([0, limit], [0, limit], color="grey", linestyle="--", label="y = x")
     ax.set(xlabel="Median degree (global PPI, same node set)", ylabel="Median degree (cell-type LCC)", title="Median degree alignment with global PPI")
     ax.legend()
-    _save_figure(fig, qc_dir, "median_degree_comparison.png")
+    save_figure(fig, qc_dir, "median_degree_comparison.png")
 
     valid_ks = kept["ks_distance"].dropna()
     fig, ax = plt.subplots(figsize=(9, 5))
@@ -410,16 +421,17 @@ def generate_qc(
     ax.axvline(valid_ks.median(), color="red", linestyle="--", label="Median")
     ax.set(xlabel="KS distance (LCC vs global degree)", ylabel="Cell types", title="Distribution of KS distances")
     ax.legend()
-    _save_figure(fig, qc_dir, "ks_distance_distribution.png")
+    save_figure(fig, qc_dir, "ks_distance_distribution.png")
 
     fig, ax = plt.subplots(figsize=(10, 5))
     scatter = ax.scatter(kept["subgraph_nodes"], kept["ks_distance"], c=kept["lcc_size"], cmap="plasma", alpha=0.7)
     ax.set(xlabel="Total nodes before LCC", ylabel="KS distance to global PPI", title="KS distance vs. induced subgraph size")
     fig.colorbar(scatter, ax=ax, label="LCC size")
-    _save_figure(fig, qc_dir, "ks_distance_vs_subgraph_nodes.png")
+    save_figure(fig, qc_dir, "ks_distance_vs_subgraph_nodes.png")
 
 
-def _describe(values) -> dict[str, float | int | None]:
+def describe(values) -> dict[str, float | int | None]:
+    """Return count, mean, median and range for a QC distribution."""
     array = np.asarray(values, dtype=float)
     if array.size == 0:
         return {"count": 0, "min": None, "median": None, "max": None, "mean": None}
@@ -432,13 +444,14 @@ def _describe(values) -> dict[str, float | int | None]:
     }
 
 
-def _plot_similarity_histogram(values: list[float], title: str, path: Path) -> None:
+def plot_similarity_histogram(values: list[float], title: str, path: Path) -> None:
+    """Save the distribution of pairwise network overlap scores."""
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.hist(values, bins=30, color="slateblue", edgecolor="black", alpha=0.75)
     ax.axvline(np.median(values), color="red", linestyle="--", label="Median")
     ax.set(xlabel="Jaccard similarity", ylabel="Pairs", title=title)
     ax.legend()
-    _save_figure(fig, path.parent, path.name)
+    save_figure(fig, path.parent, path.name)
 
 
 def analyze_similarity(
@@ -464,20 +477,21 @@ def analyze_similarity(
     qc_dir = Path(output_dir) / "ppi_qc"
     qc_dir.mkdir(parents=True, exist_ok=True)
     statistics = {
-        "node_counts": _describe(kept["lcc_size"]),
-        "edge_counts": _describe(kept["lcc_edges"]),
-        "node_jaccard": _describe(node_jaccard),
-        "edge_jaccard": _describe(edge_jaccard),
+        "node_counts": describe(kept["lcc_size"]),
+        "edge_counts": describe(kept["lcc_edges"]),
+        "node_jaccard": describe(node_jaccard),
+        "edge_jaccard": describe(edge_jaccard),
     }
     with (qc_dir / "ppi_similarity_stats.json").open("w") as handle:
         json.dump(statistics, handle, indent=2)
     if node_jaccard:
-        _plot_similarity_histogram(node_jaccard, "Pairwise node Jaccard similarity", qc_dir / "node_jaccard_hist.png")
+        plot_similarity_histogram(node_jaccard, "Pairwise node Jaccard similarity", qc_dir / "node_jaccard_hist.png")
     if edge_jaccard:
-        _plot_similarity_histogram(edge_jaccard, "Pairwise edge Jaccard similarity", qc_dir / "edge_jaccard_hist.png")
+        plot_similarity_histogram(edge_jaccard, "Pairwise edge Jaccard similarity", qc_dir / "edge_jaccard_hist.png")
 
 
 def main() -> None:
+    """Map selected genes to the interactome, construct cell-specific PPIs and save QC."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", choices=["tabula", "hbca"], required=True)
     parser.add_argument("--reliable-genes")
@@ -487,7 +501,7 @@ def main() -> None:
     args = parser.parse_args()
 
     base_dir = TABULA_INTERMEDIATE if args.dataset == "tabula" else HBCA_INTERMEDIATE
-    genes_path = _resolve_reliable_gene_file(base_dir, args.reliable_genes)
+    genes_path = resolve_reliable_gene_file(base_dir, args.reliable_genes)
     pseudobulk_path = args.pseudobulk or os.path.join(base_dir, "pseudobulk.h5ad")
     output_dir = args.output_dir or os.path.join(base_dir, "ppi")
     for path in (genes_path, pseudobulk_path, args.global_ppi):

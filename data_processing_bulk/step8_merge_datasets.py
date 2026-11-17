@@ -47,27 +47,27 @@ ALS_MN_REL = os.path.relpath(ALS_MN_INTERMEDIATE, ALS_BULK_DIR)
 ALS_ASTRO_REL = os.path.relpath(ALS_ASTRO_INTERMEDIATE, ALS_BULK_DIR)
 
 
-def _validate_output_path(output: Path, input_roots: List[Path]) -> None:
-    def overlaps(left: Path, right: Path) -> bool:
-        return left == right or left in right.parents or right in left.parents
-
+def validate_output_path(output: Path, input_roots: List[Path]) -> None:
+    """Keep replacement of the graph bundle away from source data and code."""
     repository = Path(__file__).resolve().parents[1]
     home = Path.home().resolve()
     pinnacle = Path(PINNACLE_BASE).resolve()
     unsafe = (
-        output == Path("/")
-        or output == home
+        output == home
         or output in home.parents
         or output == pinnacle
         or output in pinnacle.parents
-        or overlaps(output, repository)
-        or any(overlaps(output, root) for root in input_roots)
+        or output == repository
+        or output in repository.parents
+        or (repository in output.parents and pinnacle not in output.parents)
+        or any(output == root or output in root.parents or root in output.parents for root in input_roots)
     )
     if unsafe:
         raise ValueError(f"Refusing to replace unsafe output directory: {output}")
 
 
-def _require_inputs(paths: List[Path]) -> None:
+def require_inputs(paths: List[Path]) -> None:
+    """Check that all graph inputs exist before replacing the generated output folder."""
     missing = [str(path) for path in paths if not path.exists()]
     if missing:
         raise FileNotFoundError("Missing required Step 8 inputs:\n" + "\n".join(missing))
@@ -84,6 +84,7 @@ def _als_gene_files(als_root: Path) -> List[str]:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Read source graph folders and the destination for the merged network bundle."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=Path(MERGED_OUTPUT))
     parser.add_argument("--hbca-root", type=Path, default=Path(HBCA_INTERMEDIATE))
@@ -94,6 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """Merge dataset PPIs, CCI, tissues and reliable genes into the training graph bundle."""
     args = build_parser().parse_args()
     output = args.output_dir.resolve()
     hbca = args.hbca_root.resolve()
@@ -101,14 +103,14 @@ def main() -> None:
     als = args.als_root.resolve()
     merged = args.merged_root.resolve()
     input_roots = [hbca, tabula, als, merged]
-    _validate_output_path(output, input_roots)
+    validate_output_path(output, input_roots)
 
     gene_files = [
         prefer_specific_file(str(hbca / "reliable_genes.json")),
         prefer_specific_file(str(tabula / "reliable_genes.json")),
         *_als_gene_files(als),
     ]
-    _require_inputs(
+    require_inputs(
         [
             Path(GLOBAL_PPI),
             Path(CELLTYPE_CLASS_MAPPING),

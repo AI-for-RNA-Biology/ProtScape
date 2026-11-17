@@ -20,11 +20,10 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def _safe_name(value):
-    return re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(value)).strip("_").lower()
 
 
-def _load_pseudobulk(dataset, path=None):
+def load_pseudobulk(dataset, path=None):
+    """Load the count matrix and fill missing library-size metadata from its counts."""
     if path is None:
         root = TABULA_INTERMEDIATE if dataset == "tabula" else HBCA_INTERMEDIATE
         path = Path(root) / "pseudobulk.h5ad"
@@ -46,6 +45,7 @@ def _load_pseudobulk(dataset, path=None):
 
 
 def parse_args():
+    """Read the dataset, GMM background threshold and replicate-support options."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", choices=("hbca", "tabula"), required=True)
     parser.add_argument("--pseudobulk", help="Pseudobulk h5ad; defaults to the dataset intermediate directory.")
@@ -60,6 +60,7 @@ def parse_args():
 
 
 def main():
+    """Select genes above the GMM background threshold in enough pseudobulk samples."""
     args = parse_args()
     params = resolve_params(
         args.dataset,
@@ -81,7 +82,7 @@ def main():
         log_offset,
     )
 
-    adata = _load_pseudobulk(args.dataset, args.pseudobulk)
+    adata = load_pseudobulk(args.dataset, args.pseudobulk)
     if args.cell_type_col not in adata.obs:
         raise KeyError(f"Column '{args.cell_type_col}' not found in pseudobulk obs")
 
@@ -156,11 +157,12 @@ def main():
         logger.info("%s: kept %d genes", cell_type, len(selected))
 
         if qc_dir:
+            filename = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(cell_type)).strip("_").lower()
             plot_reg_histogram(
                 cell_log,
                 thresholds,
                 quantile=quantile,
-                output_path=qc_dir / f"{_safe_name(cell_type)}_hist.png",
+                output_path=qc_dir / f"{filename}_hist.png",
                 title=f"{cell_type} log2(count + {log_offset}) distribution",
                 log_offset=log_offset,
             )

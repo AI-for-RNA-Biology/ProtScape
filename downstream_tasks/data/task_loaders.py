@@ -12,6 +12,7 @@ class BaseTaskLoader:
         self.label_csv = label_csv
 
     def load(self) -> Tuple[List[str], np.ndarray, List[str]]:
+        """Return gene order, a label matrix and its column names."""
         raise NotImplementedError
 
 
@@ -27,6 +28,7 @@ class CORUMLoader(BaseTaskLoader):
         self.max_pos = max_pos_per_complex
 
     def load(self) -> Tuple[List[str], np.ndarray, List[str]]:
+        """Turn protein-complex memberships into a multilabel matrix."""
         df = pd.read_csv(self.label_csv)
 
         gene_col = next(
@@ -76,6 +78,7 @@ class CORUMLoader(BaseTaskLoader):
 
 class TherapeuticTargetLoader(BaseTaskLoader):
     def load(self) -> Tuple[List[str], np.ndarray, List[str]]:
+        """Read binary target labels in a consistent gene order."""
         df = pd.read_csv(self.label_csv)
         gene_col = next(
             (column for column in ("protein", "Protein", "gene", "Gene") if column in df),
@@ -103,6 +106,7 @@ class TherapeuticTargetLoader(BaseTaskLoader):
 
 
 def get_task_loader(task: str, label_csv: Path) -> BaseTaskLoader:
+    """Choose the label reader for CORUM or a therapeutic-target disease."""
     task = task.lower()
     if task == "corum":
         return CORUMLoader(label_csv)

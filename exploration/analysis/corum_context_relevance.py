@@ -34,6 +34,7 @@ def build_lrp_model(
     checkpoint_dir: Path,
     fold: int,
 ) -> nn.Module:
+    """Restore one CORUM fold model for context-level xMIL-LRP."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_abmil("abmil8_pdl_id2_dropout", data, device)
     model.load_state_dict(
@@ -119,6 +120,7 @@ def xmil_lrp_values(
 
 
 def add_observed_context_coverage(lrp: pd.DataFrame) -> pd.DataFrame:
+    """Measure how much of each complex is present in each explained context."""
     _, members_by_complex = complex_members()
     _, global_edges = read_ppi(GLOBAL_PPI)
     member_pairs = {
@@ -169,6 +171,7 @@ def add_observed_context_coverage(lrp: pd.DataFrame) -> pd.DataFrame:
 def xmil_tables(
     values: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Compare context relevance with complex coverage using shared decile bins."""
     binned_parts = []
     definition_parts = []
     per_complex_parts = []

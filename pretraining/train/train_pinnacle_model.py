@@ -1,41 +1,11 @@
 import numpy as np
-import random
-import os
-import pandas as pd 
+import pandas as pd
 
 import torch
 import wandb
+from ..checkpoints import build_training_checkpoint, save_training_checkpoint
 from .. import utils
 from . import minibatch_utils as mb_utils
-
-# Train -----------------------------------------------------------------------------------------------------------------
-def _capture_rng_state():
-    rng_state = {
-        "python": random.getstate(),
-        "numpy": np.random.get_state(),
-        "torch": torch.get_rng_state(),
-    }
-    if torch.cuda.is_available():
-        rng_state["torch_cuda"] = torch.cuda.get_rng_state_all()
-    return rng_state
-
-
-def _build_checkpoint_payload(epoch, model, optimizer, **extra):
-    payload = {
-        "epoch": epoch,
-        "model": model,
-        "optimizer": optimizer,
-        "rng_state": _capture_rng_state(),
-    }
-    payload.update(extra)
-    return payload
-
-
-def _save_checkpoint(payload, path):
-    tmp_path = f"{path}.tmp"
-    with open(tmp_path, "wb") as f:
-        torch.save(payload, f)
-    os.replace(tmp_path, path)
 
 
 def train(
@@ -59,59 +29,22 @@ def train(
         tissue_neighbors,
         store_global_pred_train=False,
         device='cuda:0'):
-    """
-    Single epoch training and validation for PINNACLE model
-    1. Generate data loaders for PPI and metagraph
-    2. Training step
-    3. Validation step
-    4. Save best model based on validation AP
-    5. Return metapaths for next epoch
-    6. Log training and validation metrics to wandb
-    7. Print training and validation metrics to console
-    8. Write training and validation metrics to log file
-    9. Move metapaths back to CPU for memory cleanup
-    10. Return updated metapaths for next epoch
-    11. Return best validation accuracy
-    12. Return best model
-    
-    Args:
-        cfg: Configuration object with training parameters
-        epoch: Current epoch number
-        model: PINNACLE model to be trained
-        best_val_ap: Best validation AP selection score so far
-        optimizer: Optimizer for model training
-        center_loss: Center loss function
-        train_mask: Mask for training data
-        save_train_metrics_path: Paths to save training metrics
-        save_val_metrics_path: Paths to save validation metrics
-        save_model: Path to save the best model
-        ppi_data: PPI graph data
-        ppi_metapaths: Metapaths for PPI graph
-        mg_data: Metagraph data
-        mg_metapaths: Metapaths for metagraph
-        edge_attr_dict: Dictionary of edge attributes
-        celltype_map: Mapping of cell types
-        tissue_neighbors: Tissue neighbors information
-        store_global_pred_train: Whether to store global predictions during training
-        device: Device to run the training on (e.g., 'cuda:0' or 'cpu')
-        
-    """
-    
+    """Train one PINNACLE epoch, evaluate validation edges and save improved models."""
+
     use_corrected_eval = cfg.get("split_mode") == "global"
 
-    # Generate data loaders for PPI and metagraph
-    ## PPI training and validation batches
+    # PPI training and validation batches
     ppi_train_loader_dict, _, ppi_metapaths_train, ppi_x_ori = mb_utils.generate_batch(
         ppi_data, ppi_metapaths, edge_attr_dict, "train", cfg.batch_size, device, ppi=True, loader_type=cfg.loader)
-    
+
     if use_corrected_eval:
         ppi_val_loader_dict, _, ppi_metapaths_val, _ = mb_utils.generate_batch_corrected(
             ppi_data, ppi_metapaths, edge_attr_dict, "val", cfg.batch_size, device, ppi=True, loader_type=cfg.loader)
     else:
         ppi_val_loader_dict, _, ppi_metapaths_val, _ = mb_utils.generate_batch(
             ppi_data, ppi_metapaths, edge_attr_dict, "val", cfg.batch_size, device, ppi=True, loader_type=cfg.loader)
-    
-    ## Metagraph training and validation batches
+
+    # Metagraph training and validation batches
     _, mg_data_train, mg_metapaths_train, mg_x_ori = mb_utils.generate_batch(
         {0: mg_data}, mg_metapaths, edge_attr_dict, "train", cfg.batch_size, device, ppi=False, loader_type=cfg.loader)
     _, mg_data_val, mg_metapaths_val, _ = mb_utils.generate_batch(
@@ -123,7 +56,7 @@ def train(
     mg_data_val = mg_data_val[0]
     mg_metapaths_train = mg_metapaths_train[0]
     mg_metapaths_val = mg_metapaths_val[0]
-    
+
     for i, val in enumerate(mg_metapaths_train):
         mg_metapaths_train[i] = val.to(device)
 
@@ -137,33 +70,31 @@ def train(
     for key, val in ppi_metapaths_val.items():
         ppi_metapaths_val[key] = [val[0].to(device)]
 
-    # Set model to training mode
     model.train()
 
 
-    # # Training step (Run batch training)
     _, _, mg_pred, ppi_preds_all, ppi_data_train_y, loss, train_metrics = mb_utils.iterate_train_batch(
         ppi_train_loader_dict, ppi_x_ori, ppi_metapaths, mg_x_ori, mg_metapaths_train, mg_data_train,
         tissue_neighbors, model, cfg, device, wandb, center_loss, optimizer, train_mask,
         store_global_pred_train)
-    
 
-    # Evaluate training performance : Training metrics
+
+    # Summarize training edge metrics.
     with torch.no_grad():
         if train_metrics is None:
             assert store_global_pred_train # enforce that all predictions across batches were saved to compute metrics
-            
+
             roc_score_ppi, ap_score_ppi, train_acc_ppi, train_f1_ppi = utils.calc_metrics(
                 None, None, ppi_preds_all, ppi_data_train_y, 'torch')
             roc_score_meta, ap_score_meta, train_acc_meta, train_f1_meta = utils.calc_metrics(
                 mg_pred, mg_data_train, None, None, 'torch')
 
-        
+
         else:
             roc_score_ppi, ap_score_ppi, train_acc_ppi, train_f1_ppi = train_metrics['roc_ppi'], train_metrics['ap_ppi'], train_metrics['acc_ppi'], train_metrics['f1_ppi']
             roc_score_meta, ap_score_meta, train_acc_meta, train_f1_meta = train_metrics['roc_meta'], train_metrics['ap_meta'], train_metrics['acc_meta'], train_metrics['f1_meta']
 
-        
+
         df_train_total_metrics = {
             f'train_total_roc_ppi': [roc_score_ppi],
             f'train_total_ap_ppi': [ap_score_ppi],
@@ -175,8 +106,8 @@ def train(
             f'train_total_f1_meta': [train_f1_meta],
         }
         df_train_total_metrics = pd.DataFrame(df_train_total_metrics)
-        print(df_train_total_metrics.to_markdown())
-        
+        print(df_train_total_metrics.to_string(index=False))
+
         wandb.log(
             {
                 "train_roc_ppi": roc_score_ppi,
@@ -189,9 +120,9 @@ def train(
                 "train_f1_meta": train_f1_meta
             }
             )
-        
+
         if store_global_pred_train:
-            
+
             df_celltype_train_metrics = utils.metrics_per_rel(
                 mg_pred, mg_data_train, ppi_preds_all, ppi_data_train_y,
                 edge_attr_dict, celltype_map, split="train",
@@ -199,9 +130,9 @@ def train(
             df_train_metrics = pd.concat([df_train_total_metrics, df_celltype_train_metrics], axis=1)
         else:
             df_train_metrics = df_train_total_metrics
-            
+
     del ppi_preds_all, ppi_data_train_y, ppi_train_loader_dict, mg_pred, mg_data_train
-       
+
 
     # Validation step
     model.eval()
@@ -227,10 +158,8 @@ def train(
             None, None, ppi_preds_all, ppi_data_val_y,
             edge_attr_dict, celltype_map, "val", version="torch")
 
-        # calinski_harabasz, davies_bouldin = utils.calc_cluster_metrics(ppi_x)
-        
         # Log validation results (metrics)
-        
+
         wandb_dict = {
             "total_loss": loss,
         }
@@ -239,11 +168,11 @@ def train(
             wandb_dict[f'total_val_{m}_meta'] = val_metrics[f'{m}_meta']
         wandb.log(wandb_dict
             )
-        
+
         # save latest model
-        _save_checkpoint(_build_checkpoint_payload(epoch, model, optimizer), save_latest_model)
-            
-        # Main checkpoint: select the epoch that jointly performs well on PPI and metagraph AP.
+        save_training_checkpoint(build_training_checkpoint(epoch, model, optimizer), save_latest_model)
+
+        # Select the checkpoint by summed PPI and metagraph average precision.
         val_score = val_metrics['ap_ppi']
         score_metric = "ap_ppi"
         if val_metrics.get('ap_meta') is not None:
@@ -251,8 +180,8 @@ def train(
             score_metric = "ap_ppi_plus_ap_meta"
         if best_val_ap <= val_score:
             best_val_ap = val_score
-            _save_checkpoint(
-                _build_checkpoint_payload(
+            save_training_checkpoint(
+                build_training_checkpoint(
                     epoch,
                     model,
                     optimizer,
@@ -261,23 +190,23 @@ def train(
                 ),
                 save_best_model,
             )
-            
+
             df_val_best_metrics = {}
             for key in val_metrics.keys():
                 df_val_best_metrics[f'best_val_{key}'] = [val_metrics[key]]
-            
+
             # compute total best val metrics dataframe
             for m in ['roc', 'ap', 'acc', 'f1']:
                 df_val_best_metrics[f'best_val_{m}_total'] = [np.mean([val_metrics[f'{m}_ppi'], val_metrics[f'{m}_meta']])]
             df_val_best_metrics = pd.DataFrame(df_val_best_metrics)
             df_val_metrics = pd.concat([df_val_best_metrics, df_celltype_val_metrics], axis=1)
-            
+
             df_val_metrics.to_csv(save_val_metrics_path, index=False)
-            
+
             # save corresponding metrics for the training set
             df_train_metrics.to_csv(save_train_metrics_path, index=False)
-            
-        # Move metapaths back to CPU for memory cleanup
+
+        # Move cached metapaths back to CPU.
         for i, val in enumerate(mg_metapaths_train):
             mg_metapaths_train[i] = val.detach().cpu()
         for key, val in ppi_metapaths_train.items():
@@ -286,16 +215,13 @@ def train(
             mg_metapaths_val[i] = val.detach().cpu()
         for key, val in ppi_metapaths_val.items():
             ppi_metapaths_val[key] = [val[0].detach().cpu()]
-    
+
         del ppi_x, mg_pred, ppi_preds_all, ppi_data_val_y, mg_data_val
-        
+
     return ppi_metapaths_train, mg_metapaths_train, ppi_metapaths_val, mg_metapaths_val, best_val_ap
 
 
-
-# Test -----------------------------------------------------------------------------------------------------------------
 @torch.no_grad()
-# hparams, wandb
 def test(
         config,
         model,
@@ -312,7 +238,8 @@ def test(
         device,
         split=None,
         evaluation_mode='standard'):
-    
+
+    """Evaluate a saved PINNACLE model and write overall and per-cell edge metrics."""
     model.to(device)
     model.eval()
 
@@ -326,17 +253,17 @@ def test(
         ppi_test_loader_dict, _, _, ppi_x = mb_utils.generate_batch(
             ppi_data, ppi_metapaths, edge_attr_dict, eval_split,
             config.batch_size, device, ppi=True, loader_type=config.loader)
-        
+
         _, mg_data_test, _, mg_x = mb_utils.generate_batch(
             {0: mg_data}, mg_metapaths, edge_attr_dict, eval_split, config.batch_size,
             device, ppi=False, loader_type=config.loader)
-    
+
     elif evaluation_mode == 'corrected':
         eval_split = "test" if split is None else split
         assert eval_split in {"val", "test"}, "corrected PINNACLE evaluation only supports val/test splits"
         assert ppi_metapaths_test is None
         assert mg_metapaths_test is None
-        
+
         ppi_test_loader_dict, _, ppi_metapaths_test, ppi_x = mb_utils.generate_batch_corrected(
             ppi_data, ppi_metapaths, edge_attr_dict, eval_split,
             config.batch_size, device, ppi=True, loader_type=config.loader)
@@ -369,12 +296,12 @@ def test(
         _, _, mg_pred, ppi_preds_all, ppi_data_test_y = mb_utils.iterate_predict(
             ppi_test_loader_dict, ppi_x, ppi_metapaths_test, mg_x, mg_metapaths_test, mg_data_test,
             tissue_neighbors, model, config, device)
-        
+
     # Compute performance metrics on the selected evaluation split.
     test_metrics = utils.calc_metrics(
         mg_pred, mg_data_test, ppi_preds_all, ppi_data_test_y, version='torch')
-    
-    # Match the HC test metric naming scheme for aggregate W&B and CSV logging.
+
+    # Use the same metric columns as ProtScape.
     df_test_total_metrics = {}
     for m in ['roc', 'ap', 'acc', 'f1']:
         df_test_total_metrics[f'test_{m}_ppi'] = [test_metrics[f'{m}_ppi']]
@@ -396,6 +323,5 @@ def test(
     wandb_log = {col: df_test_total_metrics.iloc[0][col] for col in df_test_total_metrics.columns}
     if wandb_log:
         wandb.log(wandb_log)
-    
+
     del mg_pred, ppi_preds_all, ppi_data_test_y, ppi_test_loader_dict, mg_data_test
-        

@@ -15,10 +15,12 @@ from exploration.analysis.loss_consensus_scoring import (
 
 
 def open_text(path: Path):
+    """Open plain or gzip-compressed STRING exports as text."""
     return gzip.open(path, "rt") if path.suffix == ".gz" else path.open("r")
 
 
 def build_string_scores(genes: list[str], paths: dict) -> np.ndarray:
+    """Align the maximum STRING combined score to each unordered gene pair."""
     info_path = require_file(Path(paths["string_protein_info"]).expanduser())
     links_path = require_file(Path(paths["string_links_detailed"]).expanduser())
     protein_to_gene = {}
@@ -56,6 +58,7 @@ def build_string_scores(genes: list[str], paths: dict) -> np.ndarray:
 def save_string_moments(
     results: dict, string_scores: np.ndarray, output_dir: Path
 ):
+    """Save mean and standard deviation of loss scores for recurrent STRING-supported pairs."""
     keep = results["string_count"] >= 2
     counts = results["string_count"][keep]
     sums = results["string_sum"][:, keep]

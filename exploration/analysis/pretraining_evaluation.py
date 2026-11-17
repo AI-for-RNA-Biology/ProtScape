@@ -19,7 +19,7 @@ from exploration.analysis.pretraining_model_specs import MODELS
 from exploration.analysis.pretraining_tables import (
     add_context_metadata,
     build_output_tables,
-    robust_rows,
+    ppi_metric_rows,
 )
 from pretraining.checkpoints import load_pinnacle_model, load_protscape_model
 
@@ -28,19 +28,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PATHS_FILE = REPO_ROOT / "configs" / "paths.yaml"
 
 
-def load_paths() -> dict:
-    with PATHS_FILE.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
-
-
 def load_checkpoint(path: Path) -> dict:
-    if not path.is_file():
-        raise FileNotFoundError(f"Missing released checkpoint: {path}")
+    """Memory-map the checkpoint so weights are loaded as needed."""
     return torch.load(path, map_location="cpu", mmap=True, weights_only=True)
 
 
 def main() -> None:
-    paths = load_paths()
+    """Evaluate the configured checkpoints and export pretraining tables and figures."""
+    with PATHS_FILE.open("r", encoding="utf-8") as handle:
+        paths = yaml.safe_load(handle)
     checkpoint_root = Path(paths["checkpoint_root"])
     output_dir = Path(paths["output_root"]) / "analysis" / "pretraining_evaluation"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -57,11 +53,8 @@ def main() -> None:
     parameters = {}
     contextwise = []
 
-    # All ProtScape variants use the same ESM2 input data.
-    first_checkpoint = load_checkpoint(
-        checkpoint_root / MODELS["gae_att"]["checkpoint"]
-    )
-    factored_data, id_to_name = load_dataset(first_checkpoint, paths, defer_features=False)
+    # Reuse network inputs while the checkpoint's data settings stay the same.
+    loaded_settings = None
     for model_key in [
         "gae_att",
         "gae_att_uni",
@@ -75,11 +68,21 @@ def main() -> None:
         "s2gae_att_k1_l1_do00",
     ]:
         print(f"\nEvaluating {MODELS[model_key]['name']}", flush=True)
-        checkpoint = (
-            first_checkpoint
-            if model_key == "gae_att"
-            else load_checkpoint(checkpoint_root / MODELS[model_key]["checkpoint"])
+        checkpoint = load_checkpoint(checkpoint_root / MODELS[model_key]["checkpoint"])
+        config = checkpoint["config"]
+        data_settings = (
+            config["features_mode"],
+            config.get("esm2_pooling", "bos"),
+            config.get("input_dim") or config.get("protein_config", {}).get("input_dim"),
+            config.get("seed", 0),
+            config.get("symmetric_ppi", True),
+            config["dataset_mode"],
+            config["split_mode"],
+            config.get("weighted_ppi_loss", False),
         )
+        if data_settings != loaded_settings:
+            factored_data, id_to_name = load_dataset(checkpoint, paths, defer_features=False)
+            loaded_settings = data_settings
         cell_ids = [int(cell_id) for cell_id in checkpoint["cell_ids"]]
         model_data = (
             {cell_id: factored_data[0][cell_id] for cell_id in cell_ids},
@@ -93,7 +96,7 @@ def main() -> None:
         ppi_metrics, local_context, pooled_cells = evaluate_protscape_ppi(
             model_key, model, model_data, id_to_name, device
         )
-        robust.extend(robust_rows(model_key, ppi_metrics))
+        robust.extend(ppi_metric_rows(model_key, ppi_metrics))
         contextwise.extend(local_context)
         if MODELS[model_key].get("metagraph"):
             cci[model_key] = evaluate_protscape_metagraph(
@@ -104,7 +107,7 @@ def main() -> None:
         del checkpoint, model
         if device.type == "cuda":
             torch.cuda.empty_cache()
-    del first_checkpoint, factored_data
+    del factored_data
 
     # Adapted PINNACLE random inputs are generated with the checkpoint seed.
     for model_key in ["pinnacle_random", "pinnacle_esm2_acm", "pinnacle_esm2"]:
@@ -116,7 +119,7 @@ def main() -> None:
         ppi_metrics, metagraph_metrics, cci_metrics, local_context = evaluate_pinnacle(
             model_key, model, data, id_to_name, device
         )
-        robust.extend(robust_rows(model_key, ppi_metrics))
+        robust.extend(ppi_metric_rows(model_key, ppi_metrics))
         metagraph[model_key] = metagraph_metrics
         cci[model_key] = cci_metrics
         print(f"  {model_key} metagraph metrics: {metagraph_metrics}", flush=True)

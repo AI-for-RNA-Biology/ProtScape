@@ -20,6 +20,7 @@ MODULARITY_RESOLUTION = 1.0
 
 
 def best_modularity(graph, leiden_resolution, seed_offset):
+    """Keep the highest weighted modularity across Leiden restarts."""
     best_q, best_n_modules = -np.inf, 0
     for restart in range(NULL_RESTARTS):
         communities = leiden_communities(
@@ -102,6 +103,7 @@ def modularity_null(graph, n_null, leiden_resolution):
 
 
 def main():
+    """Compare the observed Parkinson network with degree-preserving randomized networks."""
     edges = pd.read_csv(ANALYSIS_DIR / "parkinson_string_network_edges.csv")
     edges = edges.dropna(subset=["protein_a", "protein_b", "experimental_score"])
     graph = nx.from_pandas_edgelist(

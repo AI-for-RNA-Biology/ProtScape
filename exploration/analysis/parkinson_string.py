@@ -38,12 +38,14 @@ STRING_CATEGORIES = {
 
 
 def require_file(path: Path) -> Path:
+    """Check a required STRING export before reading it."""
     if not path.is_file():
         raise FileNotFoundError(f"Missing required Parkinson analysis input: {path}")
     return path
 
 
 def benjamini_hochberg(values: pd.Series) -> np.ndarray:
+    """Adjust enrichment p-values while keeping the original row order."""
     array = values.to_numpy(dtype=float)
     order = np.argsort(array)
     adjusted = array[order] * len(array) / np.arange(1, len(array) + 1)
@@ -54,6 +56,7 @@ def benjamini_hochberg(values: pd.Series) -> np.ndarray:
 
 
 def build_string_mapping(genes: list[str]) -> pd.DataFrame:
+    """Match gene symbols to unique STRING IDs, using aliases when needed."""
     info = pd.read_csv(require_file(STRING_INFO), sep="\t").rename(
         columns={"#string_protein_id": "string_id"}
     )
@@ -103,6 +106,7 @@ def build_string_mapping(genes: list[str]) -> pd.DataFrame:
 
 
 def read_string_annotations(allowed_ids: set[str]) -> pd.DataFrame:
+    """Read enrichment annotations only for STRING IDs in the analysis background."""
     parts = []
     for chunk in pd.read_csv(
         require_file(STRING_TERMS), sep="\t", chunksize=500_000
@@ -131,6 +135,7 @@ def enrichment_table(
     query_ids: set[str],
     background_ids: set[str],
 ) -> pd.DataFrame:
+    """Test term enrichment against the supplied STRING background."""
     annotations = annotations[annotations["string_id"].isin(background_ids)]
     keys = ["category_code", "source", "term", "description"]
     result = (
@@ -184,6 +189,7 @@ def build_main_string_enrichment(
     mapping: pd.DataFrame,
     annotations: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Compare candidate sets with the shared STRING background and select terms for plotting."""
     gene_to_string = (
         mapping[mapping["mapped"]]
         .set_index("protein")["string_id"]
@@ -267,6 +273,7 @@ def build_string_network(
     candidates: pd.DataFrame,
     mapping: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Collect STRING interactions among known targets and ProtScape candidates."""
     known = set(
         membership.loc[membership["benchmark_label"].eq(1), "protein"]
     )

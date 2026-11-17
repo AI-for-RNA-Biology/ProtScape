@@ -17,7 +17,6 @@ SCORE_SAMPLE = ANALYSIS_DIR / "whole_ppi_score_sample.npz"
 GLOBAL_GENE_ORDER = ANALYSIS_DIR / "global_gene_order.txt"
 STRING_SCORES = ANALYSIS_DIR / "string_combined_scores.npy"
 STRING_SCORE_MOMENTS = ANALYSIS_DIR / "string_positive_loss_score_moments.npz"
-SCORE_SAMPLE_SUMMARY = ANALYSIS_DIR / "whole_ppi_score_sample_summary.csv"
 SCORE_POPULATION_SUMMARY = ANALYSIS_DIR / "whole_ppi_score_population_summary.csv"
 LOSS_SIMILARITY = ANALYSIS_DIR / "loss_similarity_to_bce_metrics.csv"
 
@@ -34,52 +33,15 @@ LABEL_NAMES = {1: "Labelled positive", 0: "Labelled negative"}
 EDGE_LABELS = ["Labelled positive", "Labelled negative"]
 RECURRENCE_BIN_STARTS = np.array([2, 3, 4, 6, 11, 21, 51, 101], dtype=np.int64)
 N_RECURRENCE_BINS = len(RECURRENCE_BIN_STARTS)
-SAMPLE_SEED = 13
-SAMPLE_PER_STRATUM = 50_000
 PAIR_CHUNK_SIZE = 2_000_000
 
 
-def require_file(path: Path) -> Path:
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"Missing required analysis output: {path}\n"
-            "The exhaustive scoring pass did not produce this file."
-        )
-    return path
-
-
-def read_csv(
-    path: Path, columns: set[str], *, float_precision: str | None = None
-) -> pd.DataFrame:
-    require_file(path)
-    table = pd.read_csv(path, float_precision=float_precision)
-    missing = columns.difference(table.columns)
-    if missing:
-        raise ValueError(f"{path} is missing columns: {sorted(missing)}")
-    return table
-
-
 def load_score_sample() -> pd.DataFrame:
-    require_file(SCORE_SAMPLE)
+    """Convert sampled scores into the columns used by the consensus plots."""
     with np.load(SCORE_SAMPLE, allow_pickle=False) as sample:
-        required = {"labels", "class_ids", *LOSSES}
-        missing = required.difference(sample.files)
-        if missing:
-            raise ValueError(f"{SCORE_SAMPLE} is missing arrays: {sorted(missing)}")
-        arrays = {name: sample[name].copy() for name in required}
-
-    if len({len(values) for values in arrays.values()}) != 1:
-        raise ValueError(f"{SCORE_SAMPLE} arrays have inconsistent lengths")
-    labels = arrays["labels"].astype(np.int8, copy=False)
-    class_ids = arrays["class_ids"].astype(np.int8, copy=False)
-    if not np.isin(labels, [0, 1]).all():
-        raise ValueError(f"{SCORE_SAMPLE} contains labels outside {{0, 1}}")
-    if not np.isin(class_ids, np.arange(len(CLASS_NAMES))).all():
-        raise ValueError(f"{SCORE_SAMPLE} contains invalid consensus-class IDs")
-
-    scores = np.column_stack([arrays[loss] for loss in LOSSES])
-    if not np.isfinite(scores).all() or np.any((scores < 0) | (scores > 1)):
-        raise ValueError(f"{SCORE_SAMPLE} contains invalid prediction scores")
+        labels = sample["labels"].astype(np.int8)
+        class_ids = sample["class_ids"].astype(np.int8)
+        scores = np.column_stack([sample[loss] for loss in LOSSES])
     return pd.DataFrame(
         {
             "edge_label": np.where(
@@ -106,9 +68,7 @@ def build_score_sample_tables() -> tuple[pd.DataFrame, pd.DataFrame]:
         .rename(columns={"edge_label": "label", "consensus_class": "loss_class"})
     )
 
-    population = read_csv(
-        SCORE_POPULATION_SUMMARY, {"edge_label", "summary", "edge_contexts"}
-    )
+    population = pd.read_csv(SCORE_POPULATION_SUMMARY)
     population = population[population["summary"].isin(CLASS_NAMES)].rename(
         columns={
             "edge_label": "label",
@@ -119,8 +79,6 @@ def build_score_sample_tables() -> tuple[pd.DataFrame, pd.DataFrame]:
     summary = population.merge(
         sampled, on=["label", "loss_class"], how="left", validate="one_to_one"
     )
-    if summary["edge_contexts_sampled"].isna().any():
-        raise ValueError("One or more label/class strata were not sampled")
     summary["edge_contexts_sampled"] = summary["edge_contexts_sampled"].astype(int)
 
     summary["label"] = pd.Categorical(
@@ -133,63 +91,19 @@ def build_score_sample_tables() -> tuple[pd.DataFrame, pd.DataFrame]:
     summary["label"] = summary["label"].astype(object)
     summary["loss_class"] = summary["loss_class"].astype(object)
 
-    expected = np.minimum(SAMPLE_PER_STRATUM, summary["edge_contexts_seen"])
-    if not np.array_equal(summary["edge_contexts_sampled"].to_numpy(), expected):
-        raise ValueError(
-            f"Expected the seed-{SAMPLE_SEED} sample of up to "
-            f"{SAMPLE_PER_STRATUM:,} rows per label/class stratum"
-        )
-
-    recorded = read_csv(
-        SCORE_SAMPLE_SUMMARY,
-        {"label", "loss_class", "edge_contexts_seen", "edge_contexts_sampled"},
-    )[summary.columns].reset_index(drop=True)
-    if not summary.equals(recorded):
-        raise ValueError("Score sample counts do not match its inference summary")
     return sample, summary
 
 
-def build_loss_similarity_table() -> pd.DataFrame:
-    """Load exact population-level similarities between loss variants."""
-    table = read_csv(
-        LOSS_SIMILARITY,
-        {"group", "comparison", "metric", "value", "edge_contexts"},
-        float_precision="round_trip",
-    )
-    if table.duplicated(["group", "comparison", "metric"]).any():
-        raise ValueError("Loss-similarity output has duplicate statistic rows")
-    required = {
-        "Binned Spearman score correlation",
-        "Thresholded Spearman call correlation",
-    }
-    if not required.issubset(table["metric"]):
-        raise ValueError("Loss-similarity output is missing a displayed statistic")
-    return table
-
-
 def recurrence_bin_ids(recurrence: np.ndarray) -> np.ndarray:
+    """Assign repeated protein pairs to the fixed recurrence intervals."""
     return np.searchsorted(
         RECURRENCE_BIN_STARTS[1:], recurrence, side="right"
     ).astype(np.int8)
 
 
-def load_pair_class_counts() -> np.ndarray:
-    require_file(PAIR_CLASS_COUNTS)
-    counts = np.load(PAIR_CLASS_COUNTS, mmap_mode="r")
-    expected_prefix = (2, len(CLASS_NAMES))
-    if counts.ndim != 3 or counts.shape[:2] != expected_prefix:
-        raise ValueError(
-            f"Expected pair-class counts with shape (2, {len(CLASS_NAMES)}, n_pairs); "
-            f"found {counts.shape}"
-        )
-    if counts.dtype != np.uint16:
-        raise ValueError(f"Expected uint16 pair-class counts; found {counts.dtype}")
-    return counts
-
-
 def reduce_pair_class_counts() -> tuple[dict[int, np.ndarray], dict[int, dict[str, np.ndarray]]]:
     """Reduce exhaustive pair counts into transition and stability tables."""
-    counts = load_pair_class_counts()
+    counts = np.load(PAIR_CLASS_COUNTS, mmap_mode="r")
     transitions = {
         label_id: np.zeros((len(CLASS_NAMES), len(CLASS_NAMES)), dtype=np.int64)
         for label_id in [1, 0]
@@ -257,6 +171,7 @@ def reduce_pair_class_counts() -> tuple[dict[int, np.ndarray], dict[int, dict[st
 
 
 def build_transition_tables(transitions: dict[int, np.ndarray]) -> dict[str, pd.DataFrame]:
+    """Tabulate context-specific classes against each pair's modal class."""
     tables = {}
     for label_id, slug in [(1, "positive"), (0, "negative")]:
         table = pd.DataFrame(
@@ -268,6 +183,7 @@ def build_transition_tables(transitions: dict[int, np.ndarray]) -> dict[str, pd.
 
 
 def build_stability_table(stability: dict[int, dict[str, np.ndarray]]) -> pd.DataFrame:
+    """Summarize class stability after standardizing for context recurrence."""
     rows = []
     for label_id in [1, 0]:
         accumulator = stability[label_id]
@@ -318,6 +234,7 @@ def build_stability_table(stability: dict[int, dict[str, np.ndarray]]) -> pd.Dat
 
 
 def write_table(table: pd.DataFrame, path: Path, **kwargs) -> None:
+    """Save an analysis table without a pandas index."""
     path.parent.mkdir(parents=True, exist_ok=True)
     table.to_csv(path, index=False, **kwargs)
     print(f"Saved {path}", flush=True)
@@ -337,9 +254,10 @@ def render_plots() -> None:
 
 
 def main() -> None:
-    from exploration.analysis.loss_consensus_inference import run
+    """Score the loss variants, export consensus and STRING tables, then draw them."""
+    from exploration.analysis.loss_consensus_inference import run_consensus_inference
 
-    run(ANALYSIS_DIR)
+    run_consensus_inference(ANALYSIS_DIR)
     sample, sample_summary = build_score_sample_tables()
     write_table(
         sample,
@@ -352,7 +270,7 @@ def main() -> None:
         ANALYSIS_DIR / "score_sample_summary.csv",
     )
     write_table(
-        build_loss_similarity_table(),
+        pd.read_csv(LOSS_SIMILARITY, float_precision="round_trip"),
         ANALYSIS_DIR / "loss_similarity.csv",
     )
 

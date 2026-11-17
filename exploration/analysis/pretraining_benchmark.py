@@ -15,11 +15,11 @@ from sklearn.metrics import (
 )
 
 from pretraining.data_handler.generate_input import get_metapaths, read_data
-from pretraining.inference import _LazyPPIFeatures
+from pretraining.inference import LazyPPIFeatures
 from pretraining.models.hierarchical_model import add_virtual_node
 from pretraining.s2gae_utils import undirected_decoder_logits
 from pretraining.train.factored_batching import build_cci_edge_index
-from pretraining.train.factored_training import _prepare_s2gae_decoder_input
+from pretraining.train.factored_training import prepare_s2gae_decoder_input
 from pretraining.train import minibatch_utils as pinnacle_mb
 from exploration.analysis.pretraining_model_specs import (
     CORE_MODEL_ORDER,
@@ -29,6 +29,7 @@ from exploration.analysis.pretraining_model_specs import (
 
 
 def set_seed(seed: int) -> None:
+    """Fix Python, NumPy and PyTorch seeds for repeatable negative sampling."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -37,6 +38,7 @@ def set_seed(seed: int) -> None:
 
 
 def load_dataset(checkpoint: dict, paths: dict, *, defer_features: bool):
+    """Recreate network inputs and their context order from the checkpoint config."""
     config = checkpoint["config"]
     seed = int(config.get("seed", 0))
     set_seed(seed)
@@ -44,11 +46,16 @@ def load_dataset(checkpoint: dict, paths: dict, *, defer_features: bool):
     networks = Path(paths["networks_bulk"]).expanduser()
     features_mode = config["features_mode"]
     if features_mode == "ESM2":
-        feature_path = Path(paths["esm2_embeddings"]).expanduser()
+        pooling = config.get("esm2_pooling", "bos")
+        feature_key = "esm2_embeddings" if pooling == "bos" else "esm2_mean_embeddings"
+        feature_path = Path(paths[feature_key]).expanduser()
+        feature_dim = None
+    elif features_mode == "ProstT5":
+        feature_path = Path(paths["prostt5_embeddings"]).expanduser()
         feature_dim = None
     elif features_mode == "random":
         feature_path = None
-        feature_dim = int(config["input_dim"])
+        feature_dim = int(config.get("input_dim") or config["protein_config"]["input_dim"])
     else:
         raise ValueError(f"Unsupported protein features: {features_mode}")
 
@@ -71,18 +78,19 @@ def load_dataset(checkpoint: dict, paths: dict, *, defer_features: bool):
     ppi_data, _, _, celltype_map, _, _, _, _ = data
     cell_ids = [int(cell_id) for cell_id in checkpoint["cell_ids"]]
     if set(cell_ids) != set(ppi_data):
-        raise ValueError("Checkpoint cell IDs do not match the released PPI contexts.")
+        raise ValueError("Checkpoint cell IDs do not match the PPI contexts.")
     ppi_data = {cell_id: ppi_data[cell_id] for cell_id in cell_ids}
     data = (ppi_data, *data[1:])
 
     id_to_name = {cell_id: name for name, cell_id in celltype_map.items()}
     cell_names = [id_to_name[cell_id] for cell_id in cell_ids]
     if checkpoint["cell_names"] != cell_names:
-        raise ValueError("Checkpoint cell names do not match the released PPI contexts.")
+        raise ValueError("Checkpoint cell names do not match the PPI contexts.")
     return data, id_to_name
 
 
 def binary_metrics(scores, labels) -> dict[str, float]:
+    """Calculate AUROC, average precision, accuracy and F1 from edge probabilities."""
     scores = np.asarray(scores, dtype=float)
     labels = np.asarray(labels, dtype=int)
     roc = 0.5 if np.unique(labels).size < 2 else roc_auc_score(labels, scores)
@@ -105,6 +113,7 @@ def binary_metrics(scores, labels) -> dict[str, float]:
 
 
 def metrics_from_pos_neg(pos_scores, neg_scores) -> dict[str, float]:
+    """Join positive and negative edge scores before calculating binary metrics."""
     pos_scores = np.asarray(pos_scores)
     neg_scores = np.asarray(neg_scores)
     scores = np.concatenate([pos_scores, neg_scores])
@@ -154,6 +163,7 @@ def sample_structured_negatives(pos_edges, all_positive_edges, num_nodes, max_k)
 
 
 def canonical_undirected_edges(edge_index):
+    """Sort each edge's endpoints and remove duplicate undirected pairs."""
     edge_index = edge_index.detach().cpu().long()
     pairs = torch.stack(
         [torch.minimum(edge_index[0], edge_index[1]),
@@ -200,6 +210,7 @@ def shared_cci_test_edges(mg_data, edge_types, cell_ids):
     used = set()
 
     def draw(source):
+        """Take the next unused valid target for a source protein from its shuffled candidates."""
         values = candidate_order[source]
         while cursor[source] < len(values):
             target = values[cursor[source]]
@@ -229,6 +240,7 @@ def shared_cci_test_edges(mg_data, edge_types, cell_ids):
 
 
 def dot_scores(embeddings, edges, relation=None, batch_size=100_000):
+    """Score edge batches with a dot-product decoder and optional relation weights."""
     scores = []
     for start in range(0, edges.size(1), batch_size):
         edge_batch = edges[:, start : start + batch_size].to(embeddings.device)
@@ -244,6 +256,7 @@ def dot_scores(embeddings, edges, relation=None, batch_size=100_000):
 
 
 def s2gae_scores(decoder, decoder_input, edges, batch_size=100_000):
+    """Score edge batches with the symmetric S2GAE decoder."""
     scores = []
     for start in range(0, edges.size(1), batch_size):
         edge_batch = edges[:, start : start + batch_size]
@@ -255,6 +268,7 @@ def s2gae_scores(decoder, decoder_input, edges, batch_size=100_000):
 
 
 def context_records(model_key, cell_id, cell_name, metrics) -> list[dict]:
+    """Format one cell context's AUPRC and F1 for the diagnostic tables."""
     spec = MODELS[model_key]
     rows = []
     for metric in ["ap", "f1"]:
@@ -281,6 +295,7 @@ def context_records(model_key, cell_id, cell_name, metrics) -> list[dict]:
 
 
 def aggregate_context_metrics(metrics_by_k: dict[int, list[dict]]) -> dict[int, dict]:
+    """Average metrics equally across contexts for each negative-to-positive ratio."""
     output = {}
     for k, rows in metrics_by_k.items():
         output[k] = {
@@ -318,6 +333,7 @@ def protein_graph(model, graph, cell_id, device):
 
 @torch.no_grad()
 def evaluate_protscape_ppi(model_key, model, data, id_to_name, device):
+    """Evaluate held-out PPI links at each negative ratio and retain pooled cell embeddings."""
     spec = MODELS[model_key]
     ppi_data, _, _, _, _, _, _, _ = data
     k_values = spec["k_values"]
@@ -373,7 +389,7 @@ def evaluate_protscape_ppi(model_key, model, data, id_to_name, device):
         eval_edges = torch.cat([pos_edges, neg_edges], dim=1)
 
         if model.s2gae_enabled:
-            decoder_input = _prepare_s2gae_decoder_input(
+            decoder_input = prepare_s2gae_decoder_input(
                 model.s2gae_decoder,
                 layers,
                 raw_embeddings=local.x[: graph.num_nodes],
@@ -425,17 +441,14 @@ def evaluate_protscape_metagraph(model, data, pooled_cells, device):
     return binary_metrics(torch.sigmoid(logits).cpu().numpy(), test_labels.numpy())
 
 
-def pinnacle_eval_dtype(device):
-    return torch.float16 if device.type == "cuda" else torch.float32
-
-
 @torch.no_grad()
 def evaluate_pinnacle(model_key, model, data, id_to_name, device):
+    """Evaluate PINNACLE PPI links, metagraph relations and the CCI test subset."""
     spec = MODELS[model_key]
     ppi_data, mg_data, edge_types, _, tissue_neighbors, _, _, _ = data
     k_values = spec["k_values"]
     max_k = max(k_values)
-    dtype = pinnacle_eval_dtype(device)
+    dtype = torch.float16 if device.type == "cuda" else torch.float32
     model.to(device=device, dtype=dtype).eval()
     set_seed(0)
 
@@ -457,7 +470,7 @@ def evaluate_pinnacle(model_key, model, data, id_to_name, device):
     # PINNACLE is evaluated in half precision on GPU to fit the ESM2 model.
     # Cast the lazily loaded protein features as well as the model and metagraph.
     global_features = mg_data.global_protein_features.to(dtype=dtype)
-    ppi_x = _LazyPPIFeatures(ppi_data, global_features, device)
+    ppi_x = LazyPPIFeatures(ppi_data, global_features, device)
     ppi_adjacencies = {}
     for cell_id, graph in ppi_data.items():
         train_val = graph.train_mask | graph.val_mask

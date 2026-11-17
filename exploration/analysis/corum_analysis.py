@@ -41,6 +41,7 @@ ANALYSIS_DIR = Path(PATHS["output_root"]) / "analysis/corum_analysis"
 
 
 def main() -> None:
+    """Evaluate the selected CORUM models and export performance and attribution tables."""
     ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
     stats, size_distribution, protein_distribution = dataset_tables()
     checkpoint_inputs = checkpoint_cell_representations()

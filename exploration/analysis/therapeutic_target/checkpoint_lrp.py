@@ -16,7 +16,6 @@ from downstream_tasks.data.datasets import ABMILDataset
 from downstream_tasks.data.loaders import EmbeddingLoader
 from downstream_tasks.data.preprocessing import zscore_normalize_bags
 from downstream_tasks.data.partitions import load_training_partition
-from downstream_tasks.models.abmil import ABMIL_LateFusion
 from downstream_tasks.models.linear import LinearProbe
 from downstream_tasks.models.registry import MODEL_VARIANTS, ModelType
 from downstream_tasks.run_selected import load_selected_runs, selected_run_dir
@@ -37,19 +36,14 @@ LRP_FIELDS = [
     "prob",
     "cell_label",
     "context_evidence",
-    "context_positive_evidence",
     "context_abs_evidence",
     "esm_evidence",
-    "esm_positive_evidence",
     "esm_abs_evidence",
 ]
 
 
-def read_config(run_dir: Path) -> pd.Series:
-    return pd.read_csv(run_dir / "model_config.csv").iloc[0]
-
-
 def apply_hyperparameters(config, row: pd.Series) -> None:
+    """Use the architecture recorded alongside the fold checkpoints."""
     for column, cast in (
         ("num_heads", int),
         ("att_hidden_dim", int),
@@ -67,6 +61,7 @@ def load_embeddings(
     config,
     cell_embedding_file: str = "cell_embeddings.pt",
 ) -> EmbeddingLoader:
+    """Load sequence, protein-context and cell embeddings for the selected inference run."""
     paths = get_hc_embedding_paths(
         config.get_inference_path(),
         cell_embedding_file=cell_embedding_file,
@@ -79,6 +74,7 @@ def load_embeddings(
 
 
 def load_task(task: str, config, loader: EmbeddingLoader):
+    """Read the saved disease cohort and partitions using the selected embedding loader."""
     return load_training_partition(
         task, config.tasks[task].label_csv, loader,
         config.seed, config.n_folds, config.dataset_mode,
@@ -86,6 +82,7 @@ def load_task(task: str, config, loader: EmbeddingLoader):
 
 
 def check_saved_split(run_dir: Path, genes, labels, class_names, split_plan) -> None:
+    """Check that predictions use the checkpoint's gene order and held-out split."""
     expected = np.load(run_dir / "test_idx.npy", allow_pickle=False)
     if not np.array_equal(get_test_indices(split_plan), expected):
         raise RuntimeError(f"Held-out indices do not match {run_dir}")
@@ -106,12 +103,14 @@ def check_saved_split(run_dir: Path, genes, labels, class_names, split_plan) -> 
 
 
 def check_alignment(run_dir: Path, features, genes, labels, class_names, split_plan) -> None:
+    """Check feature order and test partitions against the saved checkpoint cohort."""
     if list(features["genes"]) != list(genes):
         raise RuntimeError(f"Feature genes changed for {run_dir}")
     check_saved_split(run_dir, genes, labels, class_names, split_plan)
 
 
 def abmil_parameters(trainer: Trainer, variant, features, labels) -> dict:
+    """Collect the dimensions and architecture settings needed to restore an ABMIL checkpoint."""
     esm = features.get("esm")
     return {
         "num_classes": labels.shape[1],
@@ -124,14 +123,15 @@ def abmil_parameters(trainer: Trainer, variant, features, labels) -> dict:
         "att_dropout": trainer.config.att_dropout,
         "attention_type": variant.attention_type or "gated",
         "classifier_type": variant.classifier_type,
-        "mlp_hidden_dim": trainer._get_abmil_mlp_hidden_dim(variant),
+        "mlp_hidden_dim": trainer.abmil_hidden_dim(variant),
         "use_pdl": variant.use_pdl,
-        "pdl_proj_mode": trainer._resolve_pdl_proj_mode(variant),
-        "pdl_proj_layers": trainer._resolve_pdl_proj_layers(variant),
+        "pdl_proj_mode": trainer.pdl_projection_mode(variant),
+        "pdl_proj_layers": trainer.pdl_projection_layers(variant),
     }
 
 
 def evaluate_folds(run_dir: Path, row: pd.Series, trainer: Trainer, features, labels, split_plan):
+    """Score every fold on the permanent test set using training-only scaling."""
     variant = MODEL_VARIANTS[str(row["base_model_key"])]
     test_indices = get_test_indices(split_plan)
     test_labels = labels[test_indices]
@@ -179,9 +179,9 @@ def evaluate_folds(run_dir: Path, row: pd.Series, trainer: Trainer, features, la
         batches = DataLoader(
             dataset,
             shuffle=False,
-            **trainer._abmil_loader_kwargs(),
+            **trainer.abmil_loader_options(),
         )
-        model = trainer._build_abmil_model(parameters)
+        model = trainer.build_abmil_model(parameters)
         model.load_state_dict(
             torch.load(
                 run_dir / "models" / f"fold_{fold}.pt",
@@ -193,7 +193,7 @@ def evaluate_folds(run_dir: Path, row: pd.Series, trainer: Trainer, features, la
         probabilities = []
         with torch.no_grad():
             for batch, _ in batches:
-                batch = trainer._to_device(batch)
+                batch = trainer.move_batch_to_device(batch)
                 with torch.amp.autocast(
                     device_type=trainer.device.type,
                     enabled=trainer.use_amp,
@@ -206,11 +206,12 @@ def evaluate_folds(run_dir: Path, row: pd.Series, trainer: Trainer, features, la
 
 
 def recompute_performance() -> pd.DataFrame:
+    """Evaluate the selected runs, reusing embeddings across diseases and readouts."""
     configs = []
     for selected in load_selected_runs("therapeutic_targets"):
         run_dir = selected_run_dir(selected)
         row = dict(selected)
-        row.update(read_config(run_dir).to_dict())
+        row.update(pd.read_csv(run_dir / "model_config.csv").iloc[0].to_dict())
         row["run_dir"] = str(run_dir)
         configs.append(row)
     configs = pd.DataFrame(configs)
@@ -239,7 +240,7 @@ def recompute_performance() -> pd.DataFrame:
                 run_dir = Path(row["run_dir"])
                 trainer = Trainer(config, loader, run_dir, force=False)
                 variant = MODEL_VARIANTS[str(row["base_model_key"])]
-                features = trainer._build_features(variant, genes.copy())
+                features = trainer.build_features(variant, genes.copy())
                 check_alignment(run_dir, features, genes, labels, class_names, split_plan)
                 metrics = evaluate_folds(
                     run_dir, row, trainer, features, labels, split_plan
@@ -268,7 +269,8 @@ def generate_lrp(
     run_dir: Path,
     output_path: Path,
 ) -> Path:
-    row = read_config(run_dir)
+    """Write one relevance row per held-out gene, fold, class and context."""
+    row = pd.read_csv(run_dir / "model_config.csv").iloc[0]
     inference_name = str(row["embedding_inference_name"])
     config = load_config(inference_name, str(row["embedding_source"]), "bulk")
     apply_hyperparameters(config, row)
@@ -279,9 +281,9 @@ def generate_lrp(
     genes, labels, class_names, split_plan = load_task(str(row["task"]), config, loader)
     trainer = Trainer(config, loader, run_dir, force=False)
     variant = MODEL_VARIANTS[str(row["base_model_key"])]
-    features = trainer._build_features(variant, genes.copy())
+    features = trainer.build_features(variant, genes.copy())
     check_alignment(run_dir, features, genes, labels, class_names, split_plan)
-    protein_embeddings = loader._load_hc_protein_embed()
+    protein_embeddings = loader.load_context_protein_embeddings()
     id_to_name = {
         str(cell_id): str(cell_name)
         for cell_id, cell_name in zip(
@@ -300,32 +302,21 @@ def generate_lrp(
     ]
     test_indices = list(map(int, get_test_indices(split_plan)))
     device = trainer.device
+    parameters = abmil_parameters(trainer, variant, features, labels)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with gzip.open(output_path, "wt", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=LRP_FIELDS)
         writer.writeheader()
         for fold in range(split_plan.n_cv_folds):
+            # Match the normalization used to train this fold.
             train_indices, _, _ = get_cv_train_val_indices(split_plan, fold)
             _, bag_mean, bag_std = zscore_normalize_bags(
                 [bags[index] for index in train_indices]
             )
             sequence_mean = sequence[train_indices].mean(axis=0)
             sequence_std = np.maximum(sequence[train_indices].std(axis=0), 1e-8)
-            model = ABMIL_LateFusion(
-                num_classes=labels.shape[1],
-                ctx_dim=bags[0].shape[1],
-                esm_dim=sequence.shape[1],
-                num_heads=int(config.num_heads),
-                att_hidden=int(config.att_hidden_dim),
-                dropout=float(config.dropout),
-                att_dropout=float(config.att_dropout),
-                attention_type=variant.attention_type or "gated",
-                classifier_type=variant.classifier_type,
-                use_pdl=variant.use_pdl,
-                pdl_proj_mode=config.pdl_proj_mode,
-                pdl_proj_layers=config.pdl_proj_layers,
-            )
+            model = trainer.build_abmil_model(parameters)
             model.load_state_dict(
                 torch.load(
                     run_dir / "models" / f"fold_{fold}.pt",
@@ -358,10 +349,8 @@ def generate_lrp(
                                 "prob": score["prob"],
                                 "cell_label": str(cell_label),
                                 "context_evidence": score["context_evidence"][context_index],
-                                "context_positive_evidence": score["context_positive_evidence"][context_index],
                                 "context_abs_evidence": score["context_abs_evidence"][context_index],
                                 "esm_evidence": score["esm_evidence"],
-                                "esm_positive_evidence": score["esm_positive_evidence"],
                                 "esm_abs_evidence": score["esm_abs_evidence"],
                             }
                         )

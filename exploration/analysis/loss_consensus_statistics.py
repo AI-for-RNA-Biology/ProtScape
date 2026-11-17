@@ -19,6 +19,7 @@ SIMILARITY_GROUPS = {1: "Labelled positives", 0: "Labelled negatives"}
 
 
 def safe_corrcoef(x: np.ndarray, y: np.ndarray) -> float:
+    """Return Pearson correlation, or NaN when either input has no variance."""
     if x.size < 2 or np.ptp(x) == 0 or np.ptp(y) == 0:
         return np.nan
     return float(np.corrcoef(x, y)[0, 1])
@@ -67,6 +68,7 @@ def exact_similarity_rows(
 def pooled_binary_phi(
     n: int, first_positive: int, second_positive: int, intersection: int
 ) -> float:
+    """Calculate binary-call correlation from pooled positive and joint-positive counts."""
     first_fraction = first_positive / n
     second_fraction = second_positive / n
     variance = (
@@ -85,6 +87,7 @@ def pooled_binary_phi(
 def summarize_exact_similarity(
     by_context: pd.DataFrame, pooled_positive: pd.DataFrame
 ) -> pd.DataFrame:
+    """Combine context correlations and pooled call counts for each loss comparison."""
     rows = []
     grouped = by_context.groupby(["group", "comparison"], sort=False)
     for (group, comparison), table in grouped:
@@ -174,6 +177,7 @@ def similarity_table(exact_summary: pd.DataFrame) -> pd.DataFrame:
 
 
 def population_summary(population_counts, positive_calls, totals) -> pd.DataFrame:
+    """Count consensus classes and positive calls separately for labelled edges and non-edges."""
     rows = []
     for label in (1, 0):
         for cls, class_name in enumerate(CLASS_NAMES):

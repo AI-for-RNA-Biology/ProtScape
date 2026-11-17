@@ -30,7 +30,6 @@ def setup_output_dirs(output_root: Path, task: str, inference_model: str, model_
     return output_dir
 
 
-
 def save_model_weights(
     model: nn.Module,
     output_dir: Path,
@@ -78,17 +77,7 @@ def save_results_csv(
     output_dir: Path,
     filename: str = "results.csv",
 ) -> Path:
-    """
-    Save results to a CSV file.
-
-    Args:
-        results: Dictionary with result metrics
-        output_dir: Output directory
-        filename: CSV filename
-
-    Returns:
-        Path to saved CSV
-    """
+    """Save results to a CSV file."""
     output_dir.mkdir(parents=True, exist_ok=True)
     csv_path = output_dir / filename
 
@@ -98,7 +87,6 @@ def save_results_csv(
     df.to_csv(csv_path, index=False)
 
     return csv_path
-
 
 
 def aggregate_task_results(output_root: Path, task: str) -> pd.DataFrame:

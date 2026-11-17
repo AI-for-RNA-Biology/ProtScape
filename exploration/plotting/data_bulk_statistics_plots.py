@@ -8,16 +8,15 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-from exploration.plotting.fonts import register_arial
+from exploration.plotting.fonts import FONT_NAME
 
-register_arial()
 matplotlib.rcParams["pdf.fonttype"] = 42
 matplotlib.rcParams["ps.fonttype"] = 42
 PLOT_RC = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
     "font.family": "sans-serif",
-    "font.sans-serif": ["Arial", "Nimbus Sans", "DejaVu Sans"],
+    "font.sans-serif": [FONT_NAME, "Nimbus Sans", "DejaVu Sans"],
     "mathtext.fontset": "dejavusans",
     "axes.linewidth": 0.8,
 }
@@ -73,7 +72,7 @@ def style_axes(ax, grid_axis=None, labelsize=8.5):
 
 
 def save_figure(fig, output, stem):
-    """Use the exact layout and export settings of the source scripts."""
+    """Save PDF and PNG figures with the specified layout and margins."""
     fig.tight_layout()
     fig.savefig(output / f"{stem}.pdf", bbox_inches="tight")
     fig.savefig(output / f"{stem}.png", dpi=300, bbox_inches="tight")
@@ -269,6 +268,7 @@ def plot_jaccard_boxplots(data, output):
 
 
 def format_mds_axes(ax, fontsize=8):
+    """Label the MDS dimensions with the common plot typography."""
     ax.set_xlabel("MDS 1")
     ax.set_ylabel("MDS 2")
     for label in (ax.xaxis.label, ax.yaxis.label):

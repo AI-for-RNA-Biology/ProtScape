@@ -8,9 +8,8 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-from exploration.plotting.fonts import register_arial
+from exploration.plotting.fonts import FONT_NAME
 
-register_arial()
 matplotlib.rcParams["pdf.fonttype"] = 42
 matplotlib.rcParams["ps.fonttype"] = 42
 
@@ -43,8 +42,8 @@ CLASS_LABELS = [
 SENSITIVITY_RC = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
-    "font.family": "Arial",
-    "font.sans-serif": ["Arial"],
+    "font.family": FONT_NAME,
+    "font.sans-serif": [FONT_NAME],
     "font.size": 7,
     "axes.titlesize": 8,
     "axes.labelsize": 8,
@@ -81,11 +80,8 @@ AXIS_LABEL_FONT_SIZE = SENSITIVITY_RC["axes.labelsize"]
 TICK_FONT_SIZE = SENSITIVITY_RC["xtick.labelsize"]
 
 
-def read_table(source: Path, filename: str) -> pd.DataFrame:
-    return pd.read_csv(source / filename)
-
-
 def save_sensitivity_figure(fig: plt.Figure, output: Path, stem: str) -> None:
+    """Save PDF and PNG versions, then close the figure."""
     fig.savefig(output / f"{stem}.pdf", bbox_inches="tight", pad_inches=0.03)
     fig.savefig(
         output / f"{stem}.png",
@@ -97,6 +93,7 @@ def save_sensitivity_figure(fig: plt.Figure, output: Path, stem: str) -> None:
 
 
 def style_string_axis(ax: plt.Axes) -> None:
+    """Apply the shared axis styling to STRING support panels."""
     ax.grid(False)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -115,6 +112,7 @@ def style_string_axis(ax: plt.Axes) -> None:
 
 
 def string_count_label(value: float) -> str:
+    """Format supported-pair counts with compact k or M suffixes."""
     if value >= 1_000_000:
         text = f"{value / 1_000_000:.2f}".rstrip("0").rstrip(".")
         return f"{text}M"
@@ -138,6 +136,7 @@ STRING_BANDS = [
 
 
 def string_class_order(label: str) -> tuple[list[str], list[str]]:
+    """Order consensus classes from the matching label end of the scale."""
     if label == "Labelled positive":
         return CLASS_NAMES, CLASS_LABELS
     return list(reversed(CLASS_NAMES)), list(reversed(CLASS_LABELS))
@@ -146,6 +145,7 @@ def string_class_order(label: str) -> tuple[list[str], list[str]]:
 def draw_string_coverage_axis(
     ax: plt.Axes, score_bands: pd.DataFrame, label: str, *, show_ylabel: bool
 ) -> None:
+    """Show the fraction of pairs with STRING support in each consensus class."""
     class_names, class_labels = string_class_order(label)
     table = score_bands[score_bands["label"] == label]
     counts = table.groupby("loss_class").first().reindex(class_names)
@@ -190,6 +190,7 @@ def draw_string_coverage_axis(
 def draw_string_score_band_panel(
     ax: plt.Axes, score_bands: pd.DataFrame, label: str
 ) -> None:
+    """Show the STRING confidence distribution among supported pairs."""
     class_names, class_labels = string_class_order(label)
     table = score_bands[score_bands["label"] == label]
     x = np.arange(len(class_names))
@@ -248,6 +249,7 @@ def draw_string_score_band_panel(
 def plot_string_coverage_by_label(
     score_bands: pd.DataFrame, output: Path, stem: str
 ) -> None:
+    """Save paired STRING-coverage panels for labelled edges and non-edges."""
     fig, axes = plt.subplots(1, 2, figsize=(8 * CM, 4.5 * CM), sharey=True)
     for column, label in enumerate(["Labelled positive", "Labelled negative"]):
         draw_string_coverage_axis(
@@ -260,6 +262,7 @@ def plot_string_coverage_by_label(
 def plot_string_score_distribution_by_label(
     score_bands: pd.DataFrame, output: Path, stem: str
 ) -> None:
+    """Save paired STRING-confidence distributions by edge label."""
     fig, axes = plt.subplots(1, 2, figsize=(8 * CM, 4.5 * CM), sharey=True)
     for column, label in enumerate(["Labelled positive", "Labelled negative"]):
         draw_string_score_band_panel(axes[column], score_bands, label)
@@ -268,18 +271,12 @@ def plot_string_score_distribution_by_label(
     save_sensitivity_figure(fig, output, stem)
 
 
-def plot_string_support(score_bands: pd.DataFrame, output: Path) -> None:
-    stem = "string_combined_string_supported_unique_edge_score_band_distribution_by_loss_class"
-    plot_string_coverage_by_label(score_bands, output, f"{stem}_coverage")
-    plot_string_score_distribution_by_label(
-        score_bands, output, f"{stem}_distribution"
-    )
-
-
 def plot_string(source: str | Path, output: str | Path) -> None:
     """Render the STRING-support plot."""
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
-    score_bands = read_table(source, "string_score_bands.csv")
+    score_bands = pd.read_csv(source / "string_score_bands.csv")
     with plt.rc_context(SENSITIVITY_RC):
-        plot_string_support(score_bands, output)
+        stem = "string_combined_string_supported_unique_edge_score_band_distribution_by_loss_class"
+        plot_string_coverage_by_label(score_bands, output, f"{stem}_coverage")
+        plot_string_score_distribution_by_label(score_bands, output, f"{stem}_distribution")

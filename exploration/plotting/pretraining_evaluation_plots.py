@@ -8,9 +8,8 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-from exploration.plotting.fonts import register_arial
+from exploration.plotting.fonts import FONT_NAME
 
-register_arial()
 matplotlib.rcParams["pdf.fonttype"] = 42
 matplotlib.rcParams["ps.fonttype"] = 42
 
@@ -19,7 +18,6 @@ import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
 from matplotlib.ticker import LogFormatterMathtext
-
 
 
 CM = 1 / 2.54
@@ -46,7 +44,7 @@ MODEL_COLORS = {
     "s2gae_att_k1_uni": "#e6550d",
 }
 
-# This is the order in the original loss-sensitivity output tables and legend.
+# Use the same loss order in the tables and legend.
 LOSS_MODEL_ORDER = [
     "s2gae_att_k1_uni",
     "s2gae_att_k1_l1_do00",
@@ -67,7 +65,7 @@ LOSS_COLORS = {
 PRETRAINING_RC = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
-    "font.family": "Arial",
+    "font.family": FONT_NAME,
     "axes.labelsize": 8.0,
     "xtick.labelsize": 6.0,
     "ytick.labelsize": 6.0,
@@ -89,11 +87,8 @@ PRETRAINING_RC = {
 }
 
 
-def read_table(source: Path, filename: str) -> pd.DataFrame:
-    return pd.read_csv(source / filename)
-
-
 def save_pretraining_figure(fig: plt.Figure, output: Path, stem: str) -> None:
+    """Save transparent SVG, PDF and PNG versions, then close the figure."""
     options = {"dpi": 300, "bbox_inches": "tight", "transparent": True}
     fig.savefig(output / f"{stem}.svg", **options)
     fig.savefig(output / f"{stem}.pdf", **options)
@@ -101,9 +96,8 @@ def save_pretraining_figure(fig: plt.Figure, output: Path, stem: str) -> None:
     plt.close(fig)
 
 
-
-
 def clean_pretraining_axis(ax: plt.Axes) -> None:
+    """Apply the active pretraining style to axis lines and tick labels."""
     ax.grid(False)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -127,6 +121,7 @@ def clean_pretraining_axis(ax: plt.Axes) -> None:
 
 
 def percent_limits(values: pd.Series | np.ndarray) -> tuple[float, float]:
+    """Choose rounded percentage limits that include all finite plotted scores."""
     values = np.asarray(values, dtype=float)
     values = values[np.isfinite(values)]
     low = float(values.min())
@@ -136,6 +131,7 @@ def percent_limits(values: pd.Series | np.ndarray) -> tuple[float, float]:
 
 
 def model_handles(order: list[str], colors: dict[str, str], linewidth: float) -> list[Line2D]:
+    """Build model-colored legend lines in the requested order."""
     return [Line2D([0], [0], color=colors[key], linewidth=linewidth) for key in order]
 
 
@@ -148,6 +144,7 @@ def draw_curve(
     ylabel: str,
     yticks: list[int] | None,
 ) -> None:
+    """Draw model score curves over negative-to-positive ratios on an existing axis."""
     rows = table[table["model_key"].isin(order)]
     for key in order:
         model = rows[rows["model_key"] == key].sort_values("k_negatives")
@@ -195,6 +192,7 @@ def plot_curve(
     ylabel: str,
     yticks: list[int] | None,
 ) -> None:
+    """Save one negative-ratio performance panel with shared model styling."""
     fig, ax = plt.subplots(figsize=(5.0 * CM, 5.5 * CM))
     draw_curve(
         ax,
@@ -210,6 +208,7 @@ def plot_curve(
 
 
 def plot_core_model_legend(output: Path) -> None:
+    """Save the legend used by the main pretraining comparison panels."""
     fig, ax = plt.subplots(figsize=(6.8 * CM, 4.5 * CM))
     ax.axis("off")
     ax.legend(
@@ -224,6 +223,7 @@ def plot_core_model_legend(output: Path) -> None:
 
 
 def plot_metagraph_barplot(table: pd.DataFrame, output: Path, stem: str, metric: str = "AUPRC") -> None:
+    """Compare the configured metagraph score for the main model variants."""
     rows = table.set_index("model_key").reindex(CORE_MODEL_ORDER)
     values = rows["metagraph_percent"].to_numpy(dtype=float)
     x = np.arange(len(rows))
@@ -263,7 +263,7 @@ def plot_metagraph_metric_scatter(
     output: Path,
     stem: str,
 ) -> None:
-    """Plot metagraph F1 against metagraph AUPRC for the released models."""
+    """Plot metagraph F1 against metagraph AUPRC for the evaluated models."""
     pivot = (
         table[table["metric"].isin(["ap", "f1"])]
         .pivot(index="model_key", columns="metric", values="metagraph_score")
@@ -289,6 +289,7 @@ def plot_metagraph_metric_scatter(
 
 
 def plot_parameter_counts(table: pd.DataFrame, output: Path, stem: str) -> None:
+    """Plot the number of trainable parameters in each model."""
     rows = table.set_index("model_key").reindex(CORE_MODEL_ORDER)
     values = rows["parameter_count"].to_numpy(dtype=float)
     x = np.arange(len(rows))
@@ -317,6 +318,7 @@ def plot_parameter_counts(table: pd.DataFrame, output: Path, stem: str) -> None:
 
 
 def plot_loss_legend(output: Path) -> None:
+    """Save the loss-variant and chance-baseline legend."""
     fig, ax = plt.subplots(figsize=(5.4 * CM, 4.5 * CM))
     ax.axis("off")
     handles = model_handles(LOSS_MODEL_ORDER, LOSS_COLORS, 2.5)
@@ -337,14 +339,14 @@ def plot_pretraining(source: str | Path, output: str | Path) -> None:
     """Render the main pretraining evaluation plots."""
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
-    panel_a_auprc = read_table(source, "robust_ppi_auprc.csv")
-    panel_a_f1 = read_table(source, "robust_ppi_f1.csv")
-    panel_b = read_table(source, "metagraph_auprc.csv")
-    panel_b_f1 = read_table(source, "pretraining_full_metrics.csv")
+    panel_a_auprc = pd.read_csv(source / "robust_ppi_auprc.csv")
+    panel_a_f1 = pd.read_csv(source / "robust_ppi_f1.csv")
+    panel_b = pd.read_csv(source / "metagraph_auprc.csv")
+    panel_b_f1 = pd.read_csv(source / "pretraining_full_metrics.csv")
     panel_b_f1["metagraph_percent"] = 100 * panel_b_f1["higher_level_f1"]
-    panel_c = read_table(source, "parameter_counts.csv")
-    panel_d_auprc = read_table(source, "loss_sensitivity_auprc.csv")
-    panel_d_f1 = read_table(source, "loss_sensitivity_f1.csv")
+    panel_c = pd.read_csv(source / "parameter_counts.csv")
+    panel_d_auprc = pd.read_csv(source / "loss_sensitivity_auprc.csv")
+    panel_d_f1 = pd.read_csv(source / "loss_sensitivity_f1.csv")
 
     with plt.rc_context(PRETRAINING_RC):
         plot_curve(

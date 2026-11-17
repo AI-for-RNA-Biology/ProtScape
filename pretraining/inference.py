@@ -15,16 +15,18 @@ from .train.factored_batching import build_cci_edge_index
 from .utils import construct_metapath
 
 
-class _LazyPPIFeatures(dict):
+class LazyPPIFeatures(dict):
     """Load one context's input features at a time during PINNACLE's first layer."""
 
     def __init__(self, ppi_data, global_features, device):
+        """Retain shared protein features and cell indices without copying them to the device."""
         super().__init__((cell_id, None) for cell_id in ppi_data)
         self.ppi_data = ppi_data
         self.global_features = global_features
         self.device = device
 
     def items(self):
+        """Yield each cell's current features, gathering from the shared table when needed."""
         for cell_id in self:
             value = self[cell_id]
             if value is None:
@@ -34,6 +36,7 @@ class _LazyPPIFeatures(dict):
 
 
 def parse_args():
+    """Select a saved model, device and destination for exported embeddings."""
     parser = argparse.ArgumentParser(description="Run ProtScape or adapted PINNACLE inference.")
     parser.add_argument("checkpoint", type=Path, help="Portable state-dictionary checkpoint")
     parser.add_argument("--output-dir", type=Path, default=None)
@@ -87,7 +90,7 @@ def encode_proteins(model, ppi_data, device):
 def encode_pinnacle(model, ppi_data, mg_data, tissue_neighbors, device, seed):
     """Run the complete adapted PINNACLE protein and metagraph forward pass."""
     ppi_metapaths, mg_metapaths = get_metapaths()
-    ppi_x = _LazyPPIFeatures(
+    ppi_x = LazyPPIFeatures(
         ppi_data,
         mg_data.global_protein_features,
         device,
@@ -145,6 +148,7 @@ def encode_pinnacle(model, ppi_data, mg_data, tissue_neighbors, device, seed):
 
 
 def main():
+    """Rebuild the saved model, load its configured features and export protein/cell embeddings."""
     args = parse_args()
     repo_root = Path(__file__).resolve().parents[1]
     with (repo_root / "configs" / "paths.yaml").open("r", encoding="utf-8") as handle:
@@ -199,11 +203,16 @@ def main():
     seed = int(config.get("seed", 0))
     torch.manual_seed(seed)
     if features_mode == "ESM2":
-        feature_path = Path(paths["esm2_embeddings"]).expanduser()
+        pooling = config.get("esm2_pooling", "bos")
+        feature_key = "esm2_embeddings" if pooling == "bos" else "esm2_mean_embeddings"
+        feature_path = Path(paths[feature_key]).expanduser()
+        feature_dim = None
+    elif features_mode == "ProstT5":
+        feature_path = Path(paths["prostt5_embeddings"]).expanduser()
         feature_dim = None
     elif features_mode == "random":
         feature_path = None
-        feature_dim = int(config["input_dim"])
+        feature_dim = int(config.get("input_dim") or config["protein_config"]["input_dim"])
     else:
         raise ValueError(f"Unsupported checkpoint protein features: {features_mode}")
 

@@ -13,7 +13,7 @@ with PATHS_FILE.open("r", encoding="utf-8") as handle:
 OUTPUT_ROOT = Path(PATHS["output_root"]).expanduser()
 PROCESSING_ROOT = OUTPUT_ROOT / "data_processing_bulk"
 
-# Keep string paths because the original preprocessing code uses os.path.
+# Intermediate files for the three expression datasets.
 PINNACLE_BASE = str(PROCESSING_ROOT)
 
 TABULA_INTERMEDIATE = os.path.join(PINNACLE_BASE, "tabula_pseudobulk")
@@ -24,9 +24,7 @@ GLOBAL_PPI = str(Path(PATHS["global_ppi"]).expanduser())
 CELLTYPE_CLASS_MAPPING = str(Path(PATHS["celltype_class_mapping"]).expanduser())
 
 
-# ---------------------------------------------------------------------------
-# Dataset-specific resources
-# ---------------------------------------------------------------------------
+# Input datasets
 
 TABULA_H5AD = str(Path(PATHS["tabula_h5ad"]).expanduser())
 TABULA_METADATA = str(Path(PATHS["tabula_metadata"]).expanduser())
@@ -42,16 +40,14 @@ ALS_ASTRO_COUNTS = str(Path(PATHS["als_astrocyte_counts"]).expanduser())
 ALS_ASTRO_METADATA = str(Path(PATHS["als_astrocyte_metadata"]).expanduser())
 
 ALS_INTERMEDIATE = os.path.join(PINNACLE_BASE, "als_bulk")
-ALS_BULK_DIR = ALS_INTERMEDIATE  # Alias for consistency
+ALS_BULK_DIR = ALS_INTERMEDIATE
 ALS_MN_INTERMEDIATE = os.path.join(ALS_INTERMEDIATE, "motor_neurons")
 ALS_ASTRO_INTERMEDIATE = os.path.join(ALS_INTERMEDIATE, "astrocytes")
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-# ---------------------------------------------------------------------------
-# CellPhoneDB paths
-# ---------------------------------------------------------------------------
+# CellPhoneDB
 
 # CellPhoneDB input/output directories (per dataset)
 HBCA_CELLPHONEDB_INPUT = os.path.join(HBCA_INTERMEDIATE, "cellphonedb_input")
@@ -90,7 +86,7 @@ CL_PATH = str(Path(PATHS["cell_ontology_obo"]).expanduser())
 class PseudobulkParams:
     min_cells_per_sample: int = 25
     log_offset: float = 1.0
-    gmm_quantile: float = 0.99  # Quantile used for the frozen networks_bulk build.
+    gmm_quantile: float = 0.99
     min_donor_fraction: float = 0.5
     min_donor_count: int = 1
 

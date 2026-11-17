@@ -1,3 +1,15 @@
+"""Adapted PINNACLE protein/cell/tissue model.
+
+Contextual AI models for single-cell protein biology, Nature Methods (2024):
+https://doi.org/10.1038/s41592-024-02341-3
+Original code: https://github.com/mims-harvard/PINNACLE
+
+Fixes: local protein-feature ordering, bidirectional PPI edges, protein-pair
+splits shared across cell types, and negatives excluding supplied positive
+edges, their reverses and self-loops. ESM-2 inputs, ACM/GIN layers and shared
+PPI weights are optional extensions.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,6 +19,7 @@ from .pinnacle_conv import PCTConv, PPIConv
 
 
 class Pinnacle(nn.Module):
+    """Two protein–cell–tissue message-passing rounds with relation-wise decoding."""
     def __init__(
         self,
         gnn_method,
@@ -21,25 +34,8 @@ class Pinnacle(nn.Module):
         dropout = 0.2,
         shared_ppi_gnn = False,
         device='cuda:0'):
+        """Create two graph layers; GAT concatenates heads, while GIN/ACM use output dimensions directly."""
         super(Pinnacle, self).__init__()
-        """
-        Pinnacle model for protein-protein interaction and metagraph learning.
-        Args:
-            nfeat (int): Number of input features.
-                - This is typically the size of the feature vector for each protein or cell type.
-                (e.g 1024 for random feature vectors)
-            hidden (int): Number of hidden units.
-            output (int): Number of output units.
-            num_ppi_relations (int): Number of PPI relations.
-                - usually only 1 (edge type in [4])
-            num_mg_relations (int): Number of metagraph relations.
-                - usually 4 (edge types in [0, 1, 2, 3]) - notice that we observe that 1 was missing i.e directed edges
-            ppi_data: PPI data.
-            n_heads (int): Number of attention heads.
-            pc_att_channels (int): Number of channels for protein-cell attention.
-            dropout (float): Dropout rate.
-            shared_ppi_gnn (bool): Whether to use shared PPI GNN.
-        """
 
         self.gnn_method = gnn_method
         self.dropout = dropout
@@ -49,7 +45,7 @@ class Pinnacle(nn.Module):
         self.layer1_out = hidden
         self.layer2_in = hidden if n_heads is None else self.layer1_out * n_heads 
         self.layer2_out = output
-        self.output = hidden if n_heads is None else self.layer2_out * n_heads
+        self.output = self.layer2_out if n_heads is None else self.layer2_out * n_heads
         self.shared_ppi_gnn = shared_ppi_gnn
         
         # Complete layer #1
@@ -97,7 +93,7 @@ class Pinnacle(nn.Module):
             device=device
             )
         self.conv2_down = PPIConv(
-            hidden if n_heads is None else self.layer2_out * n_heads ,
+            self.output,
             num_ppi_relations,
             self.layer2_out,
             ppi_data,
@@ -122,28 +118,7 @@ class Pinnacle(nn.Module):
         ppi_edge_index, 
         mg_edge_index, 
         tissue_neighbors):
-        """
-        Forward pass of the Pinnacle model.
-        This function applies two layers of PCTConv and PPIConv to update the protein-celltype-tissue representations and the metagraph representations.
-        It also applies layer normalization, leaky ReLU activation, batch normalization, and dropout to the outputs of each layer.
-        The first layer updates the protein-celltype-tissue representations and the metagraph representations, while the second layer updates the protein-celltype-tissue representations and down-pools the metagraph representations.
-        The outputs of the second layer are returned as the final representations of the protein-celltype-tissue and metagraph.
-        The function also includes a metagraph decoder that learns the weights for the metagraph relations.
-        The metagraph decoder is initialized with Xavier uniform initialization.
-        The function takes the following arguments:
-
-        Args:
-            ppi_x (dict): Dictionary of protein-celltype-tissue representations.
-            mg_x (torch.Tensor): Metagraph representations.
-            ppi_metapaths (list): List of PPI metapaths.
-            mg_metapaths (list): List of metagraph metapaths.
-            ppi_edge_index (torch.Tensor): Edge index for PPI graph.
-            mg_edge_index (torch.Tensor): Edge index for metagraph.
-            tissue_neighbors (dict): Dictionary of tissue neighbors.
-        Returns:
-            ppi_x (dict): Updated dictionary of protein-celltype-tissue representations.
-            mg_x (torch.Tensor): Updated metagraph representations.
-        """
+        """Apply two rounds of protein-to-cell pooling and cell-to-protein updates."""
         # Layer 1
 
         # Update Protein-Celltype-Tissue

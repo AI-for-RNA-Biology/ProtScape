@@ -1,4 +1,8 @@
-"""Retained xMIL-LRP propagation for late-fusion ABMIL."""
+"""Explain late-fusion ABMIL predictions with xMIL-LRP.
+
+Hense et al., xMIL: Insightful Explanations for Multiple Instance Learning
+in Histopathology (2024): https://arxiv.org/abs/2406.04280
+"""
 
 from __future__ import annotations
 
@@ -13,6 +17,7 @@ EPS = 1e-8
 
 
 def stabilize(values: torch.Tensor, eps: float = EPS) -> torch.Tensor:
+    """Move denominators away from zero without changing their sign."""
     signs = torch.where(values >= 0, torch.ones_like(values), -torch.ones_like(values))
     return values + eps * signs
 
@@ -23,6 +28,7 @@ def lrp_step(
     inputs: tuple[torch.Tensor, ...],
     activations: tuple[torch.Tensor, ...],
 ) -> tuple[torch.Tensor, ...]:
+    """Distribute output relevance to each input as activation × gradient."""
     scaled = rule_output * (relevance / stabilize(rule_output)).detach()
     gradients = torch.autograd.grad(scaled.sum(), inputs, retain_graph=True)
     return tuple(
@@ -32,12 +38,14 @@ def lrp_step(
 
 
 def projector_forward(projector: nn.Module | None, bag: torch.Tensor):
+    """Project contexts and save the linear layers needed for the backward pass."""
     if projector is None:
         return bag, []
     current = bag
     steps = []
     for layer in projector:
         if isinstance(layer, PDropout):
+            # Instance dropout is inactive during evaluation.
             continue
         if isinstance(layer, nn.ReLU):
             current = layer(current)
@@ -45,11 +53,13 @@ def projector_forward(projector: nn.Module | None, bag: torch.Tensor):
         activation = current
         inputs = current.detach().clone().requires_grad_(True)
         current = layer(inputs)
+        # Bias affects predictions, but is excluded from the linear LRP rule.
         steps.append((activation, inputs, F.linear(inputs, layer.weight, None)))
     return current, steps
 
 
 def layernorm_rule(norm: nn.LayerNorm, inputs: torch.Tensor) -> torch.Tensor:
+    """Keep LayerNorm's forward values while freezing its scale for LRP."""
     mean = inputs.mean(dim=-1, keepdim=True)
     std = inputs.std(dim=-1, keepdim=True).detach()
     propagated = (inputs - mean) / stabilize(std, norm.eps)
@@ -65,7 +75,12 @@ def explain_late_fusion_bag(
     esm: torch.Tensor,
     class_indices,
 ) -> dict[int, dict[str, object]]:
-    """Return feature-level contextual and sequence relevance for one bag."""
+    """Return signed and absolute relevance for each context and the sequence.
+
+    Inputs are one protein's normalized context bag and ESM vector. Attention
+    weights stay fixed while relevance flows from the logit to input features.
+    The classifier must be linear, as in the selected attribution models.
+    """
     model.eval()
     raw_bag = bag.detach()
     esm_activation = esm.detach()
@@ -76,6 +91,7 @@ def explain_late_fusion_bag(
     ptr = torch.tensor([0, n_instances], dtype=torch.long, device=bag.device)
     attention = model.attention(projected_bag.detach(), batch=batch, ptr=ptr).detach()
 
+    # Treat pooling, normalization and classification as separate LRP steps.
     aggregation_input = projected_bag.detach().clone().requires_grad_(True)
     esm_input = esm_activation.detach().clone().requires_grad_(True)
     pooled = (aggregation_input[:, None, :] * attention[:, :, None]).sum(dim=0)
@@ -93,6 +109,7 @@ def explain_late_fusion_bag(
 
     scores = {}
     for class_idx in map(int, class_indices):
+        # Explain one class logit, then split its relevance between both inputs.
         output_relevance = torch.zeros_like(logits)
         output_relevance[0, class_idx] = logits[0, class_idx]
         (norm_relevance,) = lrp_step(
@@ -125,14 +142,10 @@ def explain_late_fusion_bag(
         scores[class_idx] = {
             "prob": float(probabilities[class_idx]),
             "context_evidence": context_evidence.detach().cpu().numpy(),
-            "context_positive_evidence": (
-                context_evidence.clamp(min=0).detach().cpu().numpy()
-            ),
             "context_abs_evidence": (
                 context_relevance.abs().sum(dim=1).detach().cpu().numpy()
             ),
             "esm_evidence": float(esm_evidence.detach().cpu()),
-            "esm_positive_evidence": float(esm_evidence.clamp(min=0).detach().cpu()),
             "esm_abs_evidence": float(esm_relevance.abs().sum().detach().cpu()),
         }
     return scores

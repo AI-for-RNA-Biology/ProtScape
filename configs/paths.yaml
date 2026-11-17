@@ -26,18 +26,16 @@ als_astrocyte_metadata: ../ProtScape_release/data/raw/als_astrocyte_metadata.csv
 cellphonedb_database: data/reference_data/cellphonedb_v3.0.0/cellphone.db
 
 protein_sequences: ../ProtScape_release/data/raw/protein_sequences.csv.gz
-# ESM2 3B layer-33 features (2,560 dimensions).
+# ESM2 3B layer-33 features (2,560 dimensions); select the input in pretraining.yaml.
 esm2_embeddings: ../ProtScape_release/data/sequence_embeddings/gene_protein_embeddings_esm2_3B_layer33.plk
+esm2_mean_embeddings: outputs/sequence_embeddings/esm2_3B_layer33_mean.pkl
 prostt5_embeddings: ../ProtScape_release/data/sequence_embeddings/gene_protein_embeddings_prostt5_1024.plk
 pinnacle_paper_embeddings_dir: data/reference_data/pinnacle_paper_embeddings
 corum_raw_json: ../ProtScape_release/data/raw/corum_4.1/corum_humanComplexes.json
 corum_dataset_dir: ../ProtScape_release/data/downstream_tasks/corum_dataset
 therapeutic_target_drugbank_targets: ../ProtScape_release/data/reference_data/drugbank/all_approved_oct2022.csv
-therapeutic_target_evidence_dir: data/reference_data/opentargets_24_03/evidence/sourceId=chembl
-therapeutic_target_ot_release: "26.03"
-therapeutic_target_ot_diseases_dir: data/reference_data/opentargets_26_03/disease
-therapeutic_target_ot_targets_dir: data/reference_data/opentargets_26_03/target
-therapeutic_target_ot_associations_dir: data/reference_data/opentargets_26_03/association_by_datatype_indirect
+therapeutic_target_ot_release: "24.03"
+therapeutic_target_ot_root: data/reference_data/opentargets
 therapeutic_target_dataset_dir: ../ProtScape_release/data/downstream_tasks/therapeutic_target_dataset
 
 string_protein_info: data/reference_data/string_v12_human/9606.protein.info.v12.0.txt.gz

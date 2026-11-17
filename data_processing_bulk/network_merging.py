@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 @lru_cache(None)
 def get_global_ppi_node_count(path: str = GLOBAL_PPI) -> int:
+    """Count proteins in the reference interactome for the dataset summary."""
     if not os.path.exists(path):
         logger.warning("Global PPI not found at %s when counting nodes.", path)
         return 0
@@ -29,21 +30,8 @@ def get_global_ppi_node_count(path: str = GLOBAL_PPI) -> int:
 
 
 def read_edgelist_any(path: str | Path) -> nx.Graph:
-    """Read an edgelist handling either tab or whitespace delimiters."""
-    path_str = str(path)
-    try:
-        graph = nx.read_edgelist(path_str, delimiter="\t")
-    except Exception as exc:  # pragma: no cover - format issues fallback
-        logger.debug("Tab-delimited read failed for %s (%s); retrying with default delimiter.", path_str, exc)
-        graph = nx.read_edgelist(path_str)
-        return graph
-
-    if graph.number_of_edges() == 0:
-        alt_graph = nx.read_edgelist(path_str)
-        if alt_graph.number_of_edges() > 0:
-            logger.debug("Edgelist %s contained no tab-delimited edges; using whitespace-delimited parse.", path_str)
-            graph = alt_graph
-    return graph
+    """Read gene-symbol edges separated by spaces or tabs."""
+    return nx.read_edgelist(path)
 
 
 def write_count_edge_dict(global_ppi_path: Path, ppi_root: Path, output_file: Path) -> None:
@@ -65,6 +53,7 @@ def write_count_edge_dict(global_ppi_path: Path, ppi_root: Path, output_file: Pa
 
 
 def summarize_ppi_dir(ppi_dir: str) -> Dict[str, object]:
+    """Summarize context sizes and the union of their proteins."""
     list_path = Path(ppi_dir) / "ppi_celltype_list.csv"
     if list_path.exists():
         df = pd.read_csv(
@@ -215,18 +204,22 @@ def normalize_graph_labels(graph: nx.Graph) -> nx.Graph:
     return normalized
 
 
+def is_tissue_node(node: str) -> bool:
+    """Identify metagraph tissue nodes by their BRENDA Tissue Ontology prefix."""
+    return isinstance(node, str) and node.startswith("BTO")
+
+
 def summarize_metagraph(mg_graph: nx.Graph) -> Dict[str, int]:
+    """Count tissues and each relation type in the merged metagraph."""
     mg_simple = nx.Graph(mg_graph)
 
-    def is_tissue(node: str) -> bool:
-        return isinstance(node, str) and node.startswith("BTO")
 
-    tissues = {n for n in mg_simple.nodes if is_tissue(n)}
-    tissues_connected = {t for t in tissues if any(not is_tissue(nb) for nb in mg_simple.neighbors(t))}
+    tissues = {n for n in mg_simple.nodes if is_tissue_node(n)}
+    tissues_connected = {t for t in tissues if any(not is_tissue_node(nb) for nb in mg_simple.neighbors(t))}
 
-    cell_cell_edges = sum(1 for u, v in mg_simple.edges if not is_tissue(u) and not is_tissue(v))
-    cell_tissue_edges = sum(1 for u, v in mg_simple.edges if is_tissue(u) ^ is_tissue(v))
-    tissue_tissue_edges = sum(1 for u, v in mg_simple.edges if is_tissue(u) and is_tissue(v))
+    cell_cell_edges = sum(1 for u, v in mg_simple.edges if not is_tissue_node(u) and not is_tissue_node(v))
+    cell_tissue_edges = sum(1 for u, v in mg_simple.edges if is_tissue_node(u) ^ is_tissue_node(v))
+    tissue_tissue_edges = sum(1 for u, v in mg_simple.edges if is_tissue_node(u) and is_tissue_node(v))
 
     return {
         "tissues_total": len(tissues),
@@ -238,29 +231,30 @@ def summarize_metagraph(mg_graph: nx.Graph) -> Dict[str, int]:
 
 
 def log_final_summary(ppi_summary: Dict[str, object], mg_summary: Dict[str, int], gene_count: int, global_ppi_path: str) -> None:
+    """Print merged network sizes and protein coverage relative to the global PPI."""
     global_total = get_global_ppi_node_count(global_ppi_path)
     unique_proteins = len(ppi_summary["unique_proteins"])
 
     logger.info("")
     logger.info("Final dataset")
     logger.info(
-        "We have %d cell type-specific protein interaction networks, which have, on average, %.0f +/- %.0f proteins per network.",
+        "Context PPIs: %d; proteins per context: %.0f +/- %.0f.",
         ppi_summary["num_networks"],
         ppi_summary["mean_nodes"],
         ppi_summary["std_nodes"],
     )
     logger.info(
-        "The number of unique proteins across all cell type-specific protein interaction networks is %d of the %d proteins in the global reference protein interaction network.",
+        "Protein coverage: %d of %d reference proteins.",
         unique_proteins,
         global_total,
     )
     logger.info(
-        "In the metagraph, we have %d tissues (nodes), and %d are directly connected to cell types.",
+        "Tissues: %d; directly connected to cells: %d.",
         mg_summary["tissues_total"],
         mg_summary["tissues_connected"],
     )
     logger.info(
-        "There are %d cell-cell interactions, %d cell-tissue edges and %d tissue-tissue edges.",
+        "Edges: %d cell-cell, %d cell-tissue, %d tissue-tissue.",
         mg_summary["cell_cell_edges"],
         mg_summary["cell_tissue_edges"],
         mg_summary["tissue_tissue_edges"],
@@ -647,15 +641,13 @@ def check_celltype_tissue_coverage(mg_graph: nx.Graph, ppi_dir: str) -> Dict[str
     if not cell_types_with_ppi:
         return {}
 
-    def is_tissue(node: str) -> bool:
-        return isinstance(node, str) and node.startswith("BTO")
 
-    mg_celltypes = {n for n in mg_graph.nodes if not is_tissue(n)}
+    mg_celltypes = {n for n in mg_graph.nodes if not is_tissue_node(n)}
     missing_nodes = sorted(cell_types_with_ppi - mg_celltypes)
 
     missing_tissue_edges: List[str] = []
     for ct in (cell_types_with_ppi & mg_celltypes):
-        if not any(is_tissue(nb) for nb in mg_graph.neighbors(ct)):
+        if not any(is_tissue_node(nb) for nb in mg_graph.neighbors(ct)):
             missing_tissue_edges.append(ct)
 
     stats = {
@@ -686,11 +678,9 @@ def check_celltype_tissue_coverage(mg_graph: nx.Graph, ppi_dir: str) -> Dict[str
 
 def summarize_cci_vs_metagraph(cci_graph: nx.Graph, mg_graph: nx.Graph) -> Dict[str, object]:
     """Compute CCI coverage for cell types in the metagraph."""
-    def is_tissue(node: str) -> bool:
-        return isinstance(node, str) and node.startswith("BTO")
 
-    mg_celltypes = {n for n in mg_graph.nodes if not is_tissue(n)}
-    cci_celltypes = {n for n in cci_graph.nodes if not is_tissue(n)}
+    mg_celltypes = {n for n in mg_graph.nodes if not is_tissue_node(n)}
+    cci_celltypes = {n for n in cci_graph.nodes if not is_tissue_node(n)}
 
     degrees = []
     with_cci = 0
@@ -782,13 +772,11 @@ def merge_metagraphs(
         if cell_types_with_ppi:
             logger.info(f"Found {len(cell_types_with_ppi)} cell types with PPI networks")
 
-            def is_tissue(node: str) -> bool:
-                return isinstance(node, str) and node.startswith("BTO")
 
             edges_to_remove = []
             for u, v in g_merged.edges():
-                is_u_tissue = is_tissue(u)
-                is_v_tissue = is_tissue(v)
+                is_u_tissue = is_tissue_node(u)
+                is_v_tissue = is_tissue_node(v)
 
                 if is_u_tissue and is_v_tissue:
                     continue
@@ -835,6 +823,7 @@ def create_summary(
     coverage_stats: Optional[Dict[str, object]] = None,
     cci_cell_stats: Optional[Dict[str, object]] = None,
 ) -> None:
+    """Write merge_summary.json with PPI, CCI, metagraph and reliable-gene counts."""
     logger.info("Creating dataset summary")
 
     summary = {

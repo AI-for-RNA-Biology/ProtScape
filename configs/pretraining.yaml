@@ -1,11 +1,11 @@
 protscape:
   module: pretraining.train_protscape
   args: >-
-    ACM_RandomWalk concat 512 0.4 3 1 attention ESM2 0 1 512 2 0
+    --gnn-dropout 0.4 --cell-pooling attention --s2gae-enabled 1 --graph-saint-norm 0
     --dataset-mode bulk --epochs 300 --checkpointing true --k-negatives 1
     --use-metagraph true --loader graphsaint --split-mode global --lr 0.01
     --batch-size 64 --weighted-ppi-loss false --ppi-loss bce
-    --s2gae-mask-ratio 0.5 --s2gae-mask-type dm
+    --s2gae-mask-ratio 0.5 --s2gae-mask-type um
     --s2gae-decoder-type cross_layer --s2gae-decoder-dropout 0
     --s2gae-loss-weight 1 --metagraph-loss-weight 1
     --uniformity-enabled true --uniformity-lambda-reg 0.00005
@@ -14,7 +14,7 @@ protscape:
 protscape_gae:
   module: pretraining.train_protscape
   args: >-
-    ACM_RandomWalk concat 512 0.6 3 1 attention ESM2 0 0 512 2 0
+    --gnn-dropout 0.6 --cell-pooling attention --s2gae-enabled 0 --graph-saint-norm 0
     --dataset-mode bulk --epochs 300 --checkpointing true --k-negatives 1
     --use-metagraph true --loader graphsaint --split-mode global --lr 0.01
     --batch-size 64 --weighted-ppi-loss false --ppi-loss bce
@@ -23,7 +23,7 @@ protscape_gae:
 protscape_gae_uniformity:
   module: pretraining.train_protscape
   args: >-
-    ACM_RandomWalk concat 512 0.6 3 1 attention ESM2 0 0 512 2 0
+    --gnn-dropout 0.6 --cell-pooling attention --s2gae-enabled 0 --graph-saint-norm 0
     --dataset-mode bulk --epochs 300 --checkpointing true --k-negatives 1
     --use-metagraph true --loader graphsaint --split-mode global --lr 0.01
     --batch-size 64 --weighted-ppi-loss false --ppi-loss bce
@@ -33,7 +33,7 @@ protscape_gae_uniformity:
 protscape_gae_virtual_node:
   module: pretraining.train_protscape
   args: >-
-    ACM_RandomWalk concat 512 0.4 3 1 vn ESM2 0 0 512 2 0
+    --gnn-dropout 0.4 --cell-pooling vn --s2gae-enabled 0 --graph-saint-norm 0
     --dataset-mode bulk --epochs 300 --checkpointing true --k-negatives 1
     --use-metagraph true --loader graphsaint --split-mode global --lr 0.01
     --batch-size 64 --weighted-ppi-loss false --ppi-loss bce
@@ -42,7 +42,7 @@ protscape_gae_virtual_node:
 protscape_gae_virtual_node_uniformity:
   module: pretraining.train_protscape
   args: >-
-    ACM_RandomWalk concat 512 0.4 3 1 vn ESM2 0 0 512 2 0
+    --gnn-dropout 0.4 --cell-pooling vn --s2gae-enabled 0 --graph-saint-norm 0
     --dataset-mode bulk --epochs 300 --checkpointing true --k-negatives 1
     --use-metagraph true --loader graphsaint --split-mode global --lr 0.01
     --batch-size 64 --weighted-ppi-loss false --ppi-loss bce
@@ -52,7 +52,7 @@ protscape_gae_virtual_node_uniformity:
 protscape_gae_learned_virtual_node:
   module: pretraining.train_protscape
   args: >-
-    ACM_RandomWalk concat 512 0.6 3 1 learnedvn ESM2 0 0 512 2 0
+    --gnn-dropout 0.6 --cell-pooling learnedvn --s2gae-enabled 0 --graph-saint-norm 0
     --dataset-mode bulk --epochs 300 --checkpointing true --k-negatives 1
     --use-metagraph true --loader graphsaint --split-mode global --lr 0.01
     --batch-size 64 --weighted-ppi-loss false --ppi-loss bce
@@ -61,7 +61,7 @@ protscape_gae_learned_virtual_node:
 protscape_gae_learned_virtual_node_uniformity:
   module: pretraining.train_protscape
   args: >-
-    ACM_RandomWalk concat 512 0.6 3 1 learnedvn ESM2 0 0 512 2 0
+    --gnn-dropout 0.6 --cell-pooling learnedvn --s2gae-enabled 0 --graph-saint-norm 0
     --dataset-mode bulk --epochs 300 --checkpointing true --k-negatives 1
     --use-metagraph true --loader graphsaint --split-mode global --lr 0.01
     --batch-size 64 --weighted-ppi-loss false --ppi-loss bce
@@ -71,11 +71,11 @@ protscape_gae_learned_virtual_node_uniformity:
 protscape_no_uniformity:
   module: pretraining.train_protscape
   args: >-
-    ACM_RandomWalk concat 512 0.4 3 1 attention ESM2 0 1 512 2 0
+    --gnn-dropout 0.4 --cell-pooling attention --s2gae-enabled 1 --graph-saint-norm 0
     --dataset-mode bulk --epochs 300 --checkpointing true --k-negatives 1
     --use-metagraph true --loader graphsaint --split-mode global --lr 0.01
     --batch-size 64 --weighted-ppi-loss false --ppi-loss bce
-    --s2gae-mask-ratio 0.5 --s2gae-mask-type dm
+    --s2gae-mask-ratio 0.5 --s2gae-mask-type um
     --s2gae-decoder-type cross_layer --s2gae-decoder-dropout 0
     --s2gae-loss-weight 1 --metagraph-loss-weight 1
     --uniformity-enabled false
@@ -83,31 +83,31 @@ protscape_no_uniformity:
 protscape_phuber:
   module: pretraining.train_protscape
   args: >-
-    ACM_RandomWalk concat 512 0.4 3 1 attention ESM2 0 1 512 2 0
+    --gnn-dropout 0.4 --cell-pooling attention --s2gae-enabled 1 --graph-saint-norm 0
     --dataset-mode bulk --epochs 300 --checkpointing true --k-negatives 1
     --use-metagraph true --split-mode global --lr 0.01 --batch-size 64
     --ppi-loss phuber --ppi-phuber-tau 10 --s2gae-mask-ratio 0.5
-    --s2gae-mask-type dm --uniformity-enabled true
+    --s2gae-mask-type um --uniformity-enabled true
     --uniformity-lambda-reg 0.00005 --uniformity-t 2 --uniformity-dim 0
 
 protscape_l1:
   module: pretraining.train_protscape
   args: >-
-    ACM_RandomWalk concat 512 0 3 1 attention ESM2 0 1 512 2 0
+    --gnn-dropout 0 --cell-pooling attention --s2gae-enabled 1 --graph-saint-norm 0
     --dataset-mode bulk --epochs 300 --checkpointing true --k-negatives 1
     --use-metagraph true --split-mode global --lr 0.01 --batch-size 64
-    --ppi-loss l1 --s2gae-mask-ratio 0.5 --s2gae-mask-type dm
+    --ppi-loss l1 --s2gae-mask-ratio 0.5 --s2gae-mask-type um
     --uniformity-enabled true --uniformity-lambda-reg 0.00005
     --uniformity-t 2 --uniformity-dim 0
 
 pinnacle_random:
   module: pretraining.train_pinnacle
-  args: GATv2 0.01 0.2 32 random --dataset-mode bulk --epochs 150
+  args: --gnn-method GATv2 --gnn-lambda 0.01 --gnn-dropout 0.2 --gnn-output 32 --features-mode random --dataset-mode bulk --epochs 150
 
 pinnacle_esm_gat:
   module: pretraining.train_pinnacle
-  args: GATv2 0.01 0.2 32 ESM2 --dataset-mode bulk --epochs 150
+  args: --gnn-method GATv2 --gnn-lambda 0.01 --gnn-dropout 0.2 --gnn-output 32 --features-mode ESM2 --dataset-mode bulk --epochs 150
 
 pinnacle_esm_acm:
   module: pretraining.train_pinnacle
-  args: ACM_RandomWalk 0.01 0.2 64 ESM2 --dataset-mode bulk --epochs 150
+  args: --gnn-method ACM_RandomWalk --gnn-lambda 0.01 --gnn-dropout 0.2 --gnn-output 64 --features-mode ESM2 --dataset-mode bulk --epochs 150

@@ -56,12 +56,14 @@ SYNAPTIC_GROUPS = [
 
 
 def require_file(path: Path) -> Path:
+    """Check a required candidate-analysis input before reading it."""
     if not path.is_file():
         raise FileNotFoundError(f"Missing required Parkinson analysis input: {path}")
     return path
 
 
 def build_candidates(scores: pd.DataFrame) -> pd.DataFrame:
+    """Rank predicted targets that were outside the labelled benchmark cohort."""
     candidates = scores[
         scores["benchmark_split"].eq("label_excluded")
         & scores["mean_probability"].ge(PROBABILITY_THRESHOLD)
@@ -78,6 +80,7 @@ def build_candidates(scores: pd.DataFrame) -> pd.DataFrame:
 def build_recovery_tables(
     scores: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Track held-out positive recovery as proteins are screened by model score."""
     curves = []
     summaries = []
     for model, model_scores in scores.groupby("model", sort=False):
@@ -135,6 +138,7 @@ def build_recovery_tables(
 def build_external_support(
     candidates: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Annotate candidates with the configured Open Targets and DrugBank exports."""
     associations = pd.read_csv(require_file(OPENTARGETS_ASSOCIATIONS), dtype=str)
     datatypes = associations["datatype_scores_json"].map(json.loads)
     non_literature = datatypes.map(
@@ -180,11 +184,10 @@ def build_external_support(
     return joined, pd.DataFrame(summary_rows)
 
 
-
-
 def build_synaptic_completion(
     scores: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Track how far each model must rank to recover all members of the selected synaptic families."""
     label_excluded = scores[scores["benchmark_split"].eq("label_excluded")]
     member_rows = []
     wide_rows = []
@@ -280,6 +283,7 @@ def build_statistics(
     edges: pd.DataFrame,
     leiden_nodes: pd.DataFrame,
 ) -> pd.DataFrame:
+    """Summarize benchmark membership, candidate overlap and external support."""
     rows = []
     for split, split_rows in membership.groupby(
         "benchmark_split", dropna=False
@@ -344,6 +348,7 @@ def build_statistics(
 
 
 def main() -> None:
+    """Export candidate recovery, external support, synaptic completion and STRING module analyses."""
     ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
     scores, membership = load_predictions()
     candidates = build_candidates(scores)

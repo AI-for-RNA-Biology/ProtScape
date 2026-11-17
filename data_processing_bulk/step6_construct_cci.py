@@ -201,7 +201,8 @@ def count_majority(
     return graph
 
 
-def _plot_histogram(data: np.ndarray, title: str, xlabel: str, output_path: Path, bins: int = 50) -> None:
+def plot_histogram(data: np.ndarray, title: str, xlabel: str, output_path: Path, bins: int = 50) -> None:
+    """Save a QC histogram of interaction counts or cell-network connectivity."""
     if data.size == 0:
         logger.warning("Skipping histogram %s because data array is empty.", output_path.name)
         return
@@ -277,7 +278,7 @@ def construct_cci(
     if pvalue_store:
         pvals = np.concatenate(pvalue_store)
         neg_log_p = -np.log10(np.clip(pvals, 1e-16, None))
-        _plot_histogram(
+        plot_histogram(
             neg_log_p,
             title="CellPhoneDB -log10(p) distribution",
             xlabel="-log10(p)",
@@ -285,7 +286,7 @@ def construct_cci(
         )
     if lr_store:
         lr_counts = np.array(lr_store)
-        _plot_histogram(
+        plot_histogram(
             lr_counts,
             title="CellPhoneDB LR entries per cell pair",
             xlabel="Number of LR entries",
@@ -295,6 +296,7 @@ def construct_cci(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Read CellPhoneDB result paths and ligand–receptor support thresholds."""
     parser = argparse.ArgumentParser(
         description="Construct cell-cell interaction networks from CellPhoneDB outputs."
     )
@@ -336,9 +338,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(args: list[str] | None = None) -> None:
+    """Build cell–cell edges from significant ligand–receptor interactions and save QC."""
     parsed = build_parser().parse_args(args)
 
     def resolve_min_lr(dataset: str) -> int:
+        """Use the requested minimum ligand–receptor support, otherwise the dataset default."""
         if parsed.min_lr is not None:
             return parsed.min_lr
         return CELLPHONEDB_MIN_LR_BY_DATASET.get(dataset, CELLPHONEDB_MIN_LR)

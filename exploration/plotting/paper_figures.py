@@ -1,4 +1,4 @@
-"""Render the paper's quantitative panels from released source tables."""
+"""Render the paper's quantitative panels from the configured source tables."""
 
 from pathlib import Path
 
@@ -11,6 +11,7 @@ matplotlib.rcParams["ps.fonttype"] = 42
 
 
 def plot_all(source: Path, output: Path):
+    """Redraw all manuscript figure groups from the configured source tables."""
     from exploration.plotting import (
         consensus_diagnostic_plots,
         consensus_evaluation_plots,
@@ -50,6 +51,7 @@ def plot_all(source: Path, output: Path):
 
 
 def main():
+    """Read the source/output directories from paths.yaml and render the paper figures."""
     config_file = Path(__file__).resolve().parents[2] / "configs/paths.yaml"
     with config_file.open() as handle:
         paths = yaml.safe_load(handle)

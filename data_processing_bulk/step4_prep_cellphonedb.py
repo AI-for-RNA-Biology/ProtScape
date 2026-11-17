@@ -79,12 +79,14 @@ def extract_cl_id(cell_type: object) -> str:
 
 
 def normalize_tabula_label(value: object) -> str:
+    """Normalize spaces and underscores for matching Tabula cell-type names."""
     text = unicodedata.normalize("NFKD", str(value))
     text = text.encode("ascii", "ignore").decode("ascii").lower().strip()
     return re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", text)).strip("_")
 
 
-def _convert_hbca_genes(adata: sc.AnnData) -> sc.AnnData:
+def convert_hbca_genes(adata: sc.AnnData) -> sc.AnnData:
+    """Replace HBCA Ensembl identifiers with symbols from the configured annotation table."""
     symbols = convert_ensembl_to_hgnc(
         pd.Series(adata.var_names),
         metadata_path=HBCA_GENE_METADATA,
@@ -96,14 +98,16 @@ def _convert_hbca_genes(adata: sc.AnnData) -> sc.AnnData:
     return converted
 
 
-def _choose_groupby(adata: sc.AnnData, candidates: list[str], dataset: str) -> str:
+def choose_groupby(adata: sc.AnnData, candidates: list[str], dataset: str) -> str:
+    """Select the first available cell-type column from a dataset’s supported annotations."""
     groupby = next((column for column in candidates if column in adata.obs), None)
     if groupby is None:
         raise KeyError(f"No cell-type column found for {dataset}; tried {candidates}")
     return groupby
 
 
-def _ppi_cell_types(dataset: str, output_dir: Path) -> set[str]:
+def ppi_cell_types(dataset: str, output_dir: Path) -> set[str]:
+    """Read cell-type identifiers from the PPI edge-list filenames."""
     paths = list((output_dir.parent / "ppi" / "ppi_edgelists").glob("*.txt"))
     if dataset == "hbca":
         return {
@@ -123,15 +127,16 @@ def _ppi_cell_types(dataset: str, output_dir: Path) -> set[str]:
     }
 
 
-def _filter_to_ppi_cell_types(
+def filter_to_ppi_cell_types(
     adata: sc.AnnData,
     dataset: str,
     groupby: str,
     output_dir: Path,
 ) -> sc.AnnData:
+    """Retain Tabula/HBCA cells whose context has a PPI graph."""
     if dataset not in {"hbca", "tabula"}:
         return adata
-    ppi_types = _ppi_cell_types(dataset, output_dir)
+    ppi_types = ppi_cell_types(dataset, output_dir)
     if not ppi_types:
         logger.warning("No PPI edgelists found for %s; retaining all cells", dataset)
         return adata
@@ -147,12 +152,13 @@ def _filter_to_ppi_cell_types(
     return filtered
 
 
-def _cap_cells(
+def cap_cells(
     adata: sc.AnnData,
     groupby: str,
     maximum: int | None,
     rng: random.Random | None = None,
 ) -> sc.AnnData:
+    """Sample at most the requested number of cells per context with a fixed random generator."""
     if maximum is None:
         return adata
 
@@ -166,24 +172,23 @@ def _cap_cells(
     return capped
 
 
-def _cell_type_labels(adata: sc.AnnData, dataset: str, groupby: str):
-    labels = adata.obs[groupby].astype(str)
-    if dataset == "tabula":
-        return labels.to_numpy()
-    mapping = {label: extract_cl_id(label) for label in labels.unique()}
-    return labels.map(mapping).to_numpy()
 
 
-def _write_cellphonedb_inputs(
+def write_cellphonedb_inputs(
     adata: sc.AnnData,
     dataset: str,
     groupby: str,
     output_dir: Path,
 ) -> tuple[Path, Path]:
+    """Write cell labels and a counts pickle, using Tabula raw counts when available."""
     output_dir.mkdir(parents=True, exist_ok=True)
     meta_path = output_dir / f"meta_{dataset}_CellPhoneDB.txt"
+    labels = adata.obs[groupby].astype(str)
+    if dataset != "tabula":
+        mapping = {label: extract_cl_id(label) for label in labels.unique()}
+        labels = labels.map(mapping)
     pd.DataFrame(
-        {"Cell": adata.obs_names, "cell_type": _cell_type_labels(adata, dataset, groupby)}
+        {"Cell": adata.obs_names, "cell_type": labels.to_numpy()}
     ).to_csv(meta_path, sep="\t", index=False)
 
     counts = adata.raw.to_adata() if dataset == "tabula" and adata.raw is not None else adata
@@ -219,9 +224,9 @@ def prepare_inputs(
     """Filter, deterministically cap, and serialize one dataset for CellPhoneDB."""
     if groupby not in adata.obs:
         raise KeyError(f"Cell-type column '{groupby}' is absent")
-    adata = _filter_to_ppi_cell_types(adata, dataset, groupby, output_dir)
-    adata = _cap_cells(adata, groupby, max_cells_per_type)
-    return _write_cellphonedb_inputs(adata, dataset, groupby, output_dir)
+    adata = filter_to_ppi_cell_types(adata, dataset, groupby, output_dir)
+    adata = cap_cells(adata, groupby, max_cells_per_type)
+    return write_cellphonedb_inputs(adata, dataset, groupby, output_dir)
 
 
 def _combine_als() -> sc.AnnData:
@@ -238,7 +243,8 @@ def _combine_als() -> sc.AnnData:
     return combined
 
 
-def _inventory_mapping(path: Path) -> tuple[dict[str, str], set[str]]:
+def inventory_mapping(path: Path) -> tuple[dict[str, str], set[str]]:
+    """Match names in the Tabula PPI inventory to CL identifiers."""
     if not path.exists():
         raise FileNotFoundError(f"Tabula PPI inventory not found: {path}")
 
@@ -257,7 +263,8 @@ def _inventory_mapping(path: Path) -> tuple[dict[str, str], set[str]]:
     return mapping, cl_ids
 
 
-def _ontology_mapping(cl_ids: set[str]) -> tuple[dict[str, str], dict[str, str]]:
+def ontology_mapping(cl_ids: set[str]) -> tuple[dict[str, str], dict[str, str]]:
+    """Map CL primary names and synonyms to the identifiers represented in the PPI inventory."""
     graph = obonet.read_obo(CL_PATH)
     aliases = {}
     primary_names = {}
@@ -279,10 +286,11 @@ def _ontology_mapping(cl_ids: set[str]) -> tuple[dict[str, str], dict[str, str]]
     return aliases, primary_names
 
 
-def _map_tabula_cell_types(adata: sc.AnnData) -> sc.AnnData:
+def map_tabula_cell_types(adata: sc.AnnData) -> sc.AnnData:
+    """Resolve Tabula labels using the inventory and ontology, dropping unmapped cell types."""
     inventory_path = Path(TABULA_INTERMEDIATE) / "ppi" / "inventory.txt"
-    name_to_cl_id, inventory_cl_ids = _inventory_mapping(inventory_path)
-    ontology_aliases, cl_names = _ontology_mapping(inventory_cl_ids)
+    name_to_cl_id, inventory_cl_ids = inventory_mapping(inventory_path)
+    ontology_aliases, cl_names = ontology_mapping(inventory_cl_ids)
     for name, cl_id in ontology_aliases.items():
         name_to_cl_id.setdefault(name, cl_id)
 
@@ -316,6 +324,7 @@ def _map_tabula_cell_types(adata: sc.AnnData) -> sc.AnnData:
         ]
     else:
         def map_name(label: str) -> str | None:
+            """Resolve one normalized cell-type name through inventory labels or ontology synonyms."""
             upper = label.upper().strip()
             if upper.startswith(("CL:", "CL_")):
                 return extract_cl_id(label)
@@ -347,26 +356,21 @@ def _map_tabula_cell_types(adata: sc.AnnData) -> sc.AnnData:
     return adata
 
 
-def _sanitize_obs(adata: sc.AnnData) -> None:
-    if "is_primary_data" in adata.obs:
-        adata.obs["is_primary_data"] = adata.obs["is_primary_data"].astype(str)
-    for column in adata.obs:
-        if adata.obs[column].dtype == "object":
-            adata.obs[column] = adata.obs[column].astype(str)
 
 
-def _combine_merged(max_cells_per_type: int | None) -> sc.AnnData:
+def combine_merged(max_cells_per_type: int | None) -> sc.AnnData:
+    """Combine capped HBCA and Tabula cells on shared gene symbols for joint CCI inference."""
     hbca = sc.read_h5ad(DATASETS["hbca"]["source"])
-    hbca_groupby = _choose_groupby(hbca, DATASETS["hbca"]["groupby"], "hbca")
+    hbca_groupby = choose_groupby(hbca, DATASETS["hbca"]["groupby"], "hbca")
     hbca.obs["cell_type"] = "HBCA__" + hbca.obs[hbca_groupby].map(extract_cl_id).astype(str)
 
-    tabula = _map_tabula_cell_types(sc.read_h5ad(DATASETS["tabula"]["source"]))
+    tabula = map_tabula_cell_types(sc.read_h5ad(DATASETS["tabula"]["source"]))
     if max_cells_per_type is not None:
         rng = random.Random(RANDOM_SEED)
-        hbca = _cap_cells(hbca, "cell_type", max_cells_per_type, rng)
-        tabula = _cap_cells(tabula, "cell_type", max_cells_per_type, rng)
+        hbca = cap_cells(hbca, "cell_type", max_cells_per_type, rng)
+        tabula = cap_cells(tabula, "cell_type", max_cells_per_type, rng)
 
-    hbca = _convert_hbca_genes(hbca)
+    hbca = convert_hbca_genes(hbca)
     hbca.var_names_make_unique()
     tabula.var_names_make_unique()
     common_genes = sorted(set(hbca.var_names) & set(tabula.var_names))
@@ -375,13 +379,18 @@ def _combine_merged(max_cells_per_type: int | None) -> sc.AnnData:
         join="outer",
         merge="same",
     )
-    _sanitize_obs(combined)
+    if "is_primary_data" in combined.obs:
+        combined.obs["is_primary_data"] = combined.obs["is_primary_data"].astype(str)
+    for column in combined.obs:
+        if combined.obs[column].dtype == "object":
+            combined.obs[column] = combined.obs[column].astype(str)
 
     logger.info("Combined HBCA and Tabula: %d cells, %d genes", combined.n_obs, combined.n_vars)
     return combined
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Read the dataset and optional maximum cell count for CellPhoneDB preparation."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", choices=sorted(DATASETS), default="tabula")
     parser.add_argument("--max-cells-per-type", type=int)
@@ -389,29 +398,30 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(args: list[str] | None = None) -> None:
+    """Prepare dataset-specific labels and counts for the CellPhoneDB command."""
     parsed = build_parser().parse_args(args)
     config = DATASETS[parsed.dataset]
 
     if parsed.dataset == "als":
         adata = _combine_als()
     elif parsed.dataset == "merged":
-        adata = _combine_merged(parsed.max_cells_per_type)
+        adata = combine_merged(parsed.max_cells_per_type)
     else:
         adata = sc.read_h5ad(config["source"])
         if parsed.dataset == "hbca":
-            groupby = _choose_groupby(adata, config["groupby"], parsed.dataset)
-            adata = _filter_to_ppi_cell_types(adata, parsed.dataset, groupby, config["output"])
-            adata = _cap_cells(adata, groupby, parsed.max_cells_per_type)
-            adata = _convert_hbca_genes(adata)
-            _write_cellphonedb_inputs(adata, parsed.dataset, groupby, config["output"])
+            groupby = choose_groupby(adata, config["groupby"], parsed.dataset)
+            adata = filter_to_ppi_cell_types(adata, parsed.dataset, groupby, config["output"])
+            adata = cap_cells(adata, groupby, parsed.max_cells_per_type)
+            adata = convert_hbca_genes(adata)
+            write_cellphonedb_inputs(adata, parsed.dataset, groupby, config["output"])
             return
         elif parsed.dataset == "tabula":
-            adata = _map_tabula_cell_types(adata)
+            adata = map_tabula_cell_types(adata)
             adata.obs["cell_type"] = adata.obs["cell_type"].str.replace(
                 r"^TABULA__", "", regex=True
             )
 
-    groupby = _choose_groupby(adata, config["groupby"], parsed.dataset)
+    groupby = choose_groupby(adata, config["groupby"], parsed.dataset)
     prepare_inputs(
         adata,
         dataset=parsed.dataset,

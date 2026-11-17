@@ -8,9 +8,8 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-from exploration.plotting.fonts import register_arial
+from exploration.plotting.fonts import FONT_NAME
 
-register_arial()
 matplotlib.rcParams["pdf.fonttype"] = 42
 matplotlib.rcParams["ps.fonttype"] = 42
 
@@ -36,16 +35,16 @@ LOSS_PANEL_WIDTH_CM = 9.47
 PLOT_RC = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
-    "font.family": "Arial",
-    "font.sans-serif": ["Arial"],
+    "font.family": FONT_NAME,
+    "font.sans-serif": [FONT_NAME],
     "font.size": 7.0,
     "mathtext.fontset": "custom",
-    "mathtext.rm": "Arial",
-    "mathtext.it": "Arial:italic",
-    "mathtext.bf": "Arial:bold",
-    "mathtext.cal": "Arial:italic",
-    "mathtext.sf": "Arial",
-    "mathtext.tt": "Arial",
+    "mathtext.rm": FONT_NAME,
+    "mathtext.it": f"{FONT_NAME}:italic",
+    "mathtext.bf": f"{FONT_NAME}:bold",
+    "mathtext.cal": f"{FONT_NAME}:italic",
+    "mathtext.sf": FONT_NAME,
+    "mathtext.tt": FONT_NAME,
     "text.color": "#111111",
     "axes.labelcolor": "#111111",
     "axes.edgecolor": "#111111",
@@ -132,14 +131,12 @@ MODEL_COLORS = {
 
 
 def figure_size(width_cm: float, height_cm: float) -> tuple[float, float]:
+    """Convert figure dimensions from centimeters to inches."""
     return width_cm * CM, height_cm * CM
 
 
-def read_table(source: Path, filename: str) -> pd.DataFrame:
-    return pd.read_csv(source / filename, float_precision="round_trip")
-
-
 def save_figure(fig: plt.Figure, output: Path, stem: str) -> None:
+    """Save PDF and PNG versions, then close the figure."""
     fig.savefig(output / f"{stem}.pdf", bbox_inches="tight", pad_inches=0.03)
     fig.savefig(
         output / f"{stem}.png",
@@ -151,6 +148,7 @@ def save_figure(fig: plt.Figure, output: Path, stem: str) -> None:
 
 
 def clean_axes(ax: plt.Axes) -> None:
+    """Apply the shared axis lines and ticks, omitting the upper and right borders."""
     ax.grid(False)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -173,6 +171,7 @@ def plot_complex_size_distribution(
     distribution: pd.DataFrame,
     output: Path,
 ) -> None:
+    """Plot complex membership counts and annotate the median complex size."""
     row = stats.iloc[0]
     x = distribution["n_members"].to_numpy(dtype=float)
     y = distribution["n_complexes"].to_numpy(dtype=float)
@@ -221,6 +220,7 @@ def plot_complexes_per_protein_distribution(
     distribution: pd.DataFrame,
     output: Path,
 ) -> None:
+    """Plot how many CORUM complexes contain each protein."""
     row = stats.iloc[0]
     maximum = int(distribution["complexes_per_protein"].max())
     full_x = pd.DataFrame({"complexes_per_protein": np.arange(1, maximum + 1)})
@@ -261,6 +261,7 @@ def plot_complexes_per_protein_distribution(
 
 
 def present_models(rows: pd.DataFrame, order: list[str]) -> list[str]:
+    """Keep available models in the specified plotting order."""
     available = set(rows["inference_key"])
     return [key for key in order if key in available]
 
@@ -273,6 +274,7 @@ def plot_performance_legend(
     labels: dict[str, str],
     include_baselines: bool,
 ) -> None:
+    """Save the model-color legend for the CORUM performance panels."""
     model_order = present_models(rows, model_order)
     handles = [
         Patch(facecolor=MODEL_COLORS[key], edgecolor="white", label=labels[key])
@@ -314,6 +316,7 @@ def plot_performance_metric(
     model_order: list[str],
     loss_comparison: bool = False,
 ) -> None:
+    """Compare model/readout scores with fold-model standard deviations."""
     sub = rows[rows["metric"] == metric].copy()
     readouts = [key for key in READOUT_ORDER if key in set(sub["readout_key"])]
     model_order = present_models(sub, model_order)
@@ -405,21 +408,22 @@ def plot_performance_metric(
 
 
 def plot_benchmark(source: Path, output: Path) -> None:
+    """Draw CORUM dataset-size and benchmark-performance panels from the analysis CSVs."""
     output.mkdir(parents=True, exist_ok=True)
     with matplotlib.rc_context(PLOT_RC):
-        stats = read_table(source, "corum_dataset_statistics.csv")
+        stats = pd.read_csv(source / "corum_dataset_statistics.csv", float_precision="round_trip")
         plot_complex_size_distribution(
             stats,
-            read_table(source, "corum_complex_size_distribution.csv"),
+            pd.read_csv(source / "corum_complex_size_distribution.csv", float_precision="round_trip"),
             output,
         )
         plot_complexes_per_protein_distribution(
             stats,
-            read_table(source, "corum_complexes_per_protein_distribution.csv"),
+            pd.read_csv(source / "corum_complexes_per_protein_distribution.csv", float_precision="round_trip"),
             output,
         )
 
-        main_performance = read_table(source, "corum_main_performance.csv")
+        main_performance = pd.read_csv(source / "corum_main_performance.csv", float_precision="round_trip")
         for metric in ("auprc", "f1"):
             plot_performance_metric(
                 main_performance,
@@ -437,7 +441,7 @@ def plot_benchmark(source: Path, output: Path) -> None:
             include_baselines=True,
         )
 
-        loss_performance = read_table(source, "corum_loss_performance.csv")
+        loss_performance = pd.read_csv(source / "corum_loss_performance.csv", float_precision="round_trip")
         for metric in ("auprc", "f1"):
             plot_performance_metric(
                 loss_performance,

@@ -16,10 +16,12 @@ DISEASE_MODELS = {
 
 
 def summarize(values):
+    """Calculate an AUPRC mean and sample standard deviation."""
     return {"auprc_mean": st.mean(values), "auprc_sd": st.stdev(values)}
 
 
 def write_scores(rows, path):
+    """Export percentage scores with single-line labels and explicit SD units."""
     table = pd.DataFrame(rows).copy()
     table[["auprc_mean", "auprc_sd"]] *= 100
     for column in ("inference_label", "readout_label"):
@@ -29,6 +31,7 @@ def write_scores(rows, path):
 
 
 def write_tables(source: Path, output: Path):
+    """Export the five numeric manuscript tables from the analysis source CSVs."""
     output.mkdir(parents=True, exist_ok=True)
 
     pretraining = pd.read_csv(source / "pretraining_evaluation/pretraining_full_metrics.csv")
@@ -94,6 +97,7 @@ def write_tables(source: Path, output: Path):
     write_scores(readouts, output / "table_therapeutic_readouts.csv")
 
     def primary(table):
+        """Select the main sequence baselines and attention readouts for the disease table."""
         return table.inference_key.isin(DISEASE_MODELS) & (
             table.readout_key.isin(["lr_esm", "lr_prostt5", "abmil8_pdl_id2_dropout"])
         )
@@ -105,6 +109,7 @@ def write_tables(source: Path, output: Path):
 
 
 def main():
+    """Read the source/output directories from paths.yaml and export the paper tables."""
     with (Path(__file__).resolve().parents[2] / "configs/paths.yaml").open() as handle:
         paths = yaml.safe_load(handle)
     write_tables(Path(paths["paper_source_data"]), Path(paths["output_root"]) / "paper_tables")

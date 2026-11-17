@@ -49,7 +49,8 @@ SAMPLE_SEED = 13
 SAMPLE_PER_STRATUM = 50_000
 
 
-def first_pass(data, models, device: torch.device):
+def estimate_disagreement_threshold(data, models, device: torch.device):
+    """Score all pairs to estimate mixed-vote score dispersion and loss correlations."""
     ppi_data, celltype_map, _ = data
     id_to_name = {cell_id: name for name, cell_id in celltype_map.items()}
     count = {label: 0 for label in LABEL_NAMES}
@@ -134,13 +135,14 @@ def first_pass(data, models, device: torch.device):
 
 
 def splitmix64(values: np.ndarray) -> np.ndarray:
+    """Mix pair identifiers into reproducible priorities for the fixed-size score sample."""
     values = values.astype(np.uint64, copy=False) + np.uint64(0x9E3779B97F4A7C15)
     values = (values ^ (values >> np.uint64(30))) * np.uint64(0xBF58476D1CE4E5B9)
     values = (values ^ (values >> np.uint64(27))) * np.uint64(0x94D049BB133111EB)
     return values ^ (values >> np.uint64(31))
 
 
-class PrioritySample:
+class StratifiedScoreSample:
     """Deterministic uniform hash sample for each label-by-class stratum."""
 
     def __init__(self):
@@ -151,6 +153,7 @@ class PrioritySample:
         }
 
     def update(self, label, classes, scores, pairs, context_index):
+        """Keep the lowest-priority scores within each label and consensus-class stratum."""
         scores = scores.astype(np.float32, copy=False)
         for cls in range(len(CLASS_NAMES)):
             selected = classes == cls
@@ -175,6 +178,7 @@ class PrioritySample:
             self.scores[key] = values
 
     def save(self, output_dir: Path, population_counts: np.ndarray):
+        """Write sampled scores and the observed/sample counts for every stratum."""
         labels, classes, blocks = [], [], {loss: [] for loss in LOSSES}
         rows = []
         for label in (1, 0):
@@ -205,7 +209,8 @@ class PrioritySample:
         )
 
 
-def second_pass(data, models, genes, gene_to_id, string_scores, threshold, device):
+def count_consensus_classes(data, models, genes, gene_to_id, string_scores, threshold, device):
+    """Count each pair's consensus classes across contexts and collect STRING score moments."""
     ppi_data, celltype_map, ppi_layers = data
     id_to_name = {cell_id: name for name, cell_id in celltype_map.items()}
     n_genes = len(genes)
@@ -214,7 +219,7 @@ def second_pass(data, models, genes, gene_to_id, string_scores, threshold, devic
     population_counts = np.zeros((2, len(CLASS_NAMES)), dtype=np.int64)
     positive_calls = np.zeros((2, len(LOSSES)), dtype=np.int64)
     totals = np.zeros(2, dtype=np.int64)
-    sample = PrioritySample()
+    sample = StratifiedScoreSample()
 
     string_pairs = np.flatnonzero(string_scores > 0).astype(np.int64)
     string_lookup = np.full(n_pairs, -1, dtype=np.int32)
@@ -284,19 +289,20 @@ def second_pass(data, models, genes, gene_to_id, string_scores, threshold, devic
     }
 
 
-def run(output_dir: Path) -> None:
+def run_consensus_inference(output_dir: Path) -> None:
+    """Run the two exhaustive scoring passes and save the arrays used by downstream summaries."""
     output_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device.type != "cuda":
         print("No CUDA GPU found; exhaustive inference will be very slow.", flush=True)
 
     data, models, genes, gene_to_id, checkpoints = load_models_and_data(device)
-    threshold, threshold_table, similarity_by_context, similarity_summary = first_pass(
+    threshold, threshold_table, similarity_by_context, similarity_summary = estimate_disagreement_threshold(
         data, models, device
     )
     print(f"Exact mixed-vote sigma threshold: {threshold:.8f}", flush=True)
     string_scores = build_string_scores(genes, PATHS)
-    results = second_pass(
+    results = count_consensus_classes(
         data, models, genes, gene_to_id, string_scores, threshold, device
     )
 

@@ -12,7 +12,7 @@ from downstream_tasks.config import PATHS
 from pretraining.checkpoints import load_protscape_model
 from pretraining.data_handler.generate_input import read_data
 from pretraining.s2gae_utils import undirected_decoder_logits
-from pretraining.train.factored_training import _prepare_s2gae_decoder_input
+from pretraining.train.factored_training import prepare_s2gae_decoder_input
 
 
 LOSSES = ("BCE", "pHuber", "L1")
@@ -35,22 +35,26 @@ EDGE_CHUNK = 100_000
 
 
 def require_file(path: Path) -> Path:
+    """Check a required inference input before loading its data."""
     if not path.is_file():
         raise FileNotFoundError(f"Missing exhaustive-inference input: {path}")
     return path
 
 
 def clean_gene(value: object) -> str:
+    """Normalize protein labels for matching network and STRING identifiers."""
     return str(value).strip().upper()
 
 
 def pair_ids(src: np.ndarray, dst: np.ndarray, n_genes: int) -> np.ndarray:
+    """Map each unordered gene pair to its position in the upper triangle."""
     lo = np.minimum(src, dst).astype(np.int64, copy=False)
     hi = np.maximum(src, dst).astype(np.int64, copy=False)
     return lo * n_genes - (lo * (lo + 1)) // 2 + (hi - lo - 1)
 
 
 def load_models_and_data(device: torch.device):
+    """Restore the three loss variants with matching protein features and context order."""
     paths = PATHS
     checkpoint_root = Path(paths["checkpoint_root"]).expanduser()
     checkpoints = {
@@ -64,8 +68,21 @@ def load_models_and_data(device: torch.device):
     }
     reference = checkpoints["BCE"]
     config = reference["config"]
+    pooling = config.get("esm2_pooling", "bos")
+    for checkpoint in checkpoints.values():
+        model_config = checkpoint["config"]
+        if (
+            model_config["features_mode"] != config["features_mode"]
+            or model_config.get("esm2_pooling", "bos") != pooling
+        ):
+            raise ValueError(
+                "Loss-consensus checkpoints must use the same protein features and ESM2 pooling."
+            )
+    if config["features_mode"] != "ESM2":
+        raise ValueError("Loss-consensus analysis uses ESM2 protein features.")
     networks = Path(paths["networks_bulk"]).expanduser()
-    features = Path(paths["esm2_embeddings"]).expanduser()
+    feature_key = "esm2_embeddings" if pooling == "bos" else "esm2_mean_embeddings"
+    features = Path(paths[feature_key]).expanduser()
     ppi_data, _, _, celltype_map, _, ppi_layers, _, _ = read_data(
         networks / "global_ppi_edgelist.txt",
         networks / "ppi_edgelists",
@@ -82,7 +99,7 @@ def load_models_and_data(device: torch.device):
 
     cell_ids = [int(value) for value in reference["cell_ids"]]
     if set(cell_ids) != set(ppi_data):
-        raise ValueError("Released checkpoint cells do not match the processed networks")
+        raise ValueError("Checkpoint cells do not match the processed networks")
     ppi_data = {cell_id: ppi_data[cell_id] for cell_id in cell_ids}
     id_to_name = {cell_id: name for name, cell_id in celltype_map.items()}
     expected_names = [id_to_name[cell_id] for cell_id in cell_ids]
@@ -118,22 +135,20 @@ def load_models_and_data(device: torch.device):
     return data, models, genes, gene_to_id, pd.DataFrame(checkpoint_rows)
 
 
-def unique_undirected_edges(edge_index: torch.Tensor) -> torch.Tensor:
-    src = edge_index[0].detach().cpu()
-    dst = edge_index[1].detach().cpu()
+def positive_chunks(graph):
+    """Yield each observed undirected edge once, in bounded batches."""
+    src = graph.edge_index[0].detach().cpu()
+    dst = graph.edge_index[1].detach().cpu()
     lo = torch.minimum(src, dst)
     hi = torch.maximum(src, dst)
     keep = lo != hi
-    return torch.unique(torch.stack([lo[keep], hi[keep]], dim=1), dim=0).t().contiguous()
-
-
-def positive_chunks(graph):
-    edges = unique_undirected_edges(graph.edge_index)
+    edges = torch.unique(torch.stack([lo[keep], hi[keep]], dim=1), dim=0).t().contiguous()
     for start in range(0, edges.size(1), EDGE_CHUNK):
         yield edges[:, start : start + EDGE_CHUNK]
 
 
 def nonedge_chunks(num_nodes: int, positive_edge_index: torch.Tensor):
+    """Yield absent undirected pairs in bounded batches, excluding self-loops."""
     adjacency = torch.zeros((num_nodes, num_nodes), dtype=torch.bool)
     src = positive_edge_index[0].detach().cpu()
     dst = positive_edge_index[1].detach().cpu()
@@ -158,13 +173,14 @@ def nonedge_chunks(num_nodes: int, positive_edge_index: torch.Tensor):
 
 @torch.no_grad()
 def decoder_inputs(models: dict[str, torch.nn.Module], cell_id: int, graph, device):
+    """Encode one cell network with each model and prepare its decoder inputs."""
     graph_on_device = graph.clone().to(device)
     output = {}
     for loss, model in models.items():
         _, _, _, _, layer_outputs = model(
             {cell_id: graph_on_device}, batching=False, return_layer_outputs=True
         )
-        decoder_input = _prepare_s2gae_decoder_input(
+        decoder_input = prepare_s2gae_decoder_input(
             model.s2gae_decoder,
             layer_outputs[cell_id],
             raw_embeddings=graph_on_device.x,
@@ -175,6 +191,7 @@ def decoder_inputs(models: dict[str, torch.nn.Module], cell_id: int, graph, devi
 
 @torch.no_grad()
 def score_edges(decoders, edges: torch.Tensor, device: torch.device) -> torch.Tensor:
+    """Return BCE, pHuber and L1 probabilities for one batch of undirected pairs."""
     edges = edges.to(device)
     values = []
     for loss in LOSSES:
@@ -185,6 +202,7 @@ def score_edges(decoders, edges: torch.Tensor, device: torch.device) -> torch.Te
 
 
 def class_ids(scores: torch.Tensor, sigma_threshold: float) -> np.ndarray:
+    """Assign six consensus classes from positive votes and cross-loss score dispersion."""
     means = scores.mean(dim=0)
     sigma = scores.std(dim=0, unbiased=False)
     votes = (scores >= SCORE_CUTOFF).sum(dim=0)

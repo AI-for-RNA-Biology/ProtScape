@@ -44,27 +44,16 @@ DEVICE = "cuda"
 BATCH_SIZE = 64
 
 
-@dataclass(frozen=True)
-class ModelSpec:
-    inference_key: str
-    readout_key: str
-
-
 MODEL_SPECS = {
-    "protscape": ModelSpec(
-        inference_key="s2gae_att_k1_fixed_do04_uni",
-        readout_key="abmil8_pdl_id2_dropout",
-    ),
-    "pinnacle": ModelSpec(
-        inference_key="pinnacle_random_fixed",
-        readout_key="abmil8_pdl_id2_dropout",
-    ),
+    "protscape": ("s2gae_att_k1_fixed_do04_uni", "abmil8_pdl_id2_dropout"),
+    "pinnacle": ("pinnacle_random_fixed", "abmil8_pdl_id2_dropout"),
 }
 MODEL_LABELS = {"protscape": "ProtScape", "pinnacle": "Pinnacle"}
 
 
 @dataclass
 class InferenceData:
+    """Context bags for all proteins, with indices linking the training cohort."""
     genes: list[str]
     bags: list[np.ndarray]
     cell_ids: list[list[str]]
@@ -77,6 +66,7 @@ class InferenceData:
 
 
 class NormalizedBagDataset(Dataset):
+    """Normalize each bag on demand using the current fold's training statistics."""
     def __init__(
         self,
         bags: list[np.ndarray],
@@ -98,6 +88,7 @@ class NormalizedBagDataset(Dataset):
         return len(self.bags)
 
     def __getitem__(self, index: int):
+        """Normalize one protein's context bag and sequence using training-cohort statistics."""
         bag = ((self.bags[index] - self.bag_mean) / self.bag_std).astype(
             np.float32
         )
@@ -111,6 +102,7 @@ class NormalizedBagDataset(Dataset):
 
 
 def require_file(path: Path) -> Path:
+    """Check a required Parkinson inference input before loading it."""
     if not path.is_file():
         raise FileNotFoundError(f"Missing required Parkinson analysis input: {path}")
     return path
@@ -119,6 +111,7 @@ def require_file(path: Path) -> Path:
 def build_model(
     config: pd.Series, ctx_dim: int, esm_dim: int, device: torch.device
 ):
+    """Recreate the late-fusion attention model from its saved architecture settings."""
     variant = MODEL_VARIANTS[MODEL_KEY]
     return ABMIL_LateFusion(
         num_classes=1,
@@ -138,6 +131,7 @@ def build_model(
 
 
 def load_inference_data(selected: dict[str, str]) -> InferenceData:
+    """Align the training cohort and the full prediction universe by gene name."""
     config = load_config(
         selected["embedding_inference_name"], selected["embedding_source"], "bulk"
     )
@@ -188,6 +182,7 @@ def score_ensemble(
     run_dir: Path,
     device: torch.device,
 ) -> np.ndarray:
+    """Predict all proteins with each fold model and its training normalization."""
     fold_probabilities = []
     for fold in range(data.split.n_cv_folds):
         train_indices, _, _ = get_cv_train_val_indices(data.split, fold)
@@ -236,6 +231,7 @@ def score_ensemble(
 
 
 def cohort_membership(data: InferenceData) -> pd.DataFrame:
+    """Label proteins by benchmark class and train/validation, test or excluded membership."""
     test_indices = get_test_indices(data.split)
     label_by_gene = dict(
         zip(data.task_genes, data.task_labels[:, 0].astype(int))
@@ -256,6 +252,7 @@ def cohort_membership(data: InferenceData) -> pd.DataFrame:
 
 
 def run_global_inference() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Run both checkpoint ensembles over all proteins with available embeddings."""
     if DEVICE.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError("Parkinson global inference requires a CUDA GPU")
     device = torch.device(DEVICE)
@@ -265,12 +262,12 @@ def run_global_inference() -> tuple[pd.DataFrame, pd.DataFrame]:
 
     score_tables = []
     shared_membership = None
-    for model_name, spec in MODEL_SPECS.items():
+    for model_name, (inference_key, readout_key) in MODEL_SPECS.items():
         selected, _ = find_selected_run(
             "therapeutic_targets",
             task=TASK,
-            inference_key=spec.inference_key,
-            readout_key=spec.readout_key,
+            inference_key=inference_key,
+            readout_key=readout_key,
         )
         run_dir = (Path(PATHS["parkinson_checkpoint_root"]) / TASK
                    / selected["source_inference_name"] / selected["selected_output_model_key"])
@@ -320,6 +317,7 @@ def load_predictions(path: Path = PREDICTIONS_PATH):
 
 
 def main():
+    """Save ensemble target scores for the labelled cohort and additional proteins."""
     scores, _ = run_global_inference()
     PREDICTIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
     scores.to_csv(PREDICTIONS_PATH, index=False)

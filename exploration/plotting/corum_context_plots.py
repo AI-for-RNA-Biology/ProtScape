@@ -8,9 +8,8 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-from exploration.plotting.fonts import register_arial
+from exploration.plotting.fonts import FONT_NAME
 
-register_arial()
 matplotlib.rcParams["pdf.fonttype"] = 42
 matplotlib.rcParams["ps.fonttype"] = 42
 
@@ -34,16 +33,16 @@ COMPACT_SINGLE_SIZE = (SINGLE_COLUMN_WIDTH_CM * CM, 6.6 * CM)
 PLOT_RC = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
-    "font.family": "Arial",
-    "font.sans-serif": ["Arial"],
+    "font.family": FONT_NAME,
+    "font.sans-serif": [FONT_NAME],
     "font.size": 7.0,
     "mathtext.fontset": "custom",
-    "mathtext.rm": "Arial",
-    "mathtext.it": "Arial:italic",
-    "mathtext.bf": "Arial:bold",
-    "mathtext.cal": "Arial:italic",
-    "mathtext.sf": "Arial",
-    "mathtext.tt": "Arial",
+    "mathtext.rm": FONT_NAME,
+    "mathtext.it": f"{FONT_NAME}:italic",
+    "mathtext.bf": f"{FONT_NAME}:bold",
+    "mathtext.cal": f"{FONT_NAME}:italic",
+    "mathtext.sf": FONT_NAME,
+    "mathtext.tt": FONT_NAME,
     "text.color": "#111111",
     "axes.labelcolor": "#111111",
     "axes.edgecolor": "#111111",
@@ -119,16 +118,13 @@ XMIL_METRICS = [
 ]
 
 
-
 def figure_size(width_cm: float, height_cm: float) -> tuple[float, float]:
+    """Convert figure dimensions from centimeters to inches."""
     return width_cm * CM, height_cm * CM
 
 
-def read_table(source: Path, filename: str) -> pd.DataFrame:
-    return pd.read_csv(source / filename, float_precision="round_trip")
-
-
 def save_figure(fig: plt.Figure, output: Path, stem: str) -> None:
+    """Save PDF and PNG versions, then close the figure."""
     fig.savefig(output / f"{stem}.pdf", bbox_inches="tight", pad_inches=0.03)
     fig.savefig(
         output / f"{stem}.png",
@@ -140,6 +136,7 @@ def save_figure(fig: plt.Figure, output: Path, stem: str) -> None:
 
 
 def clean_axes(ax: plt.Axes) -> None:
+    """Apply the shared axis lines and ticks, omitting the upper and right borders."""
     ax.grid(False)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -158,12 +155,14 @@ def clean_axes(ax: plt.Axes) -> None:
 
 
 def place_bar_y_axis_at_zero(ax: plt.Axes) -> None:
+    """Place a vertical reference line at zero for horizontal correlation bars."""
     ax.spines["left"].set_visible(False)
     ax.tick_params(axis="y", left=False, length=0)
     ax.axvline(0.0, color="#222222", linewidth=AXIS_LINEWIDTH, zorder=0)
 
 
 def significance_symbol(p_value: float) -> str:
+    """Convert correlation p-values into the plotted significance marks."""
     if p_value < 0.001:
         return "***"
     if p_value < 0.01:
@@ -174,6 +173,7 @@ def significance_symbol(p_value: float) -> str:
 
 
 def model_line_handle(model_key: str) -> Line2D:
+    """Build a legend line with the model's color and marker."""
     return Line2D(
         [0],
         [0],
@@ -186,6 +186,7 @@ def model_line_handle(model_key: str) -> Line2D:
 
 
 def plot_driver_legend(output: Path) -> None:
+    """Save a legend separating contextual models from sequence baselines."""
     contextual = [key for key in MAIN_MODEL_ORDER if key not in BASELINE_MODELS]
     baselines = [key for key in MAIN_MODEL_ORDER if key in BASELINE_MODELS]
     fig = plt.figure(figsize=figure_size(DOUBLE_COLUMN_WIDTH_CM, 2.9))
@@ -234,6 +235,7 @@ def plot_per_complex_drivers(
     correlations: pd.DataFrame,
     output: Path,
 ) -> None:
+    """Plot AUPRC by complex-property bins with the corresponding correlations."""
     scores = 100.0 * summary["mean_score"].dropna().to_numpy(dtype=float)
     ylim = (
         max(0.0, 10.0 * np.floor((scores.min() - 5.0) / 10.0)),
@@ -405,6 +407,7 @@ def plot_xmil_summary(
     correlations: pd.DataFrame,
     output: Path,
 ) -> None:
+    """Compare positive context relevance with complex coverage across shared bins."""
     summary = summary[summary["evidence_score"] == "complete_positive_lrp"].copy()
     correlations = correlations[
         correlations["evidence_score"] == "complete_positive_lrp"
@@ -506,7 +509,7 @@ def plot_xmil_summary_factored(
     correlations: pd.DataFrame,
     output: Path,
 ) -> None:
-    """Plot compact xMIL correlations using the released mean-LRP table."""
+    """Plot compact xMIL correlations from the mean-LRP table."""
     correlations = correlations[
         correlations["evidence_score"] == "complete_positive_lrp"
     ].copy()
@@ -562,6 +565,7 @@ def plot_xmil_summary_factored(
 
 
 def plot_xmil_legend(output: Path) -> None:
+    """Save the contextual-model legend for the xMIL-LRP panels."""
     fig = plt.figure(figsize=figure_size(DOUBLE_COLUMN_WIDTH_CM, 1.9))
     fig.legend(
         [model_line_handle(key) for key in MAIN_CONTEXT_MODEL_ORDER],
@@ -575,13 +579,12 @@ def plot_xmil_legend(output: Path) -> None:
 
 
 def plot_context_analysis(source: Path, output: Path) -> None:
+    """Draw complex-property and context-relevance panels from the analysis tables."""
     output.mkdir(parents=True, exist_ok=True)
     with matplotlib.rc_context(PLOT_RC):
-        driver_summary = read_table(source, "corum_per_complex_driver_summary.csv")
-        driver_bins = read_table(source, "corum_per_complex_driver_bins.csv")
-        driver_correlations = read_table(
-            source, "corum_per_complex_driver_correlations.csv"
-        )
+        driver_summary = pd.read_csv(source / "corum_per_complex_driver_summary.csv", float_precision="round_trip")
+        driver_bins = pd.read_csv(source / "corum_per_complex_driver_bins.csv", float_precision="round_trip")
+        driver_correlations = pd.read_csv(source / "corum_per_complex_driver_correlations.csv", float_precision="round_trip")
         plot_per_complex_drivers(
             driver_summary,
             driver_bins,
@@ -591,10 +594,8 @@ def plot_context_analysis(source: Path, output: Path) -> None:
         plot_per_complex_drivers_factored(driver_correlations, output)
         plot_driver_legend(output)
 
-        xmil_summary = read_table(source, "corum_xmil_binned_summary.csv")
-        xmil_correlations = read_table(
-            source, "corum_xmil_correlation_summary.csv"
-        )
+        xmil_summary = pd.read_csv(source / "corum_xmil_binned_summary.csv", float_precision="round_trip")
+        xmil_correlations = pd.read_csv(source / "corum_xmil_correlation_summary.csv", float_precision="round_trip")
         plot_xmil_summary(
             xmil_summary,
             xmil_correlations,

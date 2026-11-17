@@ -1,20 +1,16 @@
-# history.py
-# Training history tracking and visualization
+"""Save fold training curves and their underlying values."""
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List
+from typing import List
 import numpy as np
 import pandas as pd
 
-try:
-    import matplotlib
-    matplotlib.use("Agg")
-    matplotlib.rcParams["pdf.fonttype"] = 42
-    matplotlib.rcParams["ps.fonttype"] = 42
-    import matplotlib.pyplot as plt
-except Exception:
-    plt = None
+import matplotlib
+matplotlib.use("Agg")
+matplotlib.rcParams["pdf.fonttype"] = 42
+matplotlib.rcParams["ps.fonttype"] = 42
+import matplotlib.pyplot as plt
 
 
 @dataclass
@@ -56,33 +52,14 @@ class TrainingHistory:
             "val_auroc": self.val_aurocs,
         })
 
-    def get_best_epoch(self) -> int:
-        """Get epoch with best validation AUPRC."""
-        if not self.val_auprcs:
-            return 0
-        return self.epochs[int(np.argmax(self.val_auprcs))]
-
-    def get_best_auprc(self) -> float:
-        """Get best validation AUPRC."""
-        if not self.val_auprcs:
-            return 0.0
-        return max(self.val_auprcs)
-
 
 def plot_training_curves(
     histories: List[TrainingHistory],
     output_path: Path,
     model_name: str,
 ):
-    """
-    Plot training curves for all folds.
-
-    Args:
-        histories: List of TrainingHistory objects, one per fold
-        output_path: Path to save the plot
-        model_name: Model name for title
-    """
-    if plt is None or not histories:
+    """Plot training curves for all folds."""
+    if not histories:
         return
 
     n_folds = len(histories)
@@ -123,7 +100,7 @@ def plot_training_curve(
     model_name: str,
 ):
     """Plot training curves for a single fold."""
-    if plt is None or not history.epochs:
+    if not history.epochs:
         return
 
     fig, axes = plt.subplots(2, 1, figsize=(6, 6), sharex=True)
@@ -155,13 +132,7 @@ def save_histories_csv(
     histories: List[TrainingHistory],
     output_path: Path,
 ):
-    """
-    Save training histories to CSV.
-
-    Args:
-        histories: List of TrainingHistory objects
-        output_path: Path to save CSV
-    """
+    """Save training histories to CSV."""
     if not histories:
         return
 
@@ -170,30 +141,3 @@ def save_histories_csv(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     combined.to_csv(output_path, index=False)
-
-
-def save_all_histories(
-    all_histories: Dict[str, List[TrainingHistory]],
-    output_dir: Path,
-):
-    """
-    Save all training histories to CSV files and plot curves.
-
-    Args:
-        all_histories: Dict mapping model names to list of histories
-        output_dir: Output directory
-    """
-    plots_dir = output_dir / "training_curves"
-    plots_dir.mkdir(parents=True, exist_ok=True)
-
-    all_dfs = []
-    for model_name, histories in all_histories.items():
-        for hist in histories:
-            all_dfs.append(hist.to_dataframe())
-        if histories:
-            safe_name = model_name.lower().replace(" ", "_").replace("+", "_")
-            plot_training_curves(histories, plots_dir / f"{safe_name}.png", model_name)
-
-    if all_dfs:
-        combined_df = pd.concat(all_dfs, ignore_index=True)
-        combined_df.to_csv(output_dir / "training_histories.csv", index=False)

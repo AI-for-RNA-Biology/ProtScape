@@ -19,11 +19,13 @@ TABLES = {
 
 
 def load_selected_runs(benchmark):
+    """Read the validation-selected settings for a benchmark."""
     with TABLES[benchmark].open(newline="", encoding="utf-8") as handle:
         return list(csv.DictReader(handle))
 
 
 def selected_run_dir(row):
+    """Locate a run using its model and dataset names."""
     return (
         DEFAULT_OUTPUT_ROOT
         / row["task"]
@@ -33,6 +35,7 @@ def selected_run_dir(row):
 
 
 def find_selected_run(benchmark, **filters):
+    """Find the single configuration requested by an analysis script."""
     matches = [
         row
         for row in load_selected_runs(benchmark)
@@ -47,45 +50,29 @@ def find_selected_run(benchmark, **filters):
 
 
 def build_command(row):
-    command = [
-        sys.executable,
-        "-m",
-        "downstream_tasks.run",
-        "--inference-model",
-        row["source_inference_name"],
-        "--embedding-inference-model",
-        row["embedding_inference_name"],
-        "--task",
-        row["task"],
-        "--model",
-        row["base_model_key"],
-        "--output-model-key",
-        row["selected_output_model_key"],
-        "--embedding-source",
-        row["embedding_source"],
-        "--dataset-mode",
-        row["dataset_mode"],
-        "--lr",
-        row["lr"],
-        "--weight-decay",
-        row["weight_decay"],
-        "--batch-size",
-        row["batch_size"],
-        "--seed",
-        row["seed"],
-        "--train-selection-metric",
-        "auprc",
-        "--scope",
-        row["scope"],
-        "--inference-key",
-        row["inference_key"],
-        "--inference-label",
-        row["inference_label"],
-        "--readout-key",
-        row["readout_key"],
-        "--readout-label",
-        row["readout_label"],
-    ]
+    """Translate one row of the selected-settings table into a training command."""
+    options = {
+        "inference-model": row["source_inference_name"],
+        "embedding-inference-model": row["embedding_inference_name"],
+        "task": row["task"],
+        "model": row["base_model_key"],
+        "output-model-key": row["selected_output_model_key"],
+        "embedding-source": row["embedding_source"],
+        "dataset-mode": row["dataset_mode"],
+        "lr": row["lr"],
+        "weight-decay": row["weight_decay"],
+        "batch-size": row["batch_size"],
+        "seed": row["seed"],
+        "train-selection-metric": "auprc",
+        "scope": row["scope"],
+        "inference-key": row["inference_key"],
+        "inference-label": row["inference_label"],
+        "readout-key": row["readout_key"],
+        "readout-label": row["readout_label"],
+    }
+    command = [sys.executable, "-m", "downstream_tasks.run"]
+    for option, value in options.items():
+        command.extend([f"--{option}", value])
     if row["disease"]:
         command.extend(["--disease", row["disease"]])
     if row["cell_embedding_file"]:
@@ -102,6 +89,7 @@ def build_command(row):
 
 
 def main():
+    """Run the selected configurations and collect their task-level results."""
     if len(sys.argv) != 2 or sys.argv[1] not in TABLES:
         choices = "|".join(TABLES)
         raise SystemExit(

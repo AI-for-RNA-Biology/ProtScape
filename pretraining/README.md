@@ -1,86 +1,41 @@
-# Pretraining and inference
+# Pretraining
 
-`train_protscape.py` trains the hierarchical factored ProtScape models. `train_pinnacle.py` trains the adapted PINNACLE baselines.
+Train ProtScape or the adapted PINNACLE models on cell-specific PPI graphs and a cell/tissue metagraph.
 
-## Inputs
-
-Set these paths in `configs/paths.yaml`:
-
-- `networks_bulk`: processed graph bundle containing the global PPI, context-specific PPIs, metagraph and edge-count dictionary.
-- `esm2_embeddings`: protein sequence embeddings used as model input.
-- `prostt5_embeddings`: ProstT5 features used by the downstream sequence baseline.
-- `output_root`: destination for training and inference outputs.
-
-The graph bundle and checkpoint must belong to the same dataset snapshot. The companion release includes the exact ESM-2 and ProstT5 feature matrices used in the paper; use those matrices for checkpoint-equivalent results.
-
-Optional regeneration uses the released `protein_sequences` table with `gene_name` and `fasta_seq` columns.
-
-Generate the ESM-2 features with:
+Set the network, sequence-embedding and output paths in `configs/paths.yaml`. Existing files are used directly.
 
 ```bash
-python -m pretraining.generate_esm2_embeddings
-```
+# Main ProtScape model; other model names are in configs/pretraining.yaml.
+bash scripts/run_pretraining.sh
+python -m pretraining.run_config pinnacle_esm_acm
 
-The script uses the BOS token from layer 33 of `esm2_t36_3B_UR50D`, producing the 2,560-dimensional inputs expected by the released checkpoints. It first embeds each complete sequence; after a CUDA out-of-memory error, it averages BOS embeddings from 1,024-residue chunks. The model weights are downloaded automatically.
+# Generate both ESM-2 representations, or train with residue means.
+python -m pretraining.generate_esm2_embeddings --pooling both
+python -m pretraining.run_config protscape --esm2-pooling mean
 
-Generate the 1,024-dimensional ProstT5 features used by the downstream sequence baseline with:
-
-```bash
+# ProstT5 sequence baseline.
 python -m pretraining.generate_prostt5_embeddings
 ```
 
-This script uses a fixed `Rostlab/ProstT5` revision, filters proteins to the configured global PPI, mean-pools residue representations and length-weights 1,000-residue chunks for proteins longer than 1,500 residues.
+ESM-2 uses layer 33 of `esm2_t36_3B_UR50D` (2,560 features). BOS is the default; mean pooling excludes the BOS/EOS tokens. The two files are `esm2_embeddings` and `esm2_mean_embeddings` in the path config. Long sequences fall back to chunks if GPU memory runs out.
 
-The pretraining and downstream entry points run the required generator when a configured feature file is absent.
+PPI graphs and S2GAE masks are undirected. `--s2gae-mask-type dm` selects directed masking. Training options can follow the configuration name, for example `--epochs 10 --device cpu`.
 
-## Training
-
-From the repository root, run the main ProtScape configuration with:
+Models and metrics go to `<output_root>/pretraining/`. Use `best_model_state_dict.pt` for inference:
 
 ```bash
-bash scripts/run_pretraining.sh
+python -m pretraining.inference /path/to/model_state_dict.pt \
+    --output-dir /path/to/embeddings
 ```
 
-The remaining ProtScape loss, pooling and uniformity configurations and the adapted PINNACLE configurations are listed in `configs/pretraining.yaml`. Run any named configuration directly, for example:
+Inference saves protein and cell embeddings plus `mappings.pkl`. ProtScape also saves pooled cell embeddings and tissue predictions; PINNACLE saves the full metagraph embeddings. Set downstream embedding paths to this directory.
+
+## Architecture-ablation embeddings
+
+Before training the selected downstream ablations, run inference for each checkpoint below into `<inference_root>/<directory>`:
 
 ```bash
-python -m pretraining.run_config protscape_phuber
-```
-
-Each entry records the Python module and complete model arguments. Training uses seed 0 and disabled Weights & Biases logging by default.
-
-Training outputs are written below `<output_root>/pretraining/`. Each run keeps its full restart checkpoints and also writes `best_model_state_dict.pt`, the portable checkpoint used for inference.
-
-## Inference
-
-```bash
-python -m pretraining.inference \
-    /path/to/ProtScape_release/models/pretraining/protscape_main_state_dict.pt
-```
-
-By default, inference writes to `<output_root>/inference/<checkpoint-name>/`. A different directory can be selected with `--output-dir`.
-
-ProtScape exports:
-
-```text
-protein_embeddings.pt
-cell_embeddings.pt
-cell_embeddings_before_pool.pt
-tissue_predictions.pt
-mappings.pkl
-```
-
-`cell_embeddings.pt` contains the final post-CCI cell representations. `cell_embeddings_before_pool.pt` contains pooled cell representations before CCI refinement.
-
-Adapted PINNACLE inference exports protein, cell and full-metagraph embeddings with their mappings. Inference reconstructs each metagraph relation from its corresponding edge type.
-
-### Architecture-ablation embeddings
-
-The release provides checkpoints for all ablations. Generate these six embedding exports before retraining their selected downstream configurations:
-
-```bash
-python -m pretraining.inference <release>/models/pretraining/<checkpoint> \
-    --output-dir <inference_root>/<directory>
+python -m pretraining.inference <checkpoint_root>/<checkpoint> --output-dir <inference_root>/<directory>
 ```
 
 | Checkpoint | Directory |
@@ -91,5 +46,3 @@ python -m pretraining.inference <release>/models/pretraining/<checkpoint> \
 | `protscape_gae_learned_virtual_node_state_dict.pt` | `gae_learnedvn_fixed_do06_ep300` |
 | `protscape_gae_learned_virtual_node_uniformity_state_dict.pt` | `gae_learnedvn_fixed_do06_ep300_uni5e-5` |
 | `protscape_no_uniformity_state_dict.pt` | `s2gae_att_k1_fixed_do04` |
-
-These exports are not needed to redraw figures or export tables from the supplied source data.

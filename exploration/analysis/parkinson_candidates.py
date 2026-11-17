@@ -9,6 +9,7 @@ from exploration.analysis.parkinson_target_analysis import (
 
 
 def main():
+    """Export ranked candidates outside the labelled Parkinson benchmark cohort."""
     scores, _ = load_predictions()
     candidates = build_candidates(scores)
     support, summary = build_external_support(candidates)

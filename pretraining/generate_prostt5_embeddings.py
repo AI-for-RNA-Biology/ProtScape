@@ -1,5 +1,6 @@
 """Generate the ProstT5 protein features used by ProtScape."""
 
+import argparse
 import re
 from pathlib import Path
 
@@ -24,6 +25,7 @@ NON_STANDARD_AA = re.compile(r"[^A-Z]")
 
 
 def validate_embeddings(path):
+    """Check that the table contains finite 1,024-dimensional ProstT5 vectors."""
     embeddings = pd.read_pickle(path)
     required = {"gene_name", "ProstT5-Embeddings"}
     missing = required - set(embeddings.columns)
@@ -39,6 +41,7 @@ def validate_embeddings(path):
 
 
 def load_ppi_genes(path):
+    """Read the proteins appearing in a two-column PPI edge list."""
     genes = set()
     with path.open(encoding="utf-8") as handle:
         for line in handle:
@@ -49,6 +52,7 @@ def load_ppi_genes(path):
 
 
 def sanitize_sequence(sequence):
+    """Uppercase residues and replace unsupported characters with X."""
     if not isinstance(sequence, str):
         return ""
     sequence = str(sequence).strip().upper()
@@ -56,11 +60,8 @@ def sanitize_sequence(sequence):
     return NON_STANDARD_AA.sub("X", sequence)
 
 
-def model_input(sequence):
-    return "<AA2fold> " + " ".join(sequence)
-
-
 def build_batches(records):
+    """Group sequences within the sequence-count and padded-token limits."""
     batch = []
     longest_sequence = 0
     for row_index, sequence in records:
@@ -79,8 +80,9 @@ def build_batches(records):
 
 
 def embed_batch(sequences, tokenizer, model, device):
+    """Average residue embeddings, excluding the task token and end token."""
     tokens = tokenizer(
-        [model_input(sequence) for sequence in sequences],
+        ["<AA2fold> " + " ".join(sequence) for sequence in sequences],
         add_special_tokens=True,
         padding="longest",
         return_tensors="pt",
@@ -103,6 +105,7 @@ def embed_batch(sequences, tokenizer, model, device):
 
 
 def embed_long_sequence(sequence, tokenizer, model, device):
+    """Combine chunk embeddings using their residue counts as weights."""
     chunks = [
         sequence[start : start + CHUNK_SIZE]
         for start in range(0, len(sequence), CHUNK_SIZE)
@@ -118,6 +121,10 @@ def embed_long_sequence(sequence, tokenizer, model, device):
 
 
 def main():
+    """Load PPI protein sequences, embed them with ProstT5 and save the feature table."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--device", default="auto", help="auto, cpu, or cuda:0")
+    args = parser.parse_args()
     with PATHS_FILE.open(encoding="utf-8") as handle:
         paths = yaml.safe_load(handle)
 
@@ -151,7 +158,11 @@ def main():
     sequences["fasta_seq"] = sequences["fasta_seq"].apply(sanitize_sequence)
     sequences = sequences[sequences["fasta_seq"].str.len() > 0].reset_index(drop=True)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(
+        "cuda" if args.device == "auto" and torch.cuda.is_available()
+        else "cpu" if args.device == "auto"
+        else args.device
+    )
     print(f"Loading {MODEL_NAME} on {device}")
     tokenizer = T5Tokenizer.from_pretrained(
         MODEL_NAME,

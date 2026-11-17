@@ -36,7 +36,8 @@ ESSENTIAL_COLUMNS = {
 }
 
 
-def _ensure_columns(adata: anndata.AnnData, subset: str) -> anndata.AnnData:
+def standardize_hbca_metadata(adata: anndata.AnnData, subset: str) -> anndata.AnnData:
+    """Copy the dataset and standardize cell-type, donor, tissue and count metadata."""
     adata = adata.copy()
     adata.obs["hbca_subset"] = subset
     for source, target in ESSENTIAL_COLUMNS.items():
@@ -59,7 +60,7 @@ def _ensure_columns(adata: anndata.AnnData, subset: str) -> anndata.AnnData:
     return adata
 
 
-def _apply_cl_overrides(adata: anndata.AnnData) -> anndata.AnnData:
+def assign_neuronal_cl_ids(adata: anndata.AnnData) -> anndata.AnnData:
     """Replace generic neuronal CL IDs using the curated supercluster mapping."""
     mapping_path = Path(HBCA_SUPERCLUSTER_TO_CL)
     if not mapping_path.exists():
@@ -97,8 +98,9 @@ def merge_hbca_single_cell(
     nonneurons_path: str,
     output_dir: str,
 ) -> anndata.AnnData:
-    neurons = _apply_cl_overrides(_ensure_columns(sc.read_h5ad(neurons_path), "neurons"))
-    nonneurons = _ensure_columns(sc.read_h5ad(nonneurons_path), "nonneurons")
+    """Merge neuronal and non-neuronal HBCA cells on shared genes and save h5ad/QC tables."""
+    neurons = assign_neuronal_cl_ids(standardize_hbca_metadata(sc.read_h5ad(neurons_path), "neurons"))
+    nonneurons = standardize_hbca_metadata(sc.read_h5ad(nonneurons_path), "nonneurons")
     logger.info("Loaded %d neurons and %d non-neuronal cells", neurons.n_obs, nonneurons.n_obs)
 
     merged = anndata.concat(
@@ -143,6 +145,7 @@ def merge_hbca_single_cell(
 
 
 def main() -> None:
+    """Read HBCA input paths and run the neuronal/non-neuronal merge."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--neurons", default=HBCA_NEURONS_PATH)
     parser.add_argument("--nonneurons", default=HBCA_NONNEURONS_PATH)

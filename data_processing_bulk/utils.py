@@ -149,8 +149,6 @@ def aggregate_pseudobulk(
     return pseudobulk, metadata
 
 
-# Keep these fixed GMM choices aligned with the frozen networks_bulk build:
-# Bayesian two-component fit, seed 0, and the lower-mean background component.
 def robust_gmm_threshold(
     values: np.ndarray,
     *,

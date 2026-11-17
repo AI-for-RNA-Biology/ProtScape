@@ -15,7 +15,6 @@ from scipy.sparse import csr_matrix
 from sklearn.manifold import MDS
 
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 with (REPO_ROOT / "configs" / "paths.yaml").open(encoding="utf-8") as handle:
     PATHS = yaml.safe_load(handle)
@@ -202,6 +201,7 @@ def is_true(value):
 
 
 def source_label(row):
+    """Assign the expression source used for the context-level comparison."""
     if is_true(row["has_condition"]):
         return "ALS"
     if "HBCA__" in str(row["source_files"]):
@@ -210,6 +210,7 @@ def source_label(row):
 
 
 def database_label(row):
+    """Label contexts by their Tabula, HBCA or ALS source combination."""
     if is_true(row["has_condition"]):
         return "ALS"
     sources = str(row["source_files"])
@@ -378,6 +379,7 @@ def prepare_tissue_tables(metadata):
 
 
 def tissue_plot_group(value):
+    """Group tissue assignments into the CNS and peripheral categories used in MDS plots."""
     tissues = {name for name in str(value).split(";") if name and name != "nan"}
     if not tissues:
         return "unknown"
@@ -474,6 +476,7 @@ def prepare_metagraph_edge_counts():
 
 
 def main():
+    """Summarize gene retention, PPI overlap and metagraph composition, then plot them."""
     inputs = [
         NETWORKS_BULK / "celltype_metadata.csv",
         NETWORKS_BULK / "global_ppi_edgelist.txt",

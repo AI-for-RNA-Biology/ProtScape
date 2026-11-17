@@ -1,5 +1,4 @@
-# stratification.py
-# Stratified sampling and fold building utilities
+"""Balance labels and cell contexts in folds and minibatches."""
 
 from typing import Iterator, List, Optional, Tuple
 import numpy as np
@@ -25,15 +24,6 @@ class MultilabelStratifiedSampler(Sampler[int]):
         seed: int = 42,
         cluster_labels: Optional[np.ndarray] = None,
     ):
-        """
-        Args:
-            labels: Binary label matrix of shape (n_samples, n_labels)
-            batch_size: Number of samples per batch
-            n_clusters: Number of label clusters (default 10)
-            shuffle: Whether to shuffle within clusters each epoch
-            seed: Random seed for deterministic splitting
-            cluster_labels: Optional precomputed cluster ids for each sample
-        """
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.seed = seed
@@ -109,16 +99,8 @@ class MultilabelStratifiedSampler(Sampler[int]):
         return self.n_samples
 
 
-def _build_context_matrix(cell_ids_per_bag: List[List[str]]) -> Optional[np.ndarray]:
-    """
-    Build a binary context matrix from cell IDs per sample.
-
-    Args:
-        cell_ids_per_bag: List of cell ID lists, one per sample
-
-    Returns:
-        Binary matrix of shape (n_samples, n_unique_contexts) or None if empty
-    """
+def context_membership_matrix(cell_ids_per_bag: List[List[str]]) -> Optional[np.ndarray]:
+    """Build a binary context matrix from cell IDs per sample."""
     all_ctx = sorted({str(cid) for bag in cell_ids_per_bag for cid in bag})
     if not all_ctx:
         return None
@@ -126,13 +108,11 @@ def _build_context_matrix(cell_ids_per_bag: List[List[str]]) -> Optional[np.ndar
     X = np.zeros((len(cell_ids_per_bag), len(all_ctx)), dtype=np.float32)
     for i, bag in enumerate(cell_ids_per_bag):
         for cid in set(bag):
-            j = ctx_to_col.get(str(cid))
-            if j is not None:
-                X[i, j] = 1.0
+            X[i, ctx_to_col[str(cid)]] = 1.0
     return X
 
 
-def _count_unique_contexts(X_ctx: np.ndarray, labels: np.ndarray, n_clusters: int) -> np.ndarray:
+def count_context_patterns(X_ctx: np.ndarray, labels: np.ndarray, n_clusters: int) -> np.ndarray:
     """Count unique context patterns per cluster."""
     counts = np.zeros(n_clusters, dtype=int)
     for i in range(n_clusters):
@@ -142,13 +122,13 @@ def _count_unique_contexts(X_ctx: np.ndarray, labels: np.ndarray, n_clusters: in
     return counts
 
 
-def _merge_small_label_clusters(
+def merge_small_label_clusters(
     X_labels: np.ndarray,
     labels: np.ndarray,
     min_size: int,
     X_ctx: Optional[np.ndarray] = None,
     min_ctx: Optional[int] = None,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> np.ndarray:
     """Merge clusters that are too small or have too few contexts."""
     labels = labels.copy()
     while True:
@@ -159,7 +139,7 @@ def _merge_small_label_clusters(
         if len(counts) <= 1:
             break
         if X_ctx is not None and min_ctx is not None:
-            ctx_counts = _count_unique_contexts(X_ctx, labels, len(counts))
+            ctx_counts = count_context_patterns(X_ctx, labels, len(counts))
             small = np.where((counts < min_size) | (ctx_counts < min_ctx))[0]
         else:
             small = np.where(counts < min_size)[0]
@@ -180,11 +160,10 @@ def _merge_small_label_clusters(
     kept = sorted(set(labels.tolist()))
     remap = {old: new for new, old in enumerate(kept)}
     labels = np.array([remap[int(x)] for x in labels], dtype=int)
-    centers = np.vstack([X_labels[labels == i].mean(axis=0) for i in range(len(kept))])
-    return labels, centers
+    return labels
 
 
-def _compute_label_clusters(Y_ref: np.ndarray, k_label: int, seed: int) -> np.ndarray:
+def cluster_label_patterns(Y_ref: np.ndarray, k_label: int, seed: int) -> np.ndarray:
     """
     Cluster samples by label patterns.
 
@@ -211,83 +190,37 @@ def build_context_stratified_folds(
     k_label: Optional[int],
     n_splits: int,
 ) -> Tuple[List[np.ndarray], np.ndarray]:
-    """
-    Build context-stratified folds ensuring each fold has samples from diverse contexts.
-
-    The algorithm:
-    1. Cluster samples by label patterns
-    2. Merge small clusters to ensure min samples/contexts per cluster
-    3. Within each label cluster, sub-cluster by context patterns
-    4. Distribute samples across folds using round-robin to ensure all folds populated
-
-    Args:
-        Y_ref: Label matrix of shape (n_samples, n_labels)
-        cell_ids_per_bag: List of cell ID lists for each sample
-        seed: Random seed
-        k_label: Number of label clusters (None for auto)
-        n_splits: Number of folds
-
-    Returns:
-        Tuple of (folds, label_clusters) where folds is a list of index arrays
-    """
+    """Balance label groups and cell-context patterns across the saved folds."""
     rng = np.random.RandomState(seed)
     n = Y_ref.shape[0]
     if n_splits < 2:
         raise ValueError("Need at least 2 samples for CV.")
     k_label = int(max(1, min(k_label if k_label is not None else Y_ref.shape[1], n)))
 
-    X_ctx = _build_context_matrix(cell_ids_per_bag)
+    X_ctx = context_membership_matrix(cell_ids_per_bag)
     if X_ctx is None:
         raise ValueError("No context IDs available for context stratification.")
 
-    # Precompute exact row keys once to avoid repeated hash/tuple conversion.
+    # Group proteins with the same cell-context membership.
     row_keys = [X_ctx[i].tobytes() for i in range(X_ctx.shape[0])]
     n_unique_ctx = len(set(row_keys))
     if n_unique_ctx < n_splits:
         raise ValueError(f"Need at least {n_splits} unique contexts, found {n_unique_ctx}.")
 
-    label_clusters = _compute_label_clusters(Y_ref, k_label, seed)
-    label_clusters, _ = _merge_small_label_clusters(Y_ref, label_clusters, n_splits, X_ctx, n_splits)
-    ctx_counts = _count_unique_contexts(X_ctx, label_clusters, len(np.unique(label_clusters)))
+    label_clusters = cluster_label_patterns(Y_ref, k_label, seed)
+    label_clusters = merge_small_label_clusters(Y_ref, label_clusters, n_splits, X_ctx, n_splits)
+    ctx_counts = count_context_patterns(X_ctx, label_clusters, len(np.unique(label_clusters)))
     if np.any(ctx_counts < n_splits):
         raise ValueError("Context stratification failed to ensure enough context diversity per label cluster.")
 
     folds: List[List[int]] = [[] for _ in range(n_splits)]
-    unique_lcs = np.unique(label_clusters)
-    for lc_idx, lc in enumerate(unique_lcs):
-        members = np.where(label_clusters == lc)[0]
-        if len(members) == 0:
-            continue
-        if len(members) < n_splits:
-            raise ValueError("Context stratification requires at least n_splits samples per label cluster.")
-
-        # Count unique context patterns inside this label cluster.
-        ctx_unique = len({row_keys[m] for m in members})
-        if ctx_unique < n_splits:
-            raise ValueError(
-                "Context stratification requires at least n_splits unique contexts per label cluster. "
-                "Merge small label clusters or reduce n_splits."
-            )
-
-        # Cap k_ctx to avoid empty clusters
-        k_ctx = min(int(ctx_unique), len(members))
-        if k_ctx > 1 and len(members) // k_ctx < 1:
-            k_ctx = max(1, len(members))
-
-        # When k_ctx equals the number of unique context patterns, we can group
-        # directly by exact pattern and skip KMeans.
-        if k_ctx == ctx_unique:
-            groups_dict = {}
-            for m in members:
-                groups_dict.setdefault(row_keys[m], []).append(int(m))
-            groups = [np.asarray(g, dtype=int) for g in groups_dict.values()]
-        else:
-            kmc = KMeans(n_clusters=k_ctx, random_state=seed, n_init=10)
-            sub = kmc.fit_predict(X_ctx[members])
-            groups = [members[sub == j] for j in range(k_ctx) if np.sum(sub == j) > 0]
-
-        if not groups:
-            groups = [members]
+    for label in np.unique(label_clusters):
+        members = np.where(label_clusters == label)[0]
+        # Keep identical context patterns together before distributing proteins.
+        grouped = {}
+        for member in members:
+            grouped.setdefault(row_keys[member], []).append(int(member))
+        groups = [np.asarray(group, dtype=int) for group in grouped.values()]
 
         # Collect all samples and distribute round-robin
         all_samples_lc = []
@@ -296,9 +229,7 @@ def build_context_stratified_folds(
             rng.shuffle(g_arr)
             all_samples_lc.extend(g_arr.tolist())
 
-        # Use a randomized start fold per label cluster.
-        # Without this, every cluster's remainder is always assigned to fold 0,
-        # which systematically inflates early fold sizes.
+        # Rotate the starting fold so remainders do not always enter fold 0.
         start_fold = int(rng.randint(0, n_splits))
         for i, sample_idx in enumerate(all_samples_lc):
             fold_idx = (start_fold + i) % n_splits
@@ -315,7 +246,7 @@ def build_context_stratified_folds(
 
 class MultilabelStratifiedKFold:
     """
-    Fallback implementation of MultilabelStratifiedKFold.
+    Deterministic multilabel stratification.
 
     Attempts to stratify splits based on multi-label distribution.
     """
@@ -329,9 +260,11 @@ class MultilabelStratifiedKFold:
         self.random_state = random_state
 
     def get_n_splits(self, X=None, y=None, groups=None):
+        """Return the configured number of folds."""
         return self.n_splits
 
     def split(self, X, y, groups=None):
+        """Assign samples to folds while balancing their positive labels."""
         y_arr = np.asarray(y)
         if y_arr.ndim == 1:
             raise ValueError("MultilabelStratifiedKFold expects multilabel y with shape (n_samples, n_labels)")

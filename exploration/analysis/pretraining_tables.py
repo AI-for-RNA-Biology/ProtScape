@@ -19,6 +19,7 @@ from exploration.analysis.pretraining_model_specs import (
 
 
 def add_context_metadata(table: pd.DataFrame, mapping_path: Path) -> pd.DataFrame:
+    """Attach broad cell classes and group classes with at most ten contexts as Other."""
     mapping = pd.read_csv(mapping_path)
     frequent = mapping["cell_type_class"].value_counts()
     frequent = set(frequent[frequent > 10].index)
@@ -37,7 +38,8 @@ def add_context_metadata(table: pd.DataFrame, mapping_path: Path) -> pd.DataFram
     return table.merge(mapping[columns], on="edgelist", how="left")
 
 
-def robust_rows(model_key, metrics_by_k) -> list[dict]:
+def ppi_metric_rows(model_key, metrics_by_k) -> list[dict]:
+    """Format PPI metrics at each negative ratio for one pretrained model."""
     rows = []
     for k in sorted(metrics_by_k):
         metrics = metrics_by_k[k]
@@ -59,6 +61,7 @@ def robust_rows(model_key, metrics_by_k) -> list[dict]:
 
 
 def curve_table(robust: pd.DataFrame, order, metric, *, chance=False) -> pd.DataFrame:
+    """Arrange model metrics as ordered negative-ratio curves, optionally adding chance levels."""
     table = robust[robust["model_key"].isin(order)][
         ["model_key", "k_negatives", "pos_neg_ratio", metric]
     ].copy()
@@ -136,6 +139,7 @@ def full_metrics_table(robust: pd.DataFrame, cci: dict, metagraph: dict) -> pd.D
 
 
 def build_output_tables(robust, metagraph, cci, parameters, contextwise):
+    """Assemble PPI, metagraph, pooling, loss and parameter-count tables for plotting."""
     robust = pd.DataFrame(robust)
     by_model = robust.set_index(["model_key", "k_negatives"])
 

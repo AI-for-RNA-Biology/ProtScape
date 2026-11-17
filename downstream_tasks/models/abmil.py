@@ -1,4 +1,8 @@
-# Attention-Based Multiple Instance Learning models.
+"""Attention pooling over a protein's cell contexts, with optional sequence features.
+
+Attention-based Deep Multiple Instance Learning (Ilse et al., 2018):
+https://proceedings.mlr.press/v80/ilse18a.html
+"""
 
 from typing import Dict, Optional, Tuple
 
@@ -39,7 +43,7 @@ def prepare_context_bags(x_dict: Dict) -> Tuple[torch.Tensor, torch.Tensor, torc
         ctx_ptr = torch.tensor([0, ctx.shape[0]], device=ctx.device, dtype=torch.long)
         return ctx, ctx_batch, ctx_ptr
 
-    # PyG attention uses batch ids and ptr, for pooling and PDL to know how many bags are in the mini-batch.
+    # Bag indices and offsets keep attention and dropout within each protein.
     if ctx_batch is None:
         bag_sizes = ctx_ptr[1:] - ctx_ptr[:-1]
         ctx_batch = torch.repeat_interleave(
@@ -91,6 +95,7 @@ class PDLProjector(nn.Sequential):
         batch: Optional[torch.Tensor] = None,
         ptr: Optional[torch.Tensor] = None,
     ):
+        """Apply projection layers and update bag offsets after context dropout."""
         current = x
         current_batch = batch
         current_ptr = ptr
@@ -114,6 +119,7 @@ def build_pdl_projector(
     mode: str = "identity",
     num_identity_layers: int = 2,
 ) -> PDLProjector:
+    """Build the projection and progressive-dropout blocks before attention."""
     mode = (mode or "identity").strip().lower()
     if mode not in {"identity", "linear", "none"}:
         raise ValueError(f"Unsupported pdl_proj_mode: {mode}")
@@ -168,6 +174,7 @@ class MLPClassifier(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Predict label logits from the pooled protein representation."""
         return self.mlp(x)
 
 
@@ -178,6 +185,7 @@ def build_classifier(
     hidden_dim: Optional[int] = None,
     dropout: float = 0.3,
 ) -> nn.Module:
+    """Choose a linear or single-hidden-layer label classifier."""
     if classifier_type == ClassifierType.LINEAR:
         return nn.Linear(input_dim, num_classes)
     if classifier_type == ClassifierType.MLP:
@@ -213,7 +221,6 @@ class ABMIL_LateFusion(nn.Module):
             if use_pdl
             else None
         )
-        self.esm_proj = None #old
 
         self.attention = get_attention_module(
             attention_type,
@@ -235,17 +242,13 @@ class ABMIL_LateFusion(nn.Module):
             dropout,
         )
 
-    def _pool_context(self, x_dict: Dict) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, x_dict: Dict, return_attention: bool = False):
+        """Pool each protein's cell contexts, then predict its labels."""
         x_ctx, ctx_batch, ctx_ptr = prepare_context_bags(x_dict)
         if self.ctx_proj is not None:
             x_ctx, ctx_batch, ctx_ptr = self.ctx_proj(x_ctx, batch=ctx_batch, ptr=ctx_ptr)
-
         att_w = self.attention(x_ctx, batch=ctx_batch, ptr=ctx_ptr)
-        pooled = pool_context_embeddings(x_ctx, att_w, ctx_batch, ctx_ptr, self.num_heads)
-        return pooled, att_w, ctx_batch, ctx_ptr
-
-    def forward(self, x_dict: Dict, return_attention: bool = False):
-        ctx_pooled, att_w, ctx_batch, ctx_ptr = self._pool_context(x_dict)
+        ctx_pooled = pool_context_embeddings(x_ctx, att_w, ctx_batch, ctx_ptr, self.num_heads)
         fused = torch.cat([ctx_pooled, x_dict["esm"]], dim=1)
         logits = self.classifier(self.dropout(self.norm(fused)))
 
@@ -298,17 +301,13 @@ class ABMIL_ContextOnly(nn.Module):
             dropout,
         )
 
-    def _pool_context(self, x_dict: Dict) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, x_dict: Dict, return_attention: bool = False):
+        """Pool each protein's cell contexts, then predict its labels."""
         x_ctx, ctx_batch, ctx_ptr = prepare_context_bags(x_dict)
         if self.ctx_proj is not None:
             x_ctx, ctx_batch, ctx_ptr = self.ctx_proj(x_ctx, batch=ctx_batch, ptr=ctx_ptr)
-
         att_w = self.attention(x_ctx, batch=ctx_batch, ptr=ctx_ptr)
         pooled = pool_context_embeddings(x_ctx, att_w, ctx_batch, ctx_ptr, self.num_heads)
-        return pooled, att_w, ctx_batch, ctx_ptr
-
-    def forward(self, x_dict: Dict, return_attention: bool = False):
-        pooled, att_w, ctx_batch, ctx_ptr = self._pool_context(x_dict)
         logits = self.classifier(self.dropout(self.norm(pooled)))
 
         if return_attention:

@@ -10,9 +10,8 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-from exploration.plotting.fonts import register_arial
+from exploration.plotting.fonts import FONT_NAME
 
-register_arial()
 matplotlib.rcParams["pdf.fonttype"] = 42
 matplotlib.rcParams["ps.fonttype"] = 42
 
@@ -41,16 +40,16 @@ LEGEND_SIZE = 6.0
 PLOT_RC = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
-    "font.family": "Arial",
-    "font.sans-serif": ["Arial"],
+    "font.family": FONT_NAME,
+    "font.sans-serif": [FONT_NAME],
     "font.size": 7.0,
     "mathtext.fontset": "custom",
-    "mathtext.rm": "Arial",
-    "mathtext.it": "Arial:italic",
-    "mathtext.bf": "Arial:bold",
-    "mathtext.cal": "Arial:italic",
-    "mathtext.sf": "Arial",
-    "mathtext.tt": "Arial",
+    "mathtext.rm": FONT_NAME,
+    "mathtext.it": f"{FONT_NAME}:italic",
+    "mathtext.bf": f"{FONT_NAME}:bold",
+    "mathtext.cal": f"{FONT_NAME}:italic",
+    "mathtext.sf": FONT_NAME,
+    "mathtext.tt": FONT_NAME,
     "text.color": "#111111",
     "axes.labelcolor": "#111111",
     "axes.edgecolor": "#111111",
@@ -161,10 +160,12 @@ TASK_ORDER = [
 
 
 def figure_size(width_cm: float, height_cm: float) -> tuple[float, float]:
+    """Convert figure dimensions from centimeters to inches."""
     return width_cm * CM, height_cm * CM
 
 
 def clean_axes(ax: plt.Axes) -> None:
+    """Apply the shared axis lines and ticks, omitting the upper and right borders."""
     ax.grid(False)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -183,6 +184,7 @@ def clean_axes(ax: plt.Axes) -> None:
 
 
 def save_figure(fig: plt.Figure, output: Path, stem: str) -> None:
+    """Save PDF and PNG versions, then close the figure."""
     options = {"bbox_inches": "tight", "pad_inches": 0.03}
     fig.savefig(output / f"{stem}.pdf", **options)
     fig.savefig(output / f"{stem}.png", dpi=300, **options)
@@ -190,6 +192,7 @@ def save_figure(fig: plt.Figure, output: Path, stem: str) -> None:
 
 
 def attribution_matrix(values: pd.DataFrame) -> pd.DataFrame:
+    """Arrange the table in the fixed disease and cell-class plotting order."""
     return values.set_index("disease").reindex(
         index=[disease for _, disease in TASK_ORDER],
         columns=CELL_CLASSES,
@@ -197,6 +200,7 @@ def attribution_matrix(values: pd.DataFrame) -> pd.DataFrame:
 
 
 def row_zscore(matrix: pd.DataFrame) -> pd.DataFrame:
+    """Standardize each disease's cell-class values to highlight relative contributions."""
     values = matrix.to_numpy(dtype=float)
     means = values.mean(axis=1, keepdims=True)
     standard_deviations = values.std(axis=1, ddof=0, keepdims=True)
@@ -210,6 +214,7 @@ def row_zscore(matrix: pd.DataFrame) -> pd.DataFrame:
 
 
 def style_heatmap_axes(ax: plt.Axes, matrix: pd.DataFrame) -> None:
+    """Label heatmap rows and columns with readable diseases and cell classes."""
     ax.set_xticks(np.arange(matrix.shape[1]))
     ax.set_xticklabels(
         [
@@ -237,6 +242,7 @@ def plot_positive_heatmap(
     stem: str,
     colorbar_label: str,
 ) -> None:
+    """Cluster cell classes and plot disease-standardized positive relevance."""
     row_z = row_zscore(attribution_matrix(matrix))
     linkage = hierarchy.linkage(
         row_z.to_numpy().T,
@@ -296,6 +302,7 @@ def plot_positive_heatmap(
 
 
 def plot_signed_heatmap(matrix: pd.DataFrame, output: Path) -> None:
+    """Show signed cell-class relevance on the shared percentage color scale."""
     matrix = attribution_matrix(matrix)
     if np.nanmax(np.abs(matrix.to_numpy(dtype=float))) > SIGNED_LIMIT_PERCENT:
         raise ValueError("Signed attribution exceeds the fixed +/-2.5% scale")
@@ -338,10 +345,12 @@ def plot_signed_heatmap(matrix: pd.DataFrame, output: Path) -> None:
 
 
 def wrap_label(value: object) -> str:
+    """Wrap long context names without breaking words."""
     return textwrap.fill(str(value), width=34, break_long_words=False)
 
 
 def plot_focal_targets(top: pd.DataFrame, output: Path) -> None:
+    """Plot the highest-contributing contexts for the selected example targets."""
     if top.empty:
         print("No held-out focal-target explanations to plot.")
         return
@@ -418,6 +427,7 @@ def plot_focal_targets(top: pd.DataFrame, output: Path) -> None:
 
 
 def plot_absolute_relevance(values: pd.DataFrame, output: Path) -> None:
+    """Compare the fraction of absolute input relevance assigned to contexts across models."""
     model_order = [MODEL_LABELS[key] for key in MODEL_ORDER]
     model_colors = {MODEL_LABELS[key]: MODEL_COLORS[key] for key in MODEL_ORDER}
     rng = np.random.default_rng(18)
@@ -471,10 +481,12 @@ def plot_absolute_relevance(values: pd.DataFrame, output: Path) -> None:
 
 
 def file_slug(value: str) -> str:
+    """Convert a disease name into a simple lowercase output filename."""
     return re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
 
 
 def plot_disease_top_contexts(top: pd.DataFrame, output: Path) -> None:
+    """Save the five strongest contexts per disease on a shared contribution scale."""
     shared_max = float(top["shared_x_axis_max_pct"].iloc[0])
     for task, disease in TASK_ORDER:
         values = top.loc[top["task"].eq(task)].sort_values("rank")
@@ -544,6 +556,7 @@ def plot_disease_top_contexts(top: pd.DataFrame, output: Path) -> None:
 
 
 def plot_attributions(source: Path, output: Path) -> None:
+    """Draw cell-class heatmaps, example targets and contextual-relevance comparisons."""
     output.mkdir(parents=True, exist_ok=True)
     with matplotlib.rc_context(PLOT_RC):
         plot_positive_heatmap(

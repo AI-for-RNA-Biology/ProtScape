@@ -7,9 +7,8 @@ from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
-from exploration.plotting.fonts import register_arial
+from exploration.plotting.fonts import FONT_NAME
 
-register_arial()
 import numpy as np
 import pandas as pd
 
@@ -18,10 +17,10 @@ import matplotlib.pyplot as plt
 
 CM = 1 / 2.54
 
-SOURCE_STYLE = {
+PLOT_STYLE = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
-    "font.family": "Arial",
+    "font.family": FONT_NAME,
     "axes.labelsize": 8.0,
     "xtick.labelsize": 6.0,
     "ytick.labelsize": 6.0,
@@ -41,7 +40,7 @@ SOURCE_STYLE = {
     "savefig.transparent": True,
 }
 
-def save_original(
+def save_figure(
     fig,
     output: Path,
     stem: str,
@@ -49,7 +48,7 @@ def save_original(
     pad_inches: float | None = None,
     pdf_dpi: int = 300,
 ):
-    """Save with the transparent, tight-bbox settings of the source scripts."""
+    """Save transparent PDF and PNG figures with tight margins."""
     kwargs = {"bbox_inches": "tight", "transparent": True}
     if pad_inches is not None:
         kwargs["pad_inches"] = pad_inches
@@ -59,6 +58,7 @@ def save_original(
 
 
 def plot_string_correlations(ax, table):
+    """Compare held-out Pearson and Spearman correlations for each score combination."""
     colors = {"Pearson": "#222222", "Spearman": "#B3B3B3"}
     combinations = ["BCE", "pHuber", "L1", "BCE+pHuber", "BCE+L1", "pHuber+L1", "BCE+pHuber+L1"]
     table = table.set_index("loss_combination").loc[combinations]
@@ -100,6 +100,7 @@ def plot_string_correlations(ax, table):
 
 
 def plot_loss_correlation_scatter(ax: plt.Axes, table: pd.DataFrame) -> None:
+    """Plot Pearson against Spearman correlation for individual and combined loss scores."""
     combinations = ["BCE", "pHuber", "L1", "BCE+pHuber+L1"]
     labels = ["BCE", "pHuber", "L1", "Combined"]
     colors = {
@@ -154,14 +155,14 @@ def plot_loss_correlation_scatter(ax: plt.Axes, table: pd.DataFrame) -> None:
 
 def plot_string(source, output):
     """Render STRING-validation correlations."""
-    matplotlib.rcParams.update(SOURCE_STYLE)
+    matplotlib.rcParams.update(PLOT_STYLE)
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     string_correlations = pd.read_csv(source / "string_correlations.csv")
 
     panel_f_style = {
-        "font.family": "Arial",
-        "font.sans-serif": ["Arial"],
+        "font.family": FONT_NAME,
+        "font.sans-serif": [FONT_NAME],
         "font.size": 7.701,
         "axes.labelsize": 7.701,
         "axes.linewidth": 0.6,
@@ -182,7 +183,7 @@ def plot_string(source, output):
             figsize=(15 * CM, 4.5 * CM), constrained_layout=True
         )
         plot_string_correlations(f_ax, string_correlations)
-        save_original(
+        save_figure(
             f_fig,
             output,
             "loss_descriptor_correlations_mean_std",
@@ -191,4 +192,4 @@ def plot_string(source, output):
 
     scatter_fig, scatter_ax = plt.subplots(figsize=(4.0 * CM, 5.5 * CM))
     plot_loss_correlation_scatter(scatter_ax, string_correlations)
-    save_original(scatter_fig, output, "loss_vs_string_correlations_scatter")
+    save_figure(scatter_fig, output, "loss_vs_string_correlations_scatter")

@@ -1,5 +1,4 @@
-# loaders.py
-# Embedding loaders for sequence and HC embeddings
+"""Read sequence features and contextual protein/cell embeddings."""
 
 import gc
 import ast
@@ -16,15 +15,7 @@ from tqdm import tqdm
 
 
 def load_esm_embeddings(path: Path) -> Dict[str, np.ndarray]:
-    """
-    Load sequence embeddings from pickle file.
-
-    Args:
-        path: Path to sequence embeddings pickle file (ESM or ProstT5)
-
-    Returns:
-        Dictionary mapping gene names (uppercase) to embedding vectors
-    """
+    """Load sequence embeddings from pickle file."""
     with open(path, "rb") as f:
         esm_raw = pickle.load(f)
 
@@ -123,13 +114,14 @@ def load_pinnacle_paper_protein_embeddings(embed_path: Path, labels_path: Path) 
     cell_ids = []
     cell_names = []
 
-    def _cell_sort_key(raw_cell_id):
+    def cell_sort_key(raw_cell_id):
+        """Sort numeric cell IDs in numeric order."""
         try:
             return int(raw_cell_id)
         except (TypeError, ValueError):
             return raw_cell_id
 
-    for raw_cell_id in sorted(raw_embed, key=_cell_sort_key):
+    for raw_cell_id in sorted(raw_embed, key=cell_sort_key):
         try:
             cell_id = int(raw_cell_id)
         except (TypeError, ValueError):
@@ -215,16 +207,7 @@ def build_gene_contexts_from_hc(
     hc_protein_embed: Dict,
     target_genes: Optional[Set[str]] = None,
 ) -> Tuple[Dict[str, List[np.ndarray]], Dict[str, List[str]]]:
-    """
-    Build gene context vectors from HC (Hierarchical Cell) embeddings.
-
-    Args:
-        hc_protein_embed: HC protein embeddings dictionary with 'embeddings' and 'protein_names'
-        target_genes: Optional set of target genes to filter
-
-    Returns:
-        Tuple of (gene_to_vecs, gene_to_cells) where gene_to_cells tracks cell IDs for stratification
-    """
+    """Build gene context vectors from HC (Hierarchical Cell) embeddings."""
     gene_to_vecs: Dict[str, List[np.ndarray]] = defaultdict(list)
     gene_to_cells: Dict[str, List[str]] = defaultdict(list)
 
@@ -385,16 +368,7 @@ def build_gene_means_from_hc(
     hc_protein_embed: Dict,
     target_genes: Optional[Set[str]] = None,
 ) -> Tuple[Dict[str, np.ndarray], Dict[str, List[str]]]:
-    """
-    Build mean gene context vectors from HC embeddings without storing all contexts.
-
-    Args:
-        hc_protein_embed: HC protein embeddings dictionary with 'embeddings' and 'protein_names'
-        target_genes: Optional set of target genes to filter
-
-    Returns:
-        Tuple of (gene_to_mean, gene_to_cells) where gene_to_cells tracks cell IDs
-    """
+    """Build mean gene context vectors from HC embeddings without storing all contexts."""
     gene_sum: Dict[str, np.ndarray] = {}
     gene_count: Dict[str, int] = {}
     gene_to_cells: Dict[str, List[str]] = defaultdict(list)
@@ -433,18 +407,8 @@ def build_gene_contexts_from_hc_with_cell(
     hc_cell_embed: Dict,
     target_genes: Optional[Set[str]] = None,
 ) -> Tuple[Dict[str, List[np.ndarray]], Dict[str, List[str]]]:
-    """
-    Build gene contexts by concatenating each protein embedding with its corresponding cell embedding.
-    This adds cell-level context to each protein instance in the bag.
-
-    Args:
-        hc_protein_embed: HC protein embeddings dictionary
-        hc_cell_embed: HC cell embeddings dictionary with 'embeddings' and 'cell_ids'
-        target_genes: Optional set of target genes to filter
-
-    Returns:
-        Tuple of (gene_to_vecs, gene_to_cells) with concatenated protein+cell embeddings
-    """
+    """Build gene contexts by concatenating each protein embedding with its corresponding cell embedding.
+    This adds cell-level context to each protein instance in the bag."""
     gene_to_vecs: Dict[str, List[np.ndarray]] = defaultdict(list)
     gene_to_cells: Dict[str, List[str]] = defaultdict(list)
 
@@ -499,17 +463,7 @@ def build_gene_means_from_hc_with_cell(
     hc_cell_embed: Dict,
     target_genes: Optional[Set[str]] = None,
 ) -> Tuple[Dict[str, np.ndarray], Dict[str, List[str]]]:
-    """
-    Build mean gene contexts by concatenating protein and cell embeddings.
-
-    Args:
-        hc_protein_embed: HC protein embeddings dictionary
-        hc_cell_embed: HC cell embeddings dictionary with 'embeddings' and 'cell_ids'
-        target_genes: Optional set of target genes to filter
-
-    Returns:
-        Tuple of (gene_to_mean, gene_to_cells) with mean of protein+cell concatenated
-    """
+    """Build mean gene contexts by concatenating protein and cell embeddings."""
     gene_sum_prot: Dict[str, np.ndarray] = {}
     gene_sum_cell: Dict[str, np.ndarray] = {}
     gene_count: Dict[str, int] = {}
@@ -586,14 +540,6 @@ class EmbeddingLoader:
         hc_protein_labels_path: Optional[Path] = None,
         hc_cell_labels_path: Optional[Path] = None,
     ):
-        """
-        Args:
-            esm_path: Path to ESM embeddings pickle
-            hc_protein_path: Path to HC protein embeddings (optional)
-            hc_cell_path: Path to HC cell embeddings (optional)
-            hc_protein_labels_path: Optional original PINNACLE labels
-            hc_cell_labels_path: Optional original PINNACLE labels for cell embeddings
-        """
         self.esm_path = esm_path
         self.hc_protein_path = hc_protein_path
         self.hc_cell_path = hc_cell_path
@@ -612,7 +558,8 @@ class EmbeddingLoader:
             print(f"  Loaded {len(self._esm_dict)} sequence embeddings")
         return self._esm_dict
 
-    def _load_hc_protein_embed(self) -> Dict:
+    def load_context_protein_embeddings(self) -> Dict:
+        """Read contextual protein tensors once and cache them for feature assembly."""
         if self.hc_protein_path is None:
             raise ValueError("HC protein path not configured")
 
@@ -631,7 +578,8 @@ class EmbeddingLoader:
                 )
         return self._hc_protein_embed
 
-    def _load_hc_cell_embed(self) -> Dict:
+    def load_context_cell_embeddings(self) -> Dict:
+        """Read cell tensors in the same context order as the protein features."""
         if self.hc_cell_path is None:
             raise ValueError("HC cell path not configured")
 
@@ -651,16 +599,8 @@ class EmbeddingLoader:
         return self._hc_cell_embed
 
     def load_hc(self, target_genes: Optional[Set[str]] = None) -> Tuple[Dict[str, List[np.ndarray]], Dict[str, List[str]]]:
-        """
-        Load HC context embeddings.
-
-        Args:
-            target_genes: Optional set of target genes to filter
-
-        Returns:
-            Tuple of (gene_to_vecs, gene_to_cells)
-        """
-        return build_gene_contexts_from_hc(self._load_hc_protein_embed(), target_genes)
+        """Load HC context embeddings."""
+        return build_gene_contexts_from_hc(self.load_context_protein_embeddings(), target_genes)
 
     def load_hc_tissue_groups(
         self,
@@ -669,7 +609,7 @@ class EmbeddingLoader:
     ) -> Tuple[Dict[str, List[np.ndarray]], Dict[str, List[int]], List[str]]:
         """Load HC context embeddings grouped by bulk tissue metadata."""
         return build_gene_contexts_from_hc_with_tissue_groups(
-            self._load_hc_protein_embed(),
+            self.load_context_protein_embeddings(),
             data_root,
             target_genes,
         )
@@ -681,53 +621,29 @@ class EmbeddingLoader:
     ) -> Tuple[Dict[str, List[np.ndarray]], Dict[str, List[int]], List[str]]:
         """Load HC contexts with cell embeddings and tissue one-hot features."""
         return build_gene_contexts_from_hc_with_cell_and_tissue(
-            self._load_hc_protein_embed(),
-            self._load_hc_cell_embed(),
+            self.load_context_protein_embeddings(),
+            self.load_context_cell_embeddings(),
             data_root,
             target_genes,
         )
 
     def load_hc_mean(self, target_genes: Optional[Set[str]] = None) -> Tuple[Dict[str, np.ndarray], Dict[str, List[str]]]:
-        """
-        Load mean HC context embeddings without storing all contexts.
-
-        Args:
-            target_genes: Optional set of target genes to filter
-
-        Returns:
-            Tuple of (gene_to_mean, gene_to_cells)
-        """
-        return build_gene_means_from_hc(self._load_hc_protein_embed(), target_genes)
+        """Load mean HC context embeddings without storing all contexts."""
+        return build_gene_means_from_hc(self.load_context_protein_embeddings(), target_genes)
 
     def load_hc_with_cell(self, target_genes: Optional[Set[str]] = None) -> Tuple[Dict[str, List[np.ndarray]], Dict[str, List[str]]]:
-        """
-        Load HC context embeddings with cell embeddings concatenated.
-
-        Args:
-            target_genes: Optional set of target genes to filter
-
-        Returns:
-            Tuple of (gene_to_vecs, gene_to_cells) with protein+cell concatenated
-        """
+        """Load HC context embeddings with cell embeddings concatenated."""
         return build_gene_contexts_from_hc_with_cell(
-            self._load_hc_protein_embed(),
-            self._load_hc_cell_embed(),
+            self.load_context_protein_embeddings(),
+            self.load_context_cell_embeddings(),
             target_genes,
         )
 
     def load_hc_with_cell_mean(self, target_genes: Optional[Set[str]] = None) -> Tuple[Dict[str, np.ndarray], Dict[str, List[str]]]:
-        """
-        Load mean HC context embeddings with cell embeddings concatenated.
-
-        Args:
-            target_genes: Optional set of target genes to filter
-
-        Returns:
-            Tuple of (gene_to_mean, gene_to_cells) with protein+cell concatenated
-        """
+        """Load mean HC context embeddings with cell embeddings concatenated."""
         return build_gene_means_from_hc_with_cell(
-            self._load_hc_protein_embed(),
-            self._load_hc_cell_embed(),
+            self.load_context_protein_embeddings(),
+            self.load_context_cell_embeddings(),
             target_genes,
         )
 
@@ -749,18 +665,3 @@ class EmbeddingLoader:
 
         if cleared:
             gc.collect()
-
-    def get_esm_dim(self) -> int:
-        """Get ESM embedding dimension."""
-        esm = self.load_esm()
-        if esm:
-            return next(iter(esm.values())).shape[0]
-        raise ValueError("No ESM embeddings loaded")
-
-    def get_hc_dim(self) -> int:
-        """Get HC embedding dimension."""
-        embs = self._load_hc_protein_embed().get("embeddings", {})
-        for cell_id, e in embs.items():
-            arr = e.detach().cpu().numpy() if isinstance(e, torch.Tensor) else np.asarray(e)
-            return arr.shape[1] if arr.ndim > 1 else arr.shape[0]
-        raise ValueError("No HC embeddings found")

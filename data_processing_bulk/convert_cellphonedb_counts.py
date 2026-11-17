@@ -9,6 +9,7 @@ import pandas as pd
 
 
 def main():
+    """Convert the Step 4 counts pickle to h5ad, then remove the temporary pickle."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="Pickle written by Step 4.")
     parser.add_argument("output", type=Path, help="CellPhoneDB-compatible h5ad path.")

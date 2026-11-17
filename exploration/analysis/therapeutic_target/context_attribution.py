@@ -60,20 +60,19 @@ ABSOLUTE_LRP_COLUMNS = [
     "class_name",
     "label",
     "cell_label",
-    "context_evidence",
-    "esm_evidence",
     "context_abs_evidence",
     "esm_abs_evidence",
 ]
 
 
-
 def lrp_path(inference_key: str, task: str) -> Path:
+    """Locate the compressed per-context explanations for one model and disease."""
     return ANALYSIS_DIR / f"lrp__{inference_key}__{task}.csv.gz"
 
 
 def generate_checkpoint_lrp() -> None:
-    for _, (inference_key, readout_key) in LRP_MODELS.items():
+    """Explain the selected model for each disease."""
+    for inference_key, readout_key in LRP_MODELS.values():
         for task, _, _ in TASKS:
             _, run_dir = find_selected_run(
                 "therapeutic_targets",
@@ -88,13 +87,13 @@ def generate_checkpoint_lrp() -> None:
 
 
 def normalize_context(value: object) -> str:
+    """Normalize context labels before matching them to cell metadata."""
     return str(value).strip().lower().replace(" ", "_")
 
 
 def load_cell_metadata() -> pd.DataFrame:
+    """Match context identifiers to broad cell classes and readable labels."""
     metadata = pd.read_csv(CELL_METADATA_PATH).copy()
-    if metadata["edgelist"].duplicated().any():
-        raise ValueError("Cellular-context metadata contains duplicate edgelists")
     metadata["cell_key"] = metadata["edgelist"].map(normalize_context)
     if metadata["cell_key"].duplicated().any():
         raise ValueError("Normalized cellular-context keys are not unique")
@@ -102,21 +101,19 @@ def load_cell_metadata() -> pd.DataFrame:
     if unexpected:
         raise ValueError(f"Unexpected broad cell classes: {sorted(unexpected)}")
 
-    def display_name(row: pd.Series) -> str:
+    display_names = []
+    for _, row in metadata.iterrows():
         name = str(row["canonical_name"]).strip()
-        if str(row["has_condition"]).strip().lower() != "true":
-            return name
-        prefix = f"{row['base_cl_id']}_"
-        suffix = str(row["edgelist"])
-        if suffix.startswith(prefix):
-            suffix = suffix[len(prefix):]
-        return f"{name} · " + " · ".join(suffix.split("_"))
-
-    metadata["display_cell_label"] = metadata.apply(display_name, axis=1)
+        if str(row["has_condition"]).strip().lower() == "true":
+            suffix = str(row["edgelist"]).removeprefix(f"{row['base_cl_id']}_")
+            name += " · " + " · ".join(suffix.split("_"))
+        display_names.append(name)
+    metadata["display_cell_label"] = display_names
     return metadata.set_index("cell_key")
 
 
 def add_cell_metadata(values: pd.DataFrame, metadata: pd.DataFrame) -> pd.DataFrame:
+    """Attach broad cell classes and readable names to context-level relevance rows."""
     values = values.copy()
     values["cell_key"] = values["cell_label"].map(normalize_context)
     values["cell_class"] = values["cell_key"].map(metadata["cell_type_class"])
@@ -128,6 +125,7 @@ def add_cell_metadata(values: pd.DataFrame, metadata: pd.DataFrame) -> pd.DataFr
 
 
 def read_positive_lrp(path: Path) -> pd.DataFrame:
+    """Read explanations for known targets without loading the full CSV at once."""
     frames = []
     for chunk in pd.read_csv(path, usecols=RAW_LRP_COLUMNS, chunksize=200_000):
         chunk["gene"] = chunk["gene"].astype(str).str.upper()
@@ -140,6 +138,7 @@ def read_positive_lrp(path: Path) -> pd.DataFrame:
 
 
 def calculate_cell_class_metrics(values: pd.DataFrame) -> pd.DataFrame:
+    """Normalize relevance within each gene/fold, then summarize by cell class."""
     bags = ["task", "disease", "gene", "fold"]
     if not values.groupby([*bags, "cell_label"]).size().eq(1).all():
         raise RuntimeError("Duplicate contexts within a model-target bag")
@@ -162,11 +161,11 @@ def calculate_cell_class_metrics(values: pd.DataFrame) -> pd.DataFrame:
         positive_class_relevance=("positive_context", "sum"),
         signed_class_relevance=("context_evidence", "sum"),
     )
+    # Include absent classes with zero relevance so diseases remain comparable.
     metrics = bag_values.merge(pd.DataFrame({"cell_class": CELL_CLASSES}), how="cross")
     metrics = metrics.merge(observed, on=[*bags, "cell_class"], how="left")
-    metrics[["n_class_contexts", "positive_class_relevance", "signed_class_relevance"]] = metrics[
-        ["n_class_contexts", "positive_class_relevance", "signed_class_relevance"]
-    ].fillna(0.0)
+    class_columns = ["n_class_contexts", "positive_class_relevance", "signed_class_relevance"]
+    metrics[class_columns] = metrics[class_columns].fillna(0.0)
     positive_denominator = (
         metrics["positive_context_total"] + metrics["esm_relevance"].clip(lower=0.0)
     )
@@ -175,12 +174,6 @@ def calculate_cell_class_metrics(values: pd.DataFrame) -> pd.DataFrame:
         metrics["positive_context_total"].gt(EPSILON)
         & positive_denominator.gt(EPSILON)
     )
-    metrics["q_positive"] = np.where(
-        metrics["positive_context_profile_defined"],
-        metrics["positive_context_total"] / positive_denominator,
-        np.nan,
-    )
-    metrics["q_absolute"] = metrics["absolute_context_total"] / absolute_denominator
     metrics["positive_class_contribution"] = np.where(
         metrics["positive_context_profile_defined"],
         metrics["positive_class_relevance"] / positive_denominator,
@@ -191,6 +184,7 @@ def calculate_cell_class_metrics(values: pd.DataFrame) -> pd.DataFrame:
         metrics["positive_class_contribution"] / metrics["n_class_contexts"],
         0.0,
     )
+    # Signed profiles use the absolute net evidence of each context and sequence.
     metrics["signed_class_contribution"] = (
         metrics["signed_class_relevance"] / absolute_denominator
     )
@@ -202,16 +196,10 @@ def calculate_cell_class_metrics(values: pd.DataFrame) -> pd.DataFrame:
     return metrics
 
 
-def prot_scape_lrp_tables(
+def protscape_attribution_tables(
     metadata: pd.DataFrame,
-) -> tuple[
-    pd.DataFrame,
-    pd.DataFrame,
-    pd.DataFrame,
-    pd.DataFrame,
-    pd.DataFrame,
-    pd.DataFrame,
-]:
+) -> tuple[pd.DataFrame, ...]:
+    """Build the recovered-target cohort and disease-by-cell-class heatmaps."""
     frames = []
     for task, _, disease in TASKS:
         values = read_positive_lrp(
@@ -225,18 +213,15 @@ def prot_scape_lrp_tables(
     metrics = calculate_cell_class_metrics(data)
     bag_columns = ["task", "disease", "gene", "fold"]
     bag = metrics.drop_duplicates(bag_columns)[
-        [*bag_columns, "probability", "positive_context_profile_defined", "q_positive", "q_absolute", "n_total_contexts"]
+        [*bag_columns, "probability", "positive_context_profile_defined", "n_total_contexts"]
     ]
     cohort = bag.groupby(["task", "disease", "gene"], as_index=False).agg(
         n_models=("fold", "nunique"),
         probability_mean=("probability", "mean"),
-        probability_min=("probability", "min"),
-        probability_max=("probability", "max"),
         n_models_with_positive_context_profile=("positive_context_profile_defined", "sum"),
-        q_positive_mean=("q_positive", "mean"),
-        q_absolute_mean=("q_absolute", "mean"),
         n_available_contexts=("n_total_contexts", "first"),
     )
+    # Use ensemble-positive targets with defined positive relevance in every fold.
     cohort["included_recovered_target"] = (
         cohort["probability_mean"].ge(0.5)
         & cohort["n_models_with_positive_context_profile"].eq(cohort["n_models"])
@@ -245,7 +230,6 @@ def prot_scape_lrp_tables(
     retained = metrics.merge(included, on=["task", "gene"], how="inner")
     target = retained.groupby(["task", "disease", "gene", "cell_class"], as_index=False).agg(
         mean_positive_contribution_per_observed_context=("mean_positive_contribution_per_observed_context", "mean"),
-        signed_class_contribution=("signed_class_contribution", "mean"),
         mean_signed_contribution_per_observed_context=("mean_signed_contribution_per_observed_context", "mean"),
     )
     disease = target.groupby(["task", "disease", "cell_class"], as_index=False).agg(
@@ -272,7 +256,8 @@ def prot_scape_lrp_tables(
 
     order = [disease for _, _, disease in TASKS]
 
-    def matrix(values: pd.DataFrame, metric: str, scale: float = 1.0) -> pd.DataFrame:
+    def disease_cell_matrix(values: pd.DataFrame, metric: str, scale: float = 1.0) -> pd.DataFrame:
+        """Pivot relevance into the fixed disease-by-cell-class order used by the heatmaps."""
         result = scale * values.pivot(
             index="disease",
             columns="cell_class",
@@ -285,16 +270,16 @@ def prot_scape_lrp_tables(
             columns="cell_class",
         ).reset_index()
 
-    positive_matrix = matrix(
+    positive_matrix = disease_cell_matrix(
         disease,
         "mean_positive_contribution_per_observed_context",
     )
-    signed_matrix = matrix(
+    signed_matrix = disease_cell_matrix(
         disease,
         "mean_signed_contribution_per_observed_context",
         scale=100.0,
     )
-    max_positive_matrix = matrix(
+    max_positive_matrix = disease_cell_matrix(
         strongest,
         "mean_positive_contribution_per_observed_context",
     )
@@ -313,6 +298,7 @@ def disease_top_contexts(
     cohort: pd.DataFrame,
     metadata: pd.DataFrame,
 ) -> pd.DataFrame:
+    """Rank contexts by their mean positive contribution across recovered targets."""
     included = cohort.loc[cohort["included_recovered_target"]]
     values = data.merge(included[["task", "gene"]], on=["task", "gene"], how="inner")
     bags = ["task", "disease", "gene", "fold"]
@@ -327,6 +313,7 @@ def disease_top_contexts(
     contexts = metadata.reset_index()[
         ["cell_key", "display_cell_label", "cell_type_class"]
     ].rename(columns={"cell_type_class": "cell_class"})
+    # An unobserved context contributes zero when averaging over targets.
     dense = values[bags].drop_duplicates().merge(contexts, how="cross")
     dense = dense.merge(
         values[[*bags, "cell_key", "overall_positive_contribution_pct"]],
@@ -374,9 +361,9 @@ FOCAL_TARGETS = [
 ]
 
 
-def focal_target_contexts(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def focal_target_contexts(data: pd.DataFrame) -> pd.DataFrame:
+    """Select the five strongest contexts for the two illustrated targets."""
     top_tables = []
-    summaries = []
     maxima = []
     for task, disease, gene, clinical_anchor in FOCAL_TARGETS:
         values = data.loc[data["task"].eq(task) & data["gene"].eq(gene)].copy()
@@ -386,24 +373,14 @@ def focal_target_contexts(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
         if values["fold"].nunique() != 5:
             raise RuntimeError(f"Expected five explanations for {task}/{gene}")
         model_tables = []
-        model_summaries = []
         for fold, frame in values.groupby("fold", sort=True):
             positive = frame["context_evidence"].clip(lower=0.0)
             positive_total = float(positive.sum())
             esm_value = float(frame["esm_evidence"].iloc[0])
             denominator = positive_total + max(esm_value, 0.0)
-            absolute_total = float(frame["context_evidence"].abs().sum())
-            absolute_denominator = absolute_total + abs(esm_value)
             frame["overall_positive_contribution_pct"] = 100.0 * positive / denominator
             frame["model"] = int(fold) + 1
             model_tables.append(frame[["model", "cell_label", "display_cell_label", "cell_class", "overall_positive_contribution_pct"]])
-            model_summaries.append(
-                {
-                    "probability": float(frame["prob"].iloc[0]),
-                    "q_positive": positive_total / denominator,
-                    "q_absolute": absolute_total / absolute_denominator,
-                }
-            )
         by_model = pd.concat(model_tables, ignore_index=True)
         summary = by_model.groupby(
             ["cell_label", "display_cell_label", "cell_class"], as_index=False
@@ -425,64 +402,35 @@ def focal_target_contexts(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFram
         }.items():
             top.insert(0, column, value)
         top_tables.append(top)
-        model_summary = pd.DataFrame(model_summaries)
-        summaries.append(
-            {
-                "task": task,
-                "disease": disease,
-                "gene": gene,
-                "clinical_anchor": clinical_anchor,
-                "mean_probability": model_summary["probability"].mean(),
-                "mean_q_positive": model_summary["q_positive"].mean(),
-                "mean_q_absolute": model_summary["q_absolute"].mean(),
-                "n_models": len(model_summary),
-            }
-        )
         maxima.append(float(by_model["overall_positive_contribution_pct"].max()))
     if not top_tables:
-        return (pd.DataFrame(columns=["task", "disease", "gene", "shared_x_axis_max_pct"]),
-                pd.DataFrame(columns=["task", "disease", "gene", "n_models"]))
+        return pd.DataFrame(columns=["task", "disease", "gene", "shared_x_axis_max_pct"])
     top = pd.concat(top_tables, ignore_index=True)
     top["shared_x_axis_max_pct"] = max(0.5, np.ceil(max(maxima) * 2.0) / 2.0)
-    return top, pd.DataFrame(summaries)
+    return top
 
 
 def read_absolute_fractions(path: Path, task: str) -> pd.DataFrame:
+    """Measure contextual |LRP| as a fraction of total feature-level |LRP|."""
     values = pd.read_csv(path, usecols=ABSOLUTE_LRP_COLUMNS)
     values = values.loc[values["label"].eq(1)].copy()
     values["gene"] = values["gene"].astype(str).str.upper()
-    values["context_positive_evidence"] = values["context_evidence"].clip(lower=0)
-    values["esm_positive_evidence"] = values["esm_evidence"].clip(lower=0)
-    values["net_absolute_context_relevance"] = values["context_evidence"].abs()
     bags = values.groupby(["fold", "gene", "class_name"], as_index=False).agg(
         context_absolute_relevance=("context_abs_evidence", "sum"),
         sequence_absolute_relevance=("esm_abs_evidence", "first"),
-        context_positive_relevance=("context_positive_evidence", "sum"),
-        sequence_positive_relevance=("esm_positive_evidence", "first"),
-        net_context_absolute_relevance=("net_absolute_context_relevance", "sum"),
-        net_sequence_relevance=("esm_evidence", "first"),
         n_context_rows=("cell_label", "size"),
         n_contexts=("cell_label", "nunique"),
     )
     if not bags["n_context_rows"].eq(bags["n_contexts"]).all():
         raise RuntimeError(f"Duplicate contexts within a bag in {path}")
     absolute_denominator = bags["context_absolute_relevance"] + bags["sequence_absolute_relevance"]
-    positive_denominator = bags["context_positive_relevance"] + bags["sequence_positive_relevance"]
-    net_denominator = bags["net_context_absolute_relevance"] + bags["net_sequence_relevance"].abs()
     bags["q_absolute_context"] = bags["context_absolute_relevance"] / absolute_denominator
-    positive_denominator = positive_denominator.where(positive_denominator.gt(EPSILON))
-    bags["q_positive_context"] = (
-        bags["context_positive_relevance"] / positive_denominator
-    ).fillna(0.0)
-    bags["q_positive_sequence"] = (
-        bags["sequence_positive_relevance"] / positive_denominator
-    ).fillna(0.0)
-    bags["q_net_absolute_context"] = bags["net_context_absolute_relevance"] / net_denominator
     bags["task"] = task
     return bags
 
 
 def absolute_contextual_relevance() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Average contextual relevance over folds, targets and then diseases."""
     model_targets = {}
     for model, (inference_key, _) in LRP_MODELS.items():
         frames = [
@@ -494,14 +442,13 @@ def absolute_contextual_relevance() -> tuple[pd.DataFrame, pd.DataFrame, pd.Data
             raise RuntimeError(f"Incomplete fold explanations for {model}")
         model_targets[model] = bags.groupby(["task", "gene"], as_index=False).agg(
             q_absolute_context=("q_absolute_context", "mean"),
-            q_positive_context=("q_positive_context", "mean"),
-            q_positive_sequence=("q_positive_sequence", "mean"),
-            q_net_absolute_context=("q_net_absolute_context", "mean"),
             n_models=("fold", "nunique"),
         )
     reference = set(map(tuple, model_targets["Pinnacle"][["task", "gene"]].to_numpy()))
-    if any(set(map(tuple, table[["task", "gene"]].to_numpy())) != reference for table in model_targets.values()):
-        raise RuntimeError("Absolute-relevance models do not share the same target cohort")
+    for model, table in model_targets.items():
+        cohort = set(map(tuple, table[["task", "gene"]].to_numpy()))
+        if cohort != reference:
+            raise RuntimeError(f"{model} uses a different target cohort for relevance")
     targets = pd.concat(
         [table.assign(model=model) for model, table in model_targets.items()],
         ignore_index=True,
@@ -509,9 +456,6 @@ def absolute_contextual_relevance() -> tuple[pd.DataFrame, pd.DataFrame, pd.Data
     targets["disease"] = targets["task"].map(TASK_TO_DISEASE)
     diseases = targets.groupby(["model", "task", "disease"], as_index=False, sort=False).agg(
         q_absolute_context=("q_absolute_context", "mean"),
-        q_positive_context=("q_positive_context", "mean"),
-        q_positive_sequence=("q_positive_sequence", "mean"),
-        q_net_absolute_context=("q_net_absolute_context", "mean"),
         n_targets=("gene", "nunique"),
     )
     summary = diseases.groupby("model", as_index=False, sort=False).agg(
@@ -519,8 +463,5 @@ def absolute_contextual_relevance() -> tuple[pd.DataFrame, pd.DataFrame, pd.Data
         mean_q_absolute_context=("q_absolute_context", "mean"),
         median_q_absolute_context=("q_absolute_context", "median"),
         standard_deviation=("q_absolute_context", "std"),
-        mean_q_positive_context=("q_positive_context", "mean"),
-        mean_q_positive_sequence=("q_positive_sequence", "mean"),
-        mean_q_net_absolute_context=("q_net_absolute_context", "mean"),
     )
     return targets, diseases, summary

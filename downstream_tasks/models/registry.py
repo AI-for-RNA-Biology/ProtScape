@@ -25,11 +25,11 @@ class ModelVariant:
     num_heads: int = 1
     classifier_type: ClassifierType = ClassifierType.LINEAR
     mlp_hidden_dim: Optional[int] = None
-    use_aem: bool = False
     use_pdl: bool = False
     pdl_proj_mode: Optional[str] = None
 
     def resolve_pdl_proj_mode(self, default_mode: str = "identity") -> str:
+        """Use the variant's projection mode when it overrides the run default."""
         return self.pdl_proj_mode or default_mode
 
 
@@ -84,6 +84,7 @@ MODEL_VARIANTS = {
 
 
 def parse_model_argument(model_arg: str) -> List[str]:
+    """Expand a comma-separated readout list or select all registered models."""
     model_arg = model_arg.strip().lower()
     if model_arg == "all":
         return list(MODEL_VARIANTS)

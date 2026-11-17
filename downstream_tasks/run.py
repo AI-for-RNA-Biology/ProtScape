@@ -16,10 +16,8 @@ from .training.trainer import Trainer
 from .utils.io_utils import save_results_csv, save_task_results, setup_output_dirs
 
 
-CANONICAL_PDL_IMPLEMENTATION = "canonical"
-
-
-def _fmt_hp_value(value):
+def format_hyperparameter(value):
+    """Format a number for the run directory name."""
     if isinstance(value, float):
         text = f"{value:.12g}"
     else:
@@ -27,30 +25,29 @@ def _fmt_hp_value(value):
     return text.replace("-", "m").replace(".", "p").replace("+", "")
 
 
-def _build_hp_suffix(variant, config) -> str:
-    parts = [f"lr{_fmt_hp_value(config.lr)}"]
+def hyperparameter_suffix(variant, config) -> str:
+    """Include the fitted hyperparameters in the run directory name."""
+    parts = [f"lr{format_hyperparameter(config.lr)}"]
     if variant.model_type.value == "abmil":
-        parts.append(f"att{_fmt_hp_value(config.att_hidden_dim)}")
-        parts.append(f"do{_fmt_hp_value(config.dropout)}")
+        parts.append(f"att{format_hyperparameter(config.att_hidden_dim)}")
+        parts.append(f"do{format_hyperparameter(config.dropout)}")
         if getattr(config, "att_dropout", 0.0) > 0:
-            parts.append(f"attdo{_fmt_hp_value(config.att_dropout)}")
-        if variant.use_aem and config.aem_lambda > 0:
-            parts.append(f"aem{_fmt_hp_value(config.aem_lambda)}")
+            parts.append(f"attdo{format_hyperparameter(config.att_dropout)}")
         if variant.use_pdl and config.pdl_pmax > 0:
             pdl_proj_mode = variant.resolve_pdl_proj_mode(config.pdl_proj_mode)
-            parts.append(f"pdl{_fmt_hp_value(config.pdl_pmax)}")
+            parts.append(f"pdl{format_hyperparameter(config.pdl_pmax)}")
             parts.append(f"pdlproj{pdl_proj_mode}")
             if pdl_proj_mode == "identity":
-                parts.append(f"pdlprojl{_fmt_hp_value(config.pdl_proj_layers)}")
+                parts.append(f"pdlprojl{format_hyperparameter(config.pdl_proj_layers)}")
         if variant.classifier_type.value == "mlp":
-            parts.append(f"mlp{_fmt_hp_value(config.mil_mlp_dim)}")
-    parts.append(f"wd{_fmt_hp_value(config.weight_decay)}")
+            parts.append(f"mlp{format_hyperparameter(config.mil_mlp_dim)}")
+    parts.append(f"wd{format_hyperparameter(config.weight_decay)}")
     parts.append(f"sel{config.train_selection_metric}")
     parts.append("cw1" if config.use_class_weights else "cw0")
     return "_".join(parts)
 
 
-def _add_prediction_labels(
+def add_prediction_labels(
     predictions_path: Path,
     genes: List[str],
     class_names: List[str],
@@ -70,6 +67,7 @@ def _add_prediction_labels(
 
 
 def parse_args():
+    """Read the task, readout and training options."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--inference-model")
     parser.add_argument(
@@ -147,12 +145,14 @@ def parse_args():
 
 
 def list_models():
+    """Print the available linear and attention readouts."""
     print("\nAvailable model variants:\n")
     for key, variant in MODEL_VARIANTS.items():
         print(f"  {key:40s} {variant.name}")
 
 
 def main():
+    """Train the requested readouts on the task's saved protein folds."""
     args = parse_args()
 
     if args.list_models:
@@ -295,7 +295,7 @@ def main():
                 f"{model_key} requires --pdl-pmax in (0, 1], got {config.pdl_pmax}."
             )
 
-        hp_suffix = _build_hp_suffix(variant, config)
+        hp_suffix = hyperparameter_suffix(variant, config)
         dataset_suffix = "" if config.dataset_mode == "bulk" else f"__data_{config.dataset_mode}"
         output_model_key = args.output_model_key or (
             f"{model_key}__hp_{hp_suffix}__emb_{config.embedding_source}"
@@ -375,7 +375,7 @@ def main():
             strict_gene_universe=True,
         )
 
-        _add_prediction_labels(
+        add_prediction_labels(
             output_dir / "test_predictions.npz",
             shared_genes,
             class_names,
@@ -407,7 +407,6 @@ def main():
         result["hc_cell_embedding_path"] = (
             Path(hc_paths["cell_embed"]).name if hc_paths["cell_embed"] is not None else ""
         )
-        result["folder name"] = args.inference_model
         result["lr"] = float(config.lr)
         result["weight_decay"] = float(config.weight_decay)
         result["dropout"] = float(config.dropout)
@@ -415,27 +414,10 @@ def main():
         result["att_hidden_dim"] = int(config.att_hidden_dim)
         result["num_heads"] = int(config.num_heads)
         result["mil_mlp_dim"] = int(config.mil_mlp_dim)
-        result["ctx_proj_dim"] = 0
-        result["aem_lambda"] = float(config.aem_lambda)
         result["pdl_pmax"] = float(config.pdl_pmax)
-        result["pdl_impl_tag"] = (
-            CANONICAL_PDL_IMPLEMENTATION
-            if variant.use_pdl and config.pdl_pmax > 0
-            else ""
-        )
-        result["model_schema_version"] = 2
-        if variant.use_pdl and config.pdl_pmax > 0:
-            pdl_mode = variant.resolve_pdl_proj_mode(config.pdl_proj_mode)
-            result["pdl_layer_count"] = (
-                int(config.pdl_proj_layers) if pdl_mode == "identity" else 1
-            )
-        else:
-            result["pdl_layer_count"] = 0
         result["pdl_proj_mode"] = variant.resolve_pdl_proj_mode(config.pdl_proj_mode) if variant.use_pdl else ""
         result["pdl_proj_layers"] = config.pdl_proj_layers if variant.use_pdl and variant.resolve_pdl_proj_mode(config.pdl_proj_mode) == "identity" else 0
-        result["esm_proj_dim"] = 0
         result["abmil_arch"] = "late_fusion" if "ext_embed" in variant.embedding_sources else "context_only"
-        result["esm_conditioned_attention"] = False
         result["classifier_type"] = variant.classifier_type.value
         result["use_class_weights"] = bool(config.use_class_weights)
         result["train_selection_metric"] = config.train_selection_metric
@@ -443,7 +425,6 @@ def main():
         result["n_folds"] = int(config.n_folds)
         result["n_cv_folds"] = int(config.n_folds - 1)
         result["test_fold"] = 0
-        result["split_protocol"] = "fold_0_test_remaining_folds_rotate_validation"
         result["batch_size"] = int(config.batch_size)
         result["epochs"] = int(config.epochs)
         result["patience"] = int(config.patience)

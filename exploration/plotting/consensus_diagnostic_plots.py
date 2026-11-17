@@ -7,9 +7,8 @@ from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
-from exploration.plotting.fonts import register_arial
+from exploration.plotting.fonts import FONT_NAME
 
-register_arial()
 import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
@@ -20,10 +19,10 @@ import matplotlib.pyplot as plt
 
 CM = 1 / 2.54
 
-SOURCE_STYLE = {
+PLOT_STYLE = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
-    "font.family": "Arial",
+    "font.family": FONT_NAME,
     "axes.labelsize": 8.0,
     "xtick.labelsize": 6.0,
     "ytick.labelsize": 6.0,
@@ -74,12 +73,14 @@ EDGE_LABELS = ["Labelled positive", "Labelled negative"]
 
 
 def lighten_hex_color(color: str, amount: float = 0.60) -> str:
+    """Mix a category color with white for the negative-label series."""
     rgb = np.asarray(mcolors.to_rgb(color))
     white = np.ones(3)
     return mcolors.to_hex(rgb * (1.0 - amount) + white * amount)
 
 
 def comparison_group_styles(comparison: str) -> list[tuple[str, str]]:
+    """Choose related colors for the positive and negative parts of a loss comparison."""
     primary_color = "#d31529" if "pHuber" in comparison else "#9200bf"
     return [
         ("Labelled positives", primary_color),
@@ -87,7 +88,7 @@ def comparison_group_styles(comparison: str) -> list[tuple[str, str]]:
     ]
 
 
-def save_original(
+def save_figure(
     fig,
     output: Path,
     stem: str,
@@ -95,7 +96,7 @@ def save_original(
     pad_inches: float | None = None,
     pdf_dpi: int = 300,
 ):
-    """Save with the transparent, tight-bbox settings of the source scripts."""
+    """Save transparent PDF and PNG figures with tight margins."""
     kwargs = {"bbox_inches": "tight", "transparent": True}
     if pad_inches is not None:
         kwargs["pad_inches"] = pad_inches
@@ -105,7 +106,7 @@ def save_original(
 
 
 def clean_2d_axis(ax):
-    """Axis styling shared by the original sensitivity plots."""
+    """Apply the shared axis styling to the diagnostic panels."""
     ax.grid(False)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -124,6 +125,7 @@ def clean_2d_axis(ax):
 
 
 def class_legend_handles():
+    """Build markers in the six-class consensus order."""
     return [
         Line2D(
             [0],
@@ -140,6 +142,7 @@ def class_legend_handles():
 
 
 def clean_3d_axis(ax):
+    """Remove the 3D grid and apply the shared score-axis styling."""
     pad = 0.0
     ax.grid(False)
     for axis in [ax.xaxis, ax.yaxis, ax.zaxis]:
@@ -164,6 +167,7 @@ def clean_3d_axis(ax):
 
 
 def add_threshold_planes(ax):
+    """Mark the 0.5 decision boundary for each of the three loss scores."""
     grid = np.array([0.0, 1.0])
     yy, zz = np.meshgrid(grid, grid)
     xx, zz_y = np.meshgrid(grid, grid)
@@ -175,6 +179,7 @@ def add_threshold_planes(ax):
 
 
 def plot_3d_legend(legend_ax):
+    """Draw the consensus-class legend in its own panel."""
     legend_ax.axis("off")
     legend = legend_ax.legend(
         handles=class_legend_handles(),
@@ -191,6 +196,7 @@ def plot_3d_legend(legend_ax):
 
 
 def plot_3d_score_space(table, *, show_values=True, set_title=False):
+    """Compare sampled positive and negative pairs in the three-loss score space."""
     if show_values:
         fig = plt.figure(figsize=(16 * CM, 8 * CM))
         fig.subplots_adjust(left=0.06, right=0.98, bottom=0.14, top=0.92, wspace=0.08)
@@ -264,6 +270,7 @@ def plot_3d_score_space(table, *, show_values=True, set_title=False):
 
 
 def plot_mean_std(axes, table, *, set_title=False, show_labels=False):
+    """Plot mean score against cross-loss dispersion, colored by consensus class."""
     for ax, edge_label in zip(axes, EDGE_LABELS):
         labelled = table[table["edge_label"] == edge_label]
         for class_name in CLASS_ORDER:
@@ -290,6 +297,7 @@ def plot_mean_std(axes, table, *, set_title=False, show_labels=False):
 
 
 def plot_loss_similarity(axes, table):
+    """Compare score and thresholded-call correlations for each loss pair."""
     panels = [
         ("Binned Spearman score correlation", "Before thresholding"),
         ("Thresholded Spearman call correlation", "After thresholding"),
@@ -343,7 +351,7 @@ def plot_loss_similarity(axes, table):
 
 def plot_consensus(source, output):
     """Render loss-score geometry and agreement diagnostics."""
-    matplotlib.rcParams.update(SOURCE_STYLE)
+    matplotlib.rcParams.update(PLOT_STYLE)
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     score_sample = pd.read_csv(source / "score_sample.csv.gz")
@@ -359,13 +367,13 @@ def plot_consensus(source, output):
     c_legend_ax.set_position([0.0, 0.0, 1.0, 1.0])
     c_legend_fig.subplots_adjust(left=0.0, right=1.0, bottom=0.0, top=1.0)
     plot_3d_legend(c_legend_ax)
-    save_original(c_legend_fig, output, "loss_score_space_3d_legend", pad_inches=0.02, pdf_dpi=100)
+    save_figure(c_legend_fig, output, "loss_score_space_3d_legend", pad_inches=0.02, pdf_dpi=100)
 
     c_fig = plot_3d_score_space(score_sample, show_values=True)
-    save_original(c_fig, output, "loss_score_space_3d", pad_inches=0.02, pdf_dpi=100)
+    save_figure(c_fig, output, "loss_score_space_3d", pad_inches=0.02, pdf_dpi=100)
 
     c_clean_fig = plot_3d_score_space(score_sample, show_values=False)
-    save_original(
+    save_figure(
         c_clean_fig,
         output,
         "loss_score_space_3d_without_labels",
@@ -378,7 +386,7 @@ def plot_consensus(source, output):
     )
     plot_mean_std(d_axes, score_sample)
     d_fig.subplots_adjust(left=0.10, right=0.99, bottom=0.38, top=0.93, wspace=0.22)
-    save_original(d_fig, output, "loss_score_mean_variance_consensus_classes")
+    save_figure(d_fig, output, "loss_score_mean_variance_consensus_classes")
 
     e_legend_fig, e_legend_ax = plt.subplots(figsize=(5 * CM, 2 * CM))
     e_fig, e_axes = plt.subplots(
@@ -394,5 +402,5 @@ def plot_consensus(source, output):
         ncol=len(legend_labels),
         loc="center",
     )
-    save_original(e_legend_fig, output, "loss_similarity_to_bce_legend")
-    save_original(e_fig, output, "loss_similarity_to_bce_barplots")
+    save_figure(e_legend_fig, output, "loss_similarity_to_bce_legend")
+    save_figure(e_fig, output, "loss_similarity_to_bce_barplots")

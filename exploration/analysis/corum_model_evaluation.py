@@ -113,6 +113,7 @@ MODEL_LABELS = {
 
 
 def run_spec(scope: str, model_key: str, readout: str) -> dict[str, str]:
+    """Read the selected model, embedding and cell-representation settings for a CORUM run."""
     row, _ = find_selected_run(
         "corum",
         scope=scope,
@@ -132,6 +133,7 @@ def run_spec(scope: str, model_key: str, readout: str) -> dict[str, str]:
 
 
 def selected_run(scope: str, model_key: str, readout: str) -> Path:
+    """Find the checkpoint directory for one selected CORUM model and readout."""
     _, run_dir = find_selected_run(
         "corum",
         scope=scope,
@@ -160,6 +162,7 @@ def load_data(
     embedding_source: str = "esm",
     cell_embedding_file: str = "cell_embeddings.pt",
 ) -> dict[str, object]:
+    """Align context bags, mean features and sequence vectors to the saved CORUM cohort."""
     config = load_config(inference_name, embedding_source=embedding_source)
     config.data_root = DATA_ROOT
     config.inference_root = INFERENCE_ROOT
@@ -201,6 +204,7 @@ def load_data(
         id_to_name = pickle.load(handle)["id_to_name"]
 
     def context_name(raw_id: object) -> str:
+        """Resolve numeric or string context IDs through the saved embedding mapping."""
         if raw_id in id_to_name:
             return str(id_to_name[raw_id])
         try:
@@ -240,6 +244,7 @@ def load_run_data(
 
 
 def load_folds(split_file: Path, genes: list[str]) -> list[np.ndarray]:
+    """Read checkpoint folds and check that they match the dataset gene order and labels."""
     with np.load(split_file) as saved, np.load(
         partition_path("corum", CORUM_MEMBERSHIPS)
     ) as dataset:
@@ -257,12 +262,14 @@ def load_folds(split_file: Path, genes: list[str]) -> list[np.ndarray]:
 
 
 def train_indices(folds: list[np.ndarray], fold: int) -> np.ndarray:
+    """Combine the four training folds, excluding the permanent test and current validation fold."""
     return np.concatenate(
         [indices for index, indices in enumerate(folds[1:]) if index != fold]
     )
 
 
 def features_for_readout(data: dict[str, object], readout: str) -> dict[str, object]:
+    """Choose sequence, pooled-context or context-bag inputs for the requested readout."""
     means = data["context_means"]
     esm = data["esm"]
     if readout in {"lr_esm", "lr_prostt5"}:
@@ -282,6 +289,7 @@ def build_abmil(
     data: dict[str, object],
     device: torch.device,
 ) -> nn.Module:
+    """Construct the CORUM attention model with the selected context and sequence inputs."""
     variant = MODEL_VARIANTS[READOUT_VARIANTS[readout]]
     common = {
         "num_classes": data["labels"].shape[1],
@@ -310,6 +318,7 @@ def evaluate(
     split_file: Path,
     readout: str,
 ) -> dict[str, object]:
+    """Score all five checkpoints on the same test proteins using training-only normalization."""
     labels = data["labels"]
     folds = load_folds(split_file, data["genes"])
     test_idx = folds[0]
@@ -399,6 +408,7 @@ def performance_rows(
     readout_key: str,
     result: dict[str, object],
 ) -> list[dict[str, object]]:
+    """Format fold-averaged AUPRC and F1 for the benchmark figures."""
     rows = []
     for metric in ("auprc", "f1"):
         mean = result["summary"][f"test_{metric}_macro_mean"]
@@ -427,6 +437,7 @@ def per_complex_rows(
     result: dict[str, object],
     class_names: list[str],
 ) -> pd.DataFrame:
+    """Compute test AUPRC and F1 for each complex, then average over fold models."""
     if result["y_true"].shape[1] != len(class_names):
         raise ValueError("Checkpoint class dimension does not match CORUM labels")
     rows = []
@@ -462,6 +473,7 @@ def append_modeling_statistics(
     data: dict[str, object],
     split_file: Path,
 ) -> pd.DataFrame:
+    """Add cohort and test-set membership counts to the dataset summary."""
     test_idx = load_folds(split_file, data["genes"])[0]
     rows = []
     for scope, labels in [

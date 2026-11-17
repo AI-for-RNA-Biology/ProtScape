@@ -19,7 +19,8 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def _save_outputs(output_dir: str, pseudobulk, metadata: pd.DataFrame) -> None:
+def save_outputs(output_dir: str, pseudobulk, metadata: pd.DataFrame) -> None:
+    """Save the aggregated count matrix and its sample metadata together."""
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     pseudobulk.write_h5ad(output / "pseudobulk.h5ad")
@@ -27,7 +28,7 @@ def _save_outputs(output_dir: str, pseudobulk, metadata: pd.DataFrame) -> None:
 
 
 @lru_cache(None)
-def _load_cl_name_to_id_map(path: str) -> dict[str, str]:
+def load_cl_name_to_id_map(path: str) -> dict[str, str]:
     """Map Cell Ontology names and synonyms to CL identifiers."""
     graph = obonet.read_obo(path)
     mapping = {}
@@ -44,6 +45,7 @@ def _load_cl_name_to_id_map(path: str) -> dict[str, str]:
 
 
 def run_tabula(args: argparse.Namespace) -> None:
+    """Map Tabula cell types to CL IDs, then sum counts by cell type and optional donor."""
     adata = datasets.load_tabula_sapiens(
         cell_type_col=args.cell_type_col,
         donor_col=args.donor_col,
@@ -52,7 +54,7 @@ def run_tabula(args: argparse.Namespace) -> None:
     adata = utils.standardize_gene_annotations(adata)
 
     cell_type_names = adata.obs[args.cell_type_col].astype(str)
-    cl_ids = cell_type_names.str.lower().map(_load_cl_name_to_id_map(CL_PATH))
+    cl_ids = cell_type_names.str.lower().map(load_cl_name_to_id_map(CL_PATH))
     unmapped = cl_ids.isna()
     if unmapped.any():
         logger.warning(
@@ -62,7 +64,7 @@ def run_tabula(args: argparse.Namespace) -> None:
         )
         adata = adata[~unmapped].copy()
         cell_type_names = adata.obs[args.cell_type_col].astype(str)
-        cl_ids = cell_type_names.str.lower().map(_load_cl_name_to_id_map(CL_PATH))
+        cl_ids = cell_type_names.str.lower().map(load_cl_name_to_id_map(CL_PATH))
 
     adata.obs["cell_type_ontology_term_id"] = cl_ids
     adata.obs["cell_type_name"] = cell_type_names
@@ -91,10 +93,11 @@ def run_tabula(args: argparse.Namespace) -> None:
         min_cells=args.min_cells_resolved,
         group_by_donor=args.group_by_donor,
     )
-    _save_outputs(TABULA_INTERMEDIATE, pseudobulk, metadata)
+    save_outputs(TABULA_INTERMEDIATE, pseudobulk, metadata)
 
 
 def run_hbca(args: argparse.Namespace) -> None:
+    """Aggregate HBCA counts using the curated neuronal CL annotations from Step 0."""
     adata = datasets.load_hbca_merged(
         annotation_col=args.cell_type_col,
         donor_col=args.donor_col,
@@ -117,10 +120,11 @@ def run_hbca(args: argparse.Namespace) -> None:
         min_cells=args.min_cells_resolved,
         group_by_donor=args.group_by_donor,
     )
-    _save_outputs(HBCA_INTERMEDIATE, pseudobulk, metadata)
+    save_outputs(HBCA_INTERMEDIATE, pseudobulk, metadata)
 
 
 def main() -> None:
+    """Resolve dataset-specific grouping defaults and build the requested pseudobulk."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", choices=["tabula", "hbca"], required=True)
     parser.add_argument("--cell-type-col")

@@ -1,9 +1,12 @@
-"""Checkpoint loading helpers."""
+"""Save training state and load ProtScape or PINNACLE checkpoints."""
 
 import importlib
+import os
+import random
 import sys
 from pathlib import Path
 
+import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
@@ -145,3 +148,52 @@ def load_pinnacle_model(checkpoint, ppi_data, device="cpu"):
     )
     model.load_state_dict(model_state_dict(checkpoint))
     return model.to(device).eval()
+
+
+def restore_rng_state(rng_state):
+    """Restore Python, NumPy and torch generators from a training checkpoint."""
+    if not rng_state:
+        return
+
+    python_state = rng_state.get("python")
+    if python_state is not None:
+        random.setstate(python_state)
+
+    numpy_state = rng_state.get("numpy")
+    if numpy_state is not None:
+        np.random.set_state(numpy_state)
+
+    torch_state = rng_state.get("torch")
+    if torch_state is not None:
+        torch.set_rng_state(torch_state)
+
+    torch_cuda_state = rng_state.get("torch_cuda")
+    if torch_cuda_state is not None and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(torch_cuda_state)
+
+
+def build_training_checkpoint(epoch, model, optimizer, **extra):
+    """Collect the model, optimizer and random states needed to resume training."""
+    rng_state = {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+    }
+    if torch.cuda.is_available():
+        rng_state["torch_cuda"] = torch.cuda.get_rng_state_all()
+    payload = {
+        "epoch": epoch,
+        "model": model,
+        "optimizer": optimizer,
+        "rng_state": rng_state,
+    }
+    payload.update(extra)
+    return payload
+
+
+def save_training_checkpoint(payload, path):
+    """Write the checkpoint before replacing the previous saved file."""
+    temporary_path = f"{path}.tmp"
+    with open(temporary_path, "wb") as handle:
+        torch.save(payload, handle)
+    os.replace(temporary_path, path)

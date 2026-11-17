@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compute the edge-density range of the released cell-PPI networks."""
+"""Compute the edge-density range of the configured cell-PPI networks."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ PPI_DIR = Path(PATHS["networks_bulk"]).expanduser() / "ppi_edgelists"
 
 
 def graph_counts(path: Path) -> tuple[int, int]:
+    """Count nodes and unique undirected edges, excluding self-loops."""
     nodes = set()
     edges = set()
     with path.open(encoding="utf-8") as handle:
@@ -30,6 +31,7 @@ def graph_counts(path: Path) -> tuple[int, int]:
 
 
 def main() -> None:
+    """Report node, edge and density summaries for the cell-specific PPI networks."""
     densities = []
     for path in sorted(PPI_DIR.glob("*.txt")):
         n_nodes, n_edges = graph_counts(path)

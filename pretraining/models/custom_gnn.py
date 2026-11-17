@@ -16,55 +16,15 @@ from torch_geometric.utils import scatter
 from torch import nn
 
 
-
 class RandomWalk_weighted(MessagePassing):
-    r"""
-    Fusing implementation of Graph Isomorphism Network [A]
-    with message propagation framework from [B] to incorporate edge weights.
+    """Weighted neighbor averaging with a GIN-style self term and a learnable projection.
 
-    [A] Xu, K., Hu, W., Leskovec, J., & Jegelka, S. (2018, September).
-        How Powerful are Graph Neural Networks?. In International Conference on
-        Learning Representations.
-
-    Pygeo code: https://pytorch-geometric.readthedocs.io/en/latest/generated/torch_geometric.nn.models.GIN.html
-
-    [B] Togninalli, M., Ghisu, E., Llinares-López, F., Rieck, B., & Borgwardt, K. (2019).
-        Wasserstein weisfeiler-lehman graph kernels. Advances in neural information
-        processing systems, 32
-
-    Pygeo code: https://pytorch-geometric.readthedocs.io/en/latest/generated/torch_geometric.nn.conv.WLConvContinuous.html#torch_geometric.nn.conv.WLConvContinuous
-
-    
-    .. math::
-        \mathbf{x}^{\prime}_i = h_{\mathbf{\Theta}} \left( (1 + \epsilon) \cdot
-        \mathbf{x}_i + \frac{1}{deg_i}\sum_{j \in \mathcal{N}(i)} 
-         \mathbf{e}_{j, i} . \mathbf{x}_j  
-
-    Args:
-        nn (torch.nn.Module): A neural network :math:`h_{\mathbf{\Theta}}` that
-            maps node features :obj:`x` of shape :obj:`[-1, in_channels]` to
-            shape :obj:`[-1, out_channels]`, *e.g.*, defined by
-            :class:`torch.nn.Sequential`.
-        eps (float, optional): (Initial) :math:`\epsilon`-value.
-            (default: :obj:`0.`)
-        train_eps (bool, optional): If set to :obj:`True`, :math:`\epsilon`
-            will be a trainable parameter. (default: :obj:`False`)
-        **kwargs (optional): Additional arguments of
-            :class:`torch_geometric.nn.conv.MessagePassing`.
-
-    Shapes:
-        - **input:**
-          node features :math:`(|\mathcal{V}|, F_{in})` or
-          :math:`((|\mathcal{V_s}|, F_{s}), (|\mathcal{V_t}|, F_{t}))`
-          if bipartite,
-          edge indices :math:`(2, |\mathcal{E}|)`,
-          edge features :math:`(|\mathcal{E}|,)` 
-        - **output:** node features :math:`(|\mathcal{V}|, F_{out})` or
-          :math:`(|\mathcal{V}_t|, F_{out})` if bipartite
-    """
+    How Powerful are Graph Neural Networks? https://arxiv.org/abs/1810.00826
+    Wasserstein Weisfeiler-Lehman Graph Kernels: https://arxiv.org/abs/1906.01277"""
     def __init__(self, nn: torch.nn.Module, eps: float = 0.,
                  train_eps: bool = False,
                  **kwargs):
+        """Store the node projection and fixed or trainable self-loop coefficient."""
         kwargs.setdefault('aggr', 'add')
         super().__init__(**kwargs)
         self.nn = nn
@@ -76,13 +36,15 @@ class RandomWalk_weighted(MessagePassing):
         self.reset_parameters()
 
     def reset_parameters(self):
+        """Reset the node projection and restore the initial self-loop coefficient."""
         reset(self.nn)
         self.eps.data.fill_(self.initial_eps)
-        
+
 
     def forward(self, x: Union[Tensor, OptPairTensor], edge_index: Tensor,
                 edge_weight: OptTensor = None, size: Size = None) -> Tensor:
 
+        """Project the weighted neighbor average plus the scaled self feature."""
         if isinstance(x, Tensor):
             x: OptPairTensor = (x, x)
 
@@ -102,64 +64,19 @@ class RandomWalk_weighted(MessagePassing):
         return self.nn(out)
 
     def message(self, x_j: Tensor, edge_weight: Tensor) -> Tensor:
+        """Weight each source feature before summing messages at the target."""
         return edge_weight.view(-1, 1) * x_j
-    
+
     def __repr__(self) -> str:
+        """Show the node projection used by this convolution."""
         return f'{self.__class__.__name__}(nn={self.nn})'
 
 
 class ACM_RandomWalk_conv(MessagePassing):
-    r"""
-    Adaptative Channel mixing [A] with filters:
-        - low-pass filter: I + \hat{A}_{rw} = I + deg(tilde{A})^{-1} \tilde{A}
-        - high-pass filter: I - \hat{A}_{rw} 
-        - full-pass filter: I 
-        with \tilde{A} = A + I 
-    with message propagation framework from [B] to incorporate edge weights.
+    """Mix low-pass, high-pass and identity channels with learned node-wise attention.
 
-    [B] Luan, S., Hua, C., Lu, Q., Zhu, J., Zhao, M., Zhang, S., ... & Precup, D. (2022).
-    Revisiting heterophily for graph neural networks.
-    Advances in neural information processing systems, 35, 1362-1375.
-
-    
-    .. math::
-        \mathbf{x}^{\prime}_i = h_{\mathbf{\Theta}} \left( (1 + \epsilon) \cdot
-        \mathbf{x}_i + \frac{1}{deg_i}\sum_{j \in \mathcal{N}(i)} 
-         \mathbf{e}_{j, i} . \mathbf{x}_j  
-
-    Args:
-        nn_highpass (torch.nn.Module):
-            A neural network :math:`h_{\mathbf{\Theta}}` that
-            maps node features :obj:`x` of shape :obj:`[-1, in_channels]` to
-            shape :obj:`[-1, out_channels]`, *e.g.*, defined by
-            :class:`torch.nn.Sequential`.
-        nn_lowpass (torch.nn.Module):
-            
-        nn_fullpass (torch.nn.Module):
-        
-        nn_highpass_proj (torch.nn.Module): shape (output_dim, 1)
-            
-        nn_lowpass_proj (torch.nn.Module): shape (output_dim, 1)
-            
-        nn_fullpass_proj (torch.nn.Module): shape (output_dim, 1)
-        
-        eps (float, optional): (Initial) :math:`\epsilon`-value.
-            (default: :obj:`0.`)
-        train_eps (bool, optional): If set to :obj:`True`, :math:`\epsilon`
-            will be a trainable parameter. (default: :obj:`False`)
-        **kwargs (optional): Additional arguments of
-            :class:`torch_geometric.nn.conv.MessagePassing`.
-
-    Shapes:
-        - **input:**
-          node features :math:`(|\mathcal{V}|, F_{in})` or
-          :math:`((|\mathcal{V_s}|, F_{s}), (|\mathcal{V_t}|, F_{t}))`
-          if bipartite,
-          edge indices :math:`(2, |\mathcal{E}|)`,
-          edge features :math:`(|\mathcal{E}|,)` 
-        - **output:** node features :math:`(|\mathcal{V}|, F_{out})` or
-          :math:`(|\mathcal{V}_t|, F_{out})` if bipartite
-    """
+    Low/high-pass channels use (x + A_rw x)/2 and (x - A_rw x)/2.
+    Revisiting Heterophily for Graph Neural Networks: https://arxiv.org/abs/2210.07606"""
     def __init__(self,
                  nn_lowpass: torch.nn.Module,
                  nn_highpass: torch.nn.Module,
@@ -170,6 +87,7 @@ class ACM_RandomWalk_conv(MessagePassing):
                  nn_mix:torch.nn.Module,
                  T:float = 3.,
                  **kwargs):
+        """Register three channel projections and their node-wise attention mixing network."""
         kwargs.setdefault('aggr', 'add')
         super().__init__(**kwargs)
         self.nn_lowpass = nn_lowpass
@@ -185,6 +103,7 @@ class ACM_RandomWalk_conv(MessagePassing):
         self.reset_parameters()
 
     def reset_parameters(self):
+        """Reinitialize the three channel networks and attention projections."""
         reset(self.nn_lowpass)
         reset(self.nn_highpass)
         reset(self.nn_fullpass)
@@ -198,6 +117,7 @@ class ACM_RandomWalk_conv(MessagePassing):
         edge_index: Tensor,
         edge_weight: OptTensor = None,
         size: Size = None) -> Tensor:
+        """Mix projected low-pass, high-pass and self features using learned attention."""
         if isinstance(x, Tensor):
             x: OptPairTensor = (x, x)
         # propagate_type: (x: OptPairTensor, edge_index: OptTensor, edge_weight: Optional[Tensor])
@@ -215,7 +135,7 @@ class ACM_RandomWalk_conv(MessagePassing):
         if x_r is not None:
             out_lowpass = (x_r + out) / 2.
             out_highpass = (x_r - out) / 2.
-        
+
         # compute embeddings for each filter
         out_lowpass = self.nn_lowpass(out_lowpass)
         out_highpass = self.nn_highpass(out_highpass)
@@ -226,63 +146,29 @@ class ACM_RandomWalk_conv(MessagePassing):
         alpha_fullpass = self.sigmoid(self.nn_fullpass_proj(out_fullpass))
         alpha_cat = torch.concat([alpha_lowpass, alpha_highpass, alpha_fullpass], dim=1)
         alpha_cat = self.softmax(self.nn_mix(alpha_cat / self.T))
-                
+
         out = alpha_cat[:, 0].view(-1, 1) * out_lowpass
         out = out + alpha_cat[:, 1].view(-1, 1) * out_highpass
         out = out + alpha_cat[:, 2].view(-1, 1) * out_fullpass
-        
+
         return out
 
     def message(self, x_j: Tensor, edge_weight: Tensor) -> Tensor:
+        """Send source features, scaled by edge weights when supplied."""
         if edge_weight is None:
             return x_j
         else:
             return edge_weight.view(-1, 1) * x_j
-    
+
     def __repr__(self) -> str:
+        """Show the attention temperature used by this convolution."""
         return (f'{self.__class__.__name__}({self.T}')
-    
+
 
 class ACM_RandomWalk_weightedconv(MessagePassing):
-    r"""
-    Adaptative Channel mixing [A] with inputted weights as filters:
-        - low-pass filter: I + \hat{A} = I + W @ A
-        - high-pass filter: I - \hat{A} 
-        - full-pass filter: I 
-        
-    Args:
-        nn_highpass (torch.nn.Module):
-            A neural network :math:`h_{\mathbf{\Theta}}` that
-            maps node features :obj:`x` of shape :obj:`[-1, in_channels]` to
-            shape :obj:`[-1, out_channels]`, *e.g.*, defined by
-            :class:`torch.nn.Sequential`.
-        nn_lowpass (torch.nn.Module):
-            
-        nn_fullpass (torch.nn.Module):
-        
-        nn_highpass_proj (torch.nn.Module): shape (output_dim, 1)
-            
-        nn_lowpass_proj (torch.nn.Module): shape (output_dim, 1)
-            
-        nn_fullpass_proj (torch.nn.Module): shape (output_dim, 1)
-        
-        eps (float, optional): (Initial) :math:`\epsilon`-value.
-            (default: :obj:`0.`)
-        train_eps (bool, optional): If set to :obj:`True`, :math:`\epsilon`
-            will be a trainable parameter. (default: :obj:`False`)
-        **kwargs (optional): Additional arguments of
-            :class:`torch_geometric.nn.conv.MessagePassing`.
+    """ACM with supplied sampling weights for GraphSAINT message passing.
 
-    Shapes:
-        - **input:**
-          node features :math:`(|\mathcal{V}|, F_{in})` or
-          :math:`((|\mathcal{V_s}|, F_{s}), (|\mathcal{V_t}|, F_{t}))`
-          if bipartite,
-          edge indices :math:`(2, |\mathcal{E}|)`,
-          edge features :math:`(|\mathcal{E}|,)` 
-        - **output:** node features :math:`(|\mathcal{V}|, F_{out})` or
-          :math:`(|\mathcal{V}_t|, F_{out})` if bipartite
-    """
+    Revisiting Heterophily for Graph Neural Networks: https://arxiv.org/abs/2210.07606"""
     def __init__(self,
                  nn_lowpass: torch.nn.Module,
                  nn_highpass: torch.nn.Module,
@@ -293,6 +179,7 @@ class ACM_RandomWalk_weightedconv(MessagePassing):
                  nn_mix:torch.nn.Module,
                  T:float = 3.,
                  **kwargs):
+        """Register ACM channel and attention networks for sampling-weighted propagation."""
         kwargs.setdefault('aggr', 'add')
         super().__init__(**kwargs)
         self.nn_lowpass = nn_lowpass
@@ -308,6 +195,7 @@ class ACM_RandomWalk_weightedconv(MessagePassing):
         self.reset_parameters()
 
     def reset_parameters(self):
+        """Reinitialize the channel networks and their attention projections."""
         reset(self.nn_lowpass)
         reset(self.nn_highpass)
         reset(self.nn_fullpass)
@@ -321,35 +209,36 @@ class ACM_RandomWalk_weightedconv(MessagePassing):
         edge_index: Tensor,
         edge_weight: OptTensor,
         size: Size = None) -> Tensor:
-        
-        
+
+
+        """Mix ACM channels using GraphSAINT weights or random-walk weights at evaluation."""
         if edge_weight is None:
             # compute weights corresponding to randomwalk matrix
             ones_ = torch.ones(edge_index.shape[1], dtype=x.dtype, device=x.device)
-            
+
             deg = scatter(ones_, edge_index[1], dim=0, dim_size=x.shape[0], reduce='sum')
             deg_inv = 1. / deg
             deg_inv.masked_fill_(deg_inv == float('inf'), 0)
             edge_weight = deg_inv[edge_index[0, :]]
             self_weight = torch.ones(x.shape[0], dtype=x.dtype, device=x.device)
-            
+
         else:
             self_weight = scatter(edge_weight, edge_index[0], dim=0, dim_size=x.shape[0], reduce='sum')
-            
+
         if isinstance(x, Tensor):
             x: OptPairTensor = (x, x)
         # propagate_type: (x: OptPairTensor, edge_index: OptTensor, edge_weight: Optional[Tensor])
-        
-            
+
+
         out = self.propagate(x=x, edge_index=edge_index, edge_weight=edge_weight,
                             size=size)
-        
+
         x_r = self_weight[:, None] * x[1]
-        
+
         if x_r is not None:
             out_lowpass = (x_r + out) / 2.
             out_highpass = (x_r - out) / 2.
-        
+
         # compute embeddings for each filter
         out_lowpass = self.nn_lowpass(out_lowpass)
         out_highpass = self.nn_highpass(out_highpass)
@@ -360,60 +249,34 @@ class ACM_RandomWalk_weightedconv(MessagePassing):
         alpha_fullpass = self.sigmoid(self.nn_fullpass_proj(out_fullpass))
         alpha_cat = torch.concat([alpha_lowpass, alpha_highpass, alpha_fullpass], dim=1)
         alpha_cat = self.softmax(self.nn_mix(alpha_cat / self.T))
-                
+
         out = alpha_cat[:, 0].view(-1, 1) * out_lowpass
         out = out + alpha_cat[:, 1].view(-1, 1) * out_highpass
         out = out + alpha_cat[:, 2].view(-1, 1) * out_fullpass
-        
+
         return out
 
     def message(self, x_j: Tensor, edge_weight: Tensor) -> Tensor:
+        """Scale source features by the supplied sampling/propagation weights."""
         return edge_weight.view(-1, 1) * x_j
-    
+
     def __repr__(self) -> str:
+        """Show the attention temperature used by the weighted convolution."""
         return (f'{self.__class__.__name__}({self.T}')
-    
+
 
 class ACM_RandomWalk(nn.Module):
-    """
-    Adaptive Channel Mixing Random Walk GNN module.
-
-    This class implements a graph neural network layer that adaptively mixes low-pass, high-pass,
-    and full-pass graph filters using learnable neural networks and attention-like mixing weights.
-    It is designed to capture both homophilic and heterophilic patterns in graph data by combining
-    information from different spectral channels.
-
-    Args:
-        input_dim (int): Dimension of input node features.
-        hidden_dim (int): Dimension of hidden layers in the filter networks.
-        use_batchnorm (bool, optional): Whether to use BatchNorm1d in the filter networks. Default is True.
-        T (float, optional): Temperature parameter for softmax mixing. Default is 3.0.
-        device (str, optional): Device to use ('cpu' or 'cuda'). Default is 'cpu'.
-
-    Attributes:
-        nn_lowpass (nn.Sequential): Neural network for low-pass filter.
-        nn_highpass (nn.Sequential): Neural network for high-pass filter.
-        nn_fullpass (nn.Sequential): Neural network for full-pass filter.
-        nn_lowpass_proj (nn.Linear): Projection layer for low-pass filter importance.
-        nn_highpass_proj (nn.Linear): Projection layer for high-pass filter importance.
-        nn_fullpass_proj (nn.Linear): Projection layer for full-pass filter importance.
-        nn_mix (nn.Linear): Mixing layer for combining filter importances.
-        ACM_conv (ACM_RandomWalk_conv): The underlying message passing layer.
-
-    Methods:
-        reset_parameters(): Resets all learnable parameters.
-        forward(x, edge_index, edge_weight=None): Performs a forward pass of the ACM Random Walk GNN.
-
-    """
+    """Project and normalize the three ACM channels before mixing them at each node."""
     def __init__(self,
                  input_dim,
                  hidden_dim,
-                 gnn_activation='relu', 
+                 gnn_activation='relu',
                  use_batchnorm=True,
                  T=3.,
                  graph_saint_norm: bool = False,
                  device='cpu'):
-        
+
+        """Build the three channel MLPs and choose ordinary or GraphSAINT-weighted propagation."""
         super(ACM_RandomWalk, self).__init__()
         # set hyperparameters
         self.input_dim = input_dim
@@ -421,9 +284,9 @@ class ACM_RandomWalk(nn.Module):
         self.use_batchnorm = use_batchnorm
         self.gnn_activation = gnn_activation
         assert self.gnn_activation in ['relu', 'leaky_relu']
-        self.T = T 
+        self.T = T
         self.graph_saint_norm = graph_saint_norm
-        
+
         # set neural networks for mixing of each filter
         if self.use_batchnorm:
             self.nn_lowpass = nn.Sequential(
@@ -434,7 +297,7 @@ class ACM_RandomWalk(nn.Module):
                 nn.BatchNorm1d(self.hidden_dim),
                 nn.ReLU() if self.gnn_activation == 'relu' else nn.LeakyReLU(0.2),
                 )
-            
+
             self.nn_highpass = nn.Sequential(
                 nn.Linear(self.input_dim, self.hidden_dim),
                 nn.BatchNorm1d(self.hidden_dim),
@@ -458,7 +321,7 @@ class ACM_RandomWalk(nn.Module):
                 nn.Linear(self.hidden_dim, self.hidden_dim),
                 nn.ReLU() if self.gnn_activation == 'relu' else nn.LeakyReLU(0.2),
                 )
-            
+
             self.nn_highpass = nn.Sequential(
                 nn.Linear(self.input_dim, self.hidden_dim),
                 nn.ReLU() if self.gnn_activation == 'relu' else nn.LeakyReLU(0.2),
@@ -471,13 +334,13 @@ class ACM_RandomWalk(nn.Module):
                 nn.Linear(self.hidden_dim, self.hidden_dim),
                 nn.ReLU() if self.gnn_activation == 'relu' else nn.LeakyReLU(0.2),
                 )
-        
-        
+
+
         self.nn_lowpass_proj = nn.Linear(self.hidden_dim, 1)
         self.nn_highpass_proj = nn.Linear(self.hidden_dim, 1)
         self.nn_fullpass_proj = nn.Linear(self.hidden_dim, 1)
         self.nn_mix = nn.Linear(3, 3)
-        
+
         if not self.graph_saint_norm:
             self.ACM_conv = ACM_RandomWalk_conv(
                 self.nn_lowpass,
@@ -498,8 +361,9 @@ class ACM_RandomWalk(nn.Module):
                 self.nn_fullpass_proj,
                 self.nn_mix,
                 self.T)
-    
+
     def reset_parameters(self):
+        """Reinitialize linear, normalization and ACM convolution parameters."""
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 m.reset_parameters()
@@ -507,8 +371,7 @@ class ACM_RandomWalk(nn.Module):
                 m.reset_parameters()
             elif isinstance(m, ACM_RandomWalk_conv):
                 m.reset_parameters()
-    
+
     def forward(self, x, edge_index, edge_weight=None):
+        """Apply the configured ACM convolution to node features and graph edges."""
         return self.ACM_conv(x, edge_index, edge_weight)
-    
-    

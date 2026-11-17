@@ -1,57 +1,37 @@
+"""Train PINNACLE variants and export the best validation checkpoint."""
+
 import os
 import argparse
 import traceback
 import sys
 import csv
-import random
 import torch
 import wandb
-import numpy as np
 from tqdm import tqdm
 import yaml
 
 from .data_handler.generate_input import read_data, get_metapaths, get_centerloss_labels
 from .models.pinnacle_model import Pinnacle
-from .checkpoints import save_portable_checkpoint
+from .checkpoints import restore_rng_state, save_portable_checkpoint
 from .losses.center_loss import CenterLoss
 from .train.train_pinnacle_model import train, test
 from . import utils
 from omegaconf import DictConfig
-import pickle 
+import pickle
 from pathlib import Path
-
 
 from itertools import product
 
-
-def _restore_rng_state(rng_state):
-    if not rng_state:
-        return
-
-    python_state = rng_state.get("python")
-    if python_state is not None:
-        random.setstate(python_state)
-
-    numpy_state = rng_state.get("numpy")
-    if numpy_state is not None:
-        np.random.set_state(numpy_state)
-
-    torch_state = rng_state.get("torch")
-    if torch_state is not None:
-        torch.set_rng_state(torch_state)
-
-    torch_cuda_state = rng_state.get("torch_cuda")
-    if torch_cuda_state is not None and torch.cuda.is_available():
-        torch.cuda.set_rng_state_all(torch_cuda_state)
-
-
-def _parse_cli_args():
+def parse_training_options():
+    """Read feature settings and the small grid of PINNACLE training parameters."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("gnn_method", type=str, choices=["GATv2", "GIN", "ACM_RandomWalk"])
-    parser.add_argument("gnn_lambda", type=str, help="Comma-separated center-loss lambda values, e.g. 0.1")
-    parser.add_argument("gnn_dropout", type=str, help="Comma-separated dropout values, e.g. 0 or 0.4")
-    parser.add_argument("gnn_output", type=str, help="Comma-separated output dims, e.g. 16 or 32")
-    parser.add_argument("features_mode", type=str, help="random|ESM2|ProstT5")
+    parser.add_argument("--gnn-method", choices=["GATv2", "GIN", "ACM_RandomWalk"], default="GATv2")
+    parser.add_argument("--gnn-lambda", default="0.01", help="Comma-separated center-loss lambda values, e.g. 0.1")
+    parser.add_argument("--gnn-dropout", default="0.2", help="Comma-separated dropout values, e.g. 0 or 0.4")
+    parser.add_argument("--gnn-output", default="32", help="Comma-separated output dims, e.g. 16 or 32")
+    parser.add_argument("--features-mode", choices=["random", "ESM2", "ProstT5"], default="ESM2")
+    parser.add_argument("--esm2-pooling", choices=["bos", "mean"], default="bos")
+    parser.add_argument("--device", default="auto", help="auto, cpu, or cuda:0")
     parser.add_argument("--dataset-mode", type=str, default="bulk", choices=["bulk", "legacy"])
     parser.add_argument("--epochs", type=int, default=150)
     parser.add_argument("--wandb-mode", choices=["disabled", "offline", "online"], default="disabled")
@@ -63,62 +43,26 @@ def _parse_cli_args():
     )
     return parser.parse_args()
 
-
-def _normalize_features_mode(raw_value):
-    feature_mode_aliases = {
-        'random': 'random',
-        'esm2': 'ESM2',
-        'prostt5': 'ProstT5',
-        'prosst5': 'ProstT5',
-    }
-    normalized = feature_mode_aliases.get(str(raw_value).strip().lower())
-    if normalized is None:
-        raise ValueError(f"Unsupported features_mode: {raw_value}")
-    return normalized
-
-
-def _get_ppi_feat_dir(paths, features_mode):
-    if features_mode == "ESM2":
-        return str(Path(paths["esm2_embeddings"]).expanduser())
-    elif features_mode == "ProstT5":
-        return str(Path(paths["prostt5_embeddings"]).expanduser())
-    else:
-        return None
-
-
-
-
-cli_args = _parse_cli_args()
+cli_args = parse_training_options()
 seed = int(cli_args.seed)
 utils.set_seed(seed)
 
 gnn_method = str(cli_args.gnn_method)
 list_gnn_lambda = [float(x) for x in cli_args.gnn_lambda.split(',')] # weight parameter for the center loss [0.1,0.01]
-assert np.all([x in [0.1,0.01] for x in list_gnn_lambda])
 
 list_gnn_dropout = [float(x) for x in cli_args.gnn_dropout.split(',')]  # dropout rate [0,0.2,0.4,0.6]
-assert np.all([x in [0,0.2,0.4,0.6] for x in list_gnn_dropout])
 
 list_gnn_output = [int(x) for x in cli_args.gnn_output.split(',')]     # output size
-if gnn_method in ['GATv2']:
-    assert np.all([x in [16,32] for x in list_gnn_output]) # output size to be multiplied by n_heads (8) to get protein embedding dim
-else:
-    assert np.all([x in [64, 128, 256, 512] for x in list_gnn_output])
+features_mode = cli_args.features_mode
 
-features_mode = _normalize_features_mode(cli_args.features_mode)
-# global variables
-
-lr = 0.01 #0.01
+lr = 0.01
 use_scheduler = True
 batch_size = 64
-epochs = int(cli_args.epochs) #500 #300
+epochs = int(cli_args.epochs)
 checkpointing = bool(cli_args.checkpointing)
 loader = "graphsaint"
 split_mode = 'global'
-assert split_mode in ['context', 'global']
-# context: corresponds to initial pinnacle split with allowing edge leakage across contexts
-# global: defines splits over the global ppi, stratified by edge frequencies across contextes, preventing edge leakage across contexts.
-
+# A protein pair keeps the same split in every cell type.
 
 lr_str = '' if lr==0.01 else 'lr' + str(lr).replace('.', '')
 batch_size_str = '' if batch_size == 64 else '_b' + str(batch_size)
@@ -129,11 +73,8 @@ split_mode_str = '' if split_mode == 'context' else f'{split_mode}split_'
 dataset_mode = str(cli_args.dataset_mode)
 print('dataset_mode:', dataset_mode)
 
-symmetric_ppi = True #False
-if symmetric_ppi == False:
-    print('Warning: Using asymmetric PPI network to replicate PINNACLE experiments - this is not recommended!')
-    
-    
+symmetric_ppi = True
+
 # Input and output roots are kept in one editable project config.
 paths_file = Path(__file__).resolve().parents[1] / "configs" / "paths.yaml"
 with paths_file.open("r", encoding="utf-8") as handle:
@@ -155,65 +96,53 @@ if split_mode == 'global':
 else:
     count_edge_path = None
 
-
-plot = False
-device = 'cuda:0'
-
+device = (
+    "cuda" if cli_args.device == "auto" and torch.cuda.is_available()
+    else "cpu" if cli_args.device == "auto"
+    else cli_args.device
+)
 
 # shared by all GNN methods
 dict_cfg = {
-        'gnn_method': gnn_method, 
-        'feat_mat': 1024,          # Random Gaussian vectors of shape (1 x 2048)                 2048  
-        'hidden': 64,              # GAT hidden                                                  64
-        'wd': 1e-05,               # Weight decay                                                5e-4
-        'lr': lr,               # Learning rate                                               0.001
-        'theta': 0.3,              # Theta (for PPI loss)                                        0.1
-        'lr_cent': 0.1,            # Learning rate for center loss                               0.01
-        'batch_size': batch_size,           # Batch size                                                  8
-        'norm': None,              # Type of normalization layer to use in up-pooling            None           
-        'pc_att_channels': 16,     # Protein-Context attention channels                          8
+        'gnn_method': gnn_method,
+        'dataset_mode': dataset_mode,
+        'feat_mat': 1024,
+        'hidden': 64,
+        'wd': 1e-05,
+        'lr': lr,
+        'theta': 0.3,
+        'lr_cent': 0.1,
+        'batch_size': batch_size,
+        'norm': None,
+        'pc_att_channels': 16,
 
-        'symmetric_ppi': symmetric_ppi,     # PPI network should be undirected 
-        'features_mode': features_mode,   # Mode for generating features {random, ESM2, MaSIF}          None
-        'ppi_feat_dir' : None,     # protein node features directory (Used for ESM2 and MaSIF)   None
-        'protein_feat_dim': None,  # Protein_feat_dim 
-        "split_mode": split_mode,     
+        'symmetric_ppi': symmetric_ppi,
+        'features_mode': features_mode,
+        'ppi_feat_dir' : None,
+        'protein_feat_dim': None,
+        "split_mode": split_mode,
 
-        # Parameters
         'seed' : seed,
-        'loader': loader,    # {"neighbor", "graphsaint"} 
-        'epochs': epochs,             # Number of epochs to train 300
-        'resume_run': '',    
-        'use_scheduler': use_scheduler,     # Whether to use a learning rate scheduler
-        'loss_type': "BCE", 
+        'loader': loader,
+        'epochs': epochs,
+        'resume_run': '',
+        'use_scheduler': use_scheduler,
+        'loss_type': "BCE",
         'gradclip': 1.0,
-        
-        # Save    
-        'save_prefix': None,       # Prefix of all saved files
-        "plot": False,             # Bool to fit and plot a UMAP
+
+        'save_prefix': None,
+        "plot": False,
         "wandb_mode": cli_args.wandb_mode,
     }
 
-if gnn_method == 'GATv2':
-    specific_dict_cfg = {
-        'n_heads' : 8
-    }
-
-else:
-    specific_dict_cfg = {
-    'n_heads': None,              # Number of heads                                             8
-               }
-
-dict_cfg.update(specific_dict_cfg)
+dict_cfg['n_heads'] = 8 if gnn_method == 'GATv2' else None
 features_mode_dict = {
-        # key : method 
-        # value list containing n
         "random": 1024,
         "ESM2": 2560,
         "ProstT5": 1024,
 }
 
-def main(
+def train_configuration(
     cfg,
     ppi_data,
     ppi_metapaths,
@@ -224,22 +153,22 @@ def main(
     edge_attr_dict,
     celltype_map,
     tissue_neighbors,
-    # ++ center_loss_labels ,
     device,
     store_global_pred_train=False,
     run_train=True,
     run_test=True,
     checkpointing=False,
     ):
+    """Train or resume one configuration, export its best checkpoint, and evaluate.
 
-     # saving folders 
-    save_graph = cfg.save_prefix + "/graph.pkl"
+    The validation score selects the checkpoint. Test edges are scored only
+    after training, using the training/validation message-passing edges.
+    """
+
+    # Checkpoints and metric tables for this configuration.
     save_best_model = cfg.save_prefix + "/best_model_save.pth"
     save_latest_model = cfg.save_prefix + "/latest_model_save.pth"
-    save_ppi_embed = cfg.save_prefix + "/protein_embed.pth"
-    save_mg_embed = cfg.save_prefix + "/mg_embed.pth"
-    save_labels_dict = cfg.save_prefix + "/labels_dict.txt"
-    
+
     if cfg.get("split_mode") == "global":
         save_bestap_train_metrics = cfg.save_prefix + "/df_bestap_global_train_metrics.csv"
         save_bestap_val_metrics = cfg.save_prefix + "/df_bestap_global_val_metrics.csv"
@@ -249,45 +178,36 @@ def main(
         save_bestap_val_metrics = cfg.save_prefix + "/df_bestap_val_metrics.csv"
         save_bestap_test_metrics = cfg.save_prefix + "/df_bestap_test_metrics.csv"
 
-    if plot:
-        save_plots = cfg.save_prefix + "/train_embed_plots.pdf"
-        
-    
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    device = torch.device(device)
     print('Using device:', device)
-    if device.type == 'cuda': print(torch.cuda.get_device_name(0))
+    if device.type == 'cuda': print(torch.cuda.get_device_name(device))
     best_val_ap = -1
     best_model = None
-    eps = 10e-4
 
 
-    # Read data  
- 
     if run_train or run_test:
         center_loss_labels, train_mask, val_mask, test_mask = get_centerloss_labels(
         celltype_map, ppi_layers)
 
-    
         model = Pinnacle(
             cfg['gnn_method'],
-            mg_data.x.shape[1], 
-            cfg['hidden'], 
-            cfg['output'], 
-            len(ppi_metapaths), 
-            len(mg_metapaths), 
-            ppi_data, 
-            cfg['n_heads'], 
-            cfg['pc_att_channels'], 
+            mg_data.x.shape[1],
+            cfg['hidden'],
+            cfg['output'],
+            len(ppi_metapaths),
+            len(mg_metapaths),
+            ppi_data,
+            cfg['n_heads'],
+            cfg['pc_att_channels'],
             cfg['dropout'],
             device=device).to(device)
         params = list(model.parameters())
         optimizer = torch.optim.Adam(params, lr = cfg['lr'], weight_decay = cfg['wd'])
         center_loss = CenterLoss(
             num_classes=len(set(center_loss_labels)),
-            feat_dim=cfg['hidden'] if cfg['n_heads'] is None else cfg['output'] * cfg['n_heads'],
-            use_gpu=torch.cuda.is_available()
+            feat_dim=model.output
             )
-        params += list(center_loss.parameters())
 
         wandb.watch(model)
         print(model)
@@ -300,7 +220,7 @@ def main(
             ckpt = torch.load(save_latest_model, weights_only=False)
             model.load_state_dict(ckpt['model'].state_dict())
             optimizer.load_state_dict(ckpt['optimizer'].state_dict())
-            _restore_rng_state(ckpt.get('rng_state'))
+            restore_rng_state(ckpt.get('rng_state'))
             start_epoch = ckpt['epoch'] + 1
             if os.path.exists(save_best_model):
                 best_ckpt = torch.load(save_best_model, map_location="cpu", weights_only=False)
@@ -324,7 +244,6 @@ def main(
 
         for epoch in tqdm(range(start_epoch, cfg.epochs), desc="Training Epochs"):
             print(f"\n===== Epoch {epoch + 1}/{cfg.epochs} =====", flush=True)
-            # ppi_metapaths_train, mg_metapaths_train, ppi_metapaths_val, mg_metapaths_val = train(epoch, model, optimizer, center_loss)
             ppi_metapaths_train, mg_metapaths_train, ppi_metapaths_val, mg_metapaths_val, best_val_ap = train(cfg,
                 epoch,
                 model,
@@ -364,6 +283,7 @@ def main(
             "dataset_mode": cfg.dataset_mode,
             "split_mode": cfg.split_mode,
             "features_mode": cfg.features_mode,
+            "esm2_pooling": cfg.esm2_pooling,
             "symmetric_ppi": cfg.symmetric_ppi,
             "seed": cfg.seed,
             "epochs": cfg.epochs,
@@ -396,10 +316,10 @@ def main(
 
         if best_model is None:
             print('loading model weights')
-            best_model_dict = torch.load(save_best_model, map_location="cpu", weights_only=False) # containing keys (epoch, model, optimizer)
+            best_model_dict = torch.load(save_best_model, map_location="cpu", weights_only=False)
             print('Saved best epoch:', best_model_dict['epoch'])
             best_model = model
-            best_model.load_state_dict(best_model_dict['model'].state_dict()) # conversion ensuring that the weight loading process remains valid across older-newer model versions
+            best_model.load_state_dict(best_model_dict['model'].state_dict())
         best_model.to(device)
         best_model.eval()
 
@@ -407,7 +327,7 @@ def main(
             ppi_metapaths_test = None
             mg_metapaths_test = None
             evaluation_mode = "corrected"
-            print('Refreshing test metrics for best val AP model using corrected global PPI batching')
+            print('Evaluating the best validation AP model with global PPI batches')
         else:
             ppi_metapaths_test = {}
             mg_metapaths_test = []
@@ -416,7 +336,7 @@ def main(
             for mg_mt_t, mg_mt_v in zip(mg_metapaths_train, mg_metapaths_val):
                 mg_metapaths_test.append(torch.cat([mg_mt_t, mg_mt_v], dim=1).to(device))
             evaluation_mode = "standard"
-            print('Refreshing test metrics for best val AP model using original PINNACLE batching')
+            print('Evaluating the best validation AP model with context-specific PPI batches')
 
         test(
             cfg,
@@ -438,13 +358,20 @@ def main(
 if __name__ == "__main__":
     # Adapted PINNACLE configurations.
     dict_cfg['features_mode'] = features_mode
+    dict_cfg['esm2_pooling'] = cli_args.esm2_pooling
     dict_cfg['protein_feat_dim'] = features_mode_dict[features_mode]
-    dict_cfg['ppi_feat_dir'] = _get_ppi_feat_dir(project_paths, features_mode)
+    if features_mode == "ESM2":
+        feature_key = "esm2_embeddings" if cli_args.esm2_pooling == "bos" else "esm2_mean_embeddings"
+        dict_cfg['ppi_feat_dir'] = str(Path(project_paths[feature_key]).expanduser())
+    elif features_mode == "ProstT5":
+        dict_cfg['ppi_feat_dir'] = str(Path(project_paths['prostt5_embeddings']).expanduser())
+    else:
+        dict_cfg['ppi_feat_dir'] = None
 
     had_failure = False
     for gnn_lambda, gnn_dropout, gnn_output in product(
         list_gnn_lambda, list_gnn_dropout, list_gnn_output):
-        
+
         dict_cfg['lambda'] = gnn_lambda
         dict_cfg['dropout'] = gnn_dropout
         dict_cfg['output'] = gnn_output
@@ -452,7 +379,6 @@ if __name__ == "__main__":
             dict_cfg['hidden'] = dict_cfg['output']
         cfg = DictConfig(dict_cfg)
 
-        # setup data 
         ppi_data, mg_data, edge_attr_dict, celltype_map, tissue_neighbors, ppi_layers, metagraph = read_data(
             global_ppi_edges, ppi_dir, metagraph_edges,
             feat_mat_dim = cfg['protein_feat_dim'],
@@ -463,22 +389,20 @@ if __name__ == "__main__":
             split_mode=split_mode,
             count_edge_path=count_edge_path
         )
-        ppi_metapaths, mg_metapaths = get_metapaths() 
-        # get_centerloss_labels inside main method 
+        ppi_metapaths, mg_metapaths = get_metapaths()
 
-        # Define experiment_name
         gnn_lambda_str = '%s'%(str(cfg['lambda']).replace('.', ''))
         gnn_dropout_str = '%s'%(str(cfg['dropout']).replace('.', ''))
-        
+
         gnn_str = f"{gnn_method}_H{cfg['hidden']}_lambda{gnn_lambda_str}_drop{gnn_dropout_str}_out{cfg['output']}"
-        
-        experiment_name = f'PINNACLE_model_{split_mode_str}{features_mode}_symmetric_PPI-{symmetric_ppi}_{gnn_str}'
+
+        feature_name = features_mode + ('_mean' if features_mode == 'ESM2' and cli_args.esm2_pooling == 'mean' else '')
+        experiment_name = f'PINNACLE_model_{split_mode_str}{feature_name}_symmetric_PPI-{symmetric_ppi}_{gnn_str}'
         if optim_str != '':
             experiment_name += f'_{optim_str}'
         experiment_name += f'_{dataset_mode}'
         print(experiment_name)
 
-        # Define full path experiment folder 
         save_prefix = os.path.join(exp_dir, experiment_name)
         print("save prefix", save_prefix)
         run_train = True
@@ -487,21 +411,20 @@ if __name__ == "__main__":
         if not existing_repo:
             os.makedirs(save_prefix, exist_ok=True)
         if existing_repo:
-            # sanity check to see if the experiment was already done successfully
-            print('-- already done experiment -> checking if experiment was run successfully')
+            print('Checking existing training run')
             save_latest_model = save_prefix + "/latest_model_save.pth"
             save_best_model = save_prefix + "/best_model_save.pth"
             if not os.path.exists(save_latest_model):
                 if os.path.exists(save_best_model):
-                    print('-- latest model missing but best model exists, skipping training and refreshing eval metrics')
+                    print('Evaluating the saved best checkpoint')
                     run_train = False
                     run_test = True
                 else:
-                    print('-- latest model missing, treating as fresh run with test refresh at the end')
+                    print('Starting training')
                     run_train = True
                     run_test = True
             else:
-                latest_model_dict = torch.load(save_latest_model, weights_only=False) # containing keys (epoch, model, optimizer)
+                latest_model_dict = torch.load(save_latest_model, weights_only=False)
 
                 if latest_model_dict['epoch'] == (epochs - 1):
                     run_train = False
@@ -511,28 +434,23 @@ if __name__ == "__main__":
                     run_train = True
                     run_test = True
                 else:
-                    raise Exception('Model exists but did not finish to train ... set PINNACLE_CHECKPOINTING=true to resume')
-        
+                    raise RuntimeError('Incomplete run: use --checkpointing to resume.')
+
         try:
-            if run_train or run_test:  
-                print('run_train:', run_train, ' | run_test:', run_test)    
+            if run_train or run_test:
+                print('run_train:', run_train, ' | run_test:', run_test)
                 print('save_prefix:', save_prefix)
-                # complete config dict and save it
-                cfg['save_prefix'] = save_prefix 
-            
-                # save config 
+                cfg['save_prefix'] = save_prefix
+
                 if not existing_repo:
-                    config_file = save_prefix + '/config_dict_seed%s.pkl'%cfg.seed # cfg['save_prefix'] + '/config_dict_seed%s.pkl'%cfg.seed
+                    config_file = save_prefix + '/config_dict_seed%s.pkl'%cfg.seed
                     with open(config_file, 'wb') as f:
                         pickle.dump(dict_cfg, f)
 
-                # Use the best parameters from the PINNACLE implementation.
                 utils.set_seed(seed)
-                # setup wandb tracker
                 utils.setup_wandb(cfg, experiment_name)
-                
-            
-                main(cfg,
+
+                train_configuration(cfg,
                     ppi_data,
                     ppi_metapaths,
                     mg_data,

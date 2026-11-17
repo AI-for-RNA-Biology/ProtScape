@@ -1,4 +1,8 @@
-"""Select Leiden communities and summarize their Reactome enrichment."""
+"""Select Leiden communities and summarize their Reactome enrichment.
+
+Traag et al., From Louvain to Leiden: guaranteeing well-connected communities
+(2019): https://doi.org/10.1038/s41598-019-41695-z
+"""
 
 from __future__ import annotations
 
@@ -25,6 +29,7 @@ LEIDEN_SEEDS = tuple(range(10))
 def leiden_communities(
     graph: nx.Graph, resolution: float, seed: int
 ) -> list[set[str]]:
+    """Cluster the undirected network using STRING experimental scores as weights."""
     import igraph as ig
     import leidenalg
 
@@ -54,6 +59,7 @@ def leiden_communities(
 
 
 def min_max_normalize(values: pd.Series) -> pd.Series:
+    """Scale values to zero–one; use one for a constant series."""
     value_range = values.max() - values.min()
     if np.isclose(value_range, 0.0):
         return pd.Series(1.0, index=values.index)
@@ -63,6 +69,7 @@ def min_max_normalize(values: pd.Series) -> pd.Series:
 def select_leiden_partition(
     graph: nx.Graph,
 ) -> tuple[list[set[str]], pd.DataFrame, pd.DataFrame]:
+    """Choose a resolution by modularity and stability across random seeds."""
     from sklearn.metrics import adjusted_rand_score
 
     nodes = sorted(graph)
@@ -159,6 +166,7 @@ def select_leiden_partition(
         selected_resolution
     )
 
+    # At the chosen resolution, keep the run most similar to the other runs.
     selected_runs = runs_by_resolution[selected_resolution]
     best_ari = max(run["mean_ari"] for run in selected_runs)
     medoid_candidates = [
@@ -199,6 +207,7 @@ def select_leiden_partition(
 
 
 def order_modules(communities: list[set[str]]) -> list[set[str]]:
+    """Order communities by the specified anchor proteins, then by their remaining membership."""
     ordered = []
     for anchor in MODULE_ANCHORS:
         match = next(
@@ -233,6 +242,7 @@ def build_leiden_tables(
     candidates: pd.DataFrame,
     support: pd.DataFrame,
 ) -> tuple[nx.Graph, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Build the weighted STRING graph and annotate its selected Leiden partition."""
     graph = nx.from_pandas_edgelist(
         edges,
         "protein_a",
@@ -298,6 +308,7 @@ def build_module_reactome_enrichment(
     nodes: pd.DataFrame,
     annotations: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Test Reactome enrichment per module and track known-target versus candidate hits."""
     role_by_protein = nodes.set_index("protein")["node_role"].to_dict()
     expected_roles = {"benchmark_positive", "candidate"}
     if not set(role_by_protein.values()).issubset(expected_roles):
@@ -426,6 +437,7 @@ def build_module_reactome_enrichment(
 
 
 def build_module_summary(nodes: pd.DataFrame) -> pd.DataFrame:
+    """Summarize each module's membership, network properties and enriched pathways."""
     summary = (
         nodes.assign(
             protscape_protein=nodes["node_role"].eq("candidate"),

@@ -7,9 +7,8 @@ from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
-from exploration.plotting.fonts import register_arial
+from exploration.plotting.fonts import FONT_NAME
 
-register_arial()
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
@@ -19,10 +18,10 @@ import matplotlib.pyplot as plt
 
 CM = 1 / 2.54
 
-SOURCE_STYLE = {
+PLOT_STYLE = {
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
-    "font.family": "Arial",
+    "font.family": FONT_NAME,
     "axes.labelsize": 8.0,
     "xtick.labelsize": 6.0,
     "ytick.labelsize": 6.0,
@@ -77,7 +76,7 @@ POOLING_COLORS = {
 }
 
 
-def save_original(
+def save_figure(
     fig,
     output: Path,
     stem: str,
@@ -85,7 +84,7 @@ def save_original(
     pad_inches: float | None = None,
     pdf_dpi: int = 300,
 ):
-    """Save with the transparent, tight-bbox settings of the source scripts."""
+    """Save transparent SVG, PDF and PNG figures with tight margins."""
     kwargs = {"bbox_inches": "tight", "transparent": True}
     if pad_inches is not None:
         kwargs["pad_inches"] = pad_inches
@@ -96,7 +95,7 @@ def save_original(
 
 
 def clean_2d_axis(ax):
-    """Axis styling shared by the original sensitivity plots."""
+    """Apply the shared axis styling to the diagnostic panels."""
     ax.grid(False)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -115,6 +114,7 @@ def clean_2d_axis(ax):
 
 
 def plot_contextwise_boxplots(legend_ax, axes, auprc, f1):
+    """Compare distributions of context-level pretraining scores by broad cell class."""
     legend_order = [
         "pinnacle_random",
         "pinnacle_esm2_acm",
@@ -169,6 +169,7 @@ def plot_contextwise_boxplots(legend_ax, axes, auprc, f1):
 
 
 def plot_pooling(legend_ax, ax, table):
+    """Compare pooling choices across negative-to-positive PPI ratios."""
     legend_ax.axis("off")
     handles = [Line2D([0], [0], color=POOLING_COLORS[key], linewidth=2.2) for key in POOLING_ORDER]
     legend_ax.legend(
@@ -217,7 +218,7 @@ def plot_pooling(legend_ax, ax, table):
 
 def plot_pretraining(source, output):
     """Render model-performance and pooling diagnostics."""
-    matplotlib.rcParams.update(SOURCE_STYLE)
+    matplotlib.rcParams.update(PLOT_STYLE)
     source, output = Path(source), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     auprc = pd.read_csv(source / "contextwise_ppi_auprc.csv")
@@ -230,13 +231,13 @@ def plot_pretraining(source, output):
     plot_contextwise_boxplots(
         a_legend_ax, [a_auprc_ax, a_f1_ax], auprc, f1
     )
-    save_original(a_legend_fig, output, "contextwise_core_model_legend")
-    save_original(a_auprc_fig, output, "contextwise_ppi_auprc")
-    save_original(a_f1_fig, output, "contextwise_ppi_f1")
+    save_figure(a_legend_fig, output, "contextwise_core_model_legend")
+    save_figure(a_auprc_fig, output, "contextwise_ppi_auprc")
+    save_figure(a_f1_fig, output, "contextwise_ppi_f1")
 
     b_legend_fig, b_legend_ax = plt.subplots(figsize=(7 * CM, 2.2 * CM))
     b_fig, b_ax = plt.subplots(figsize=(5 * CM, 4.5 * CM))
     plot_pooling(b_legend_ax, b_ax, pooling)
     b_fig.subplots_adjust(left=0.10, right=0.98, bottom=0.18, top=0.86)
-    save_original(b_legend_fig, output, "pooling_sensitivity_legend")
-    save_original(b_fig, output, "pooling_sensitivity")
+    save_figure(b_legend_fig, output, "pooling_sensitivity_legend")
+    save_figure(b_fig, output, "pooling_sensitivity")

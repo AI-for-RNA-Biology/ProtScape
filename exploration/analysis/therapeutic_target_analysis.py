@@ -22,11 +22,12 @@ from exploration.analysis.therapeutic_target.context_attribution import (
     focal_target_contexts,
     generate_checkpoint_lrp,
     load_cell_metadata,
-    prot_scape_lrp_tables,
+    protscape_attribution_tables,
 )
 
 
 def main() -> None:
+    """Evaluate selected therapeutic-target checkpoints and export their xMIL-LRP summaries."""
     ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
 
     statistics = dataset_statistics()
@@ -60,40 +61,22 @@ def main() -> None:
         signed_matrix,
         max_positive_matrix,
         max_positive_targets,
-    ) = prot_scape_lrp_tables(metadata)
-    cohort.to_csv(ANALYSIS_DIR / "target_recovery_cohort.csv", index=False)
-    positive_matrix.to_csv(
-        ANALYSIS_DIR / "cell_class_positive_contribution.csv",
-        index=False,
-    )
-    signed_matrix.to_csv(
-        ANALYSIS_DIR / "cell_class_signed_contribution_percent.csv", index=False
-    )
-    max_positive_matrix.to_csv(
-        ANALYSIS_DIR / "cell_class_max_positive_contribution.csv",
-        index=False,
-    )
-    max_positive_targets.to_csv(
-        ANALYSIS_DIR / "cell_class_max_positive_targets.csv",
-        index=False,
-    )
-    disease_top_contexts(lrp_data, cohort, metadata).to_csv(
-        ANALYSIS_DIR / "disease_top_contexts.csv", index=False
-    )
-    focal_top, focal_summary = focal_target_contexts(lrp_data)
-    focal_top.to_csv(ANALYSIS_DIR / "focal_target_top_contexts.csv", index=False)
-    focal_summary.to_csv(ANALYSIS_DIR / "focal_target_summary.csv", index=False)
-
+    ) = protscape_attribution_tables(metadata)
     targets, diseases, relevance_summary = absolute_contextual_relevance()
-    targets.to_csv(
-        ANALYSIS_DIR / "absolute_contextual_relevance_targets.csv", index=False
-    )
-    diseases.to_csv(
-        ANALYSIS_DIR / "absolute_contextual_relevance_diseases.csv", index=False
-    )
-    relevance_summary.to_csv(
-        ANALYSIS_DIR / "absolute_contextual_relevance_summary.csv", index=False
-    )
+    tables = {
+        "target_recovery_cohort.csv": cohort,
+        "cell_class_positive_contribution.csv": positive_matrix,
+        "cell_class_signed_contribution_percent.csv": signed_matrix,
+        "cell_class_max_positive_contribution.csv": max_positive_matrix,
+        "cell_class_max_positive_targets.csv": max_positive_targets,
+        "disease_top_contexts.csv": disease_top_contexts(lrp_data, cohort, metadata),
+        "focal_target_top_contexts.csv": focal_target_contexts(lrp_data),
+        "absolute_contextual_relevance_targets.csv": targets,
+        "absolute_contextual_relevance_diseases.csv": diseases,
+        "absolute_contextual_relevance_summary.csv": relevance_summary,
+    }
+    for filename, table in tables.items():
+        table.to_csv(ANALYSIS_DIR / filename, index=False)
 
     from exploration.plotting.therapeutic_target_attribution_plots import (
         plot_attributions,

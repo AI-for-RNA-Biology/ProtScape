@@ -1,7 +1,12 @@
+"""Prepare human CORUM complexes for multilabel prediction.
+
+Keep complexes with 10–300 interactome proteins and remove near-duplicates.
+CORUM: https://mips.helmholtz-muenchen.de/corum/
+"""
+
 import argparse
 import json
 import re
-from itertools import combinations
 from pathlib import Path
 
 import pandas as pd
@@ -17,11 +22,8 @@ MAX_OVERLAP_COEF = 0.90   # |A∩B| / min(|A|,|B|)
 MAX_JACCARD = 0.80        # |A∩B| / |A∪B|
 
 
-def default_output_dir():
-    return DEFAULT_OUTPUT_ROOT / "data" / "corum_dataset"
-
-
 def parse_args():
+    """Read the CORUM input, interactome and output paths."""
     parser = argparse.ArgumentParser(description="Build CORUM downstream datasets.")
     parser.add_argument(
         "--corum-json",
@@ -32,19 +34,20 @@ def parse_args():
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=default_output_dir(),
+        default=DEFAULT_OUTPUT_ROOT / "data" / "corum_dataset",
         help="Directory for generated CORUM tables.",
     )
     parser.add_argument(
         "--global-ppi-path",
         type=Path,
-        default=None,
+        default=DEFAULT_GLOBAL_PPI,
         help="Override the global PPI edgelist used for universe filtering and overlap removal.",
     )
     return parser.parse_args()
 
 
 def sanitize_symbol(s):
+    """Normalize one gene symbol from the CORUM annotations."""
     if s is None:
         return None
     s = str(s).strip()
@@ -56,6 +59,7 @@ def sanitize_symbol(s):
 
 
 def split_symbols(s):
+    """Separate the alternative symbols recorded for a subunit."""
     if s is None:
         return []
     s = str(s).strip()
@@ -71,6 +75,7 @@ def split_symbols(s):
 
 
 def read_ppi_universe_hgnc(ppi_path):
+    """Read the proteins represented in the global interactome."""
     proteins = set()
     with open(ppi_path, "r", encoding="utf-8") as f:
         for line in f:
@@ -87,17 +92,16 @@ def read_ppi_universe_hgnc(ppi_path):
 
 
 def select_nonredundant_ids(id_to_members, max_overlap_coef, max_jaccard, has_pmid=None):
+    """Prefer published, smaller complexes when memberships largely overlap."""
     if not id_to_members:
         return [], []
 
     sizes = {i: len(s) for i, s in id_to_members.items()}
 
-    def pmid_key(i):
-        if not has_pmid:
-            return 0
-        return int(has_pmid.get(i, 0))
-
-    ordered = sorted(id_to_members.keys(), key=lambda i: (-pmid_key(i), sizes[i], str(i)))
+    ordered = sorted(
+        id_to_members,
+        key=lambda i: (-int(has_pmid.get(i, 0)) if has_pmid else 0, sizes[i], str(i)),
+    )
 
     kept = []
     dropped = []
@@ -131,6 +135,7 @@ def select_nonredundant_ids(id_to_members, max_overlap_coef, max_jaccard, has_pm
 
 
 def build_corum_tables(complexes, universe):
+    """Map human complex subunits to interactome gene names and filter by size."""
     complex_rows = []
     membership_rows = []
 
@@ -209,48 +214,11 @@ def build_corum_tables(complexes, universe):
     return complexes_df, memberships_df
 
 
-def build_protein_to_complexes(memberships_df):
-    if memberships_df.empty:
-        return pd.DataFrame(columns=["protein", "complex_ids", "complex_names", "n_complexes"])
-
-    rows = []
-    for prot, dfp in memberships_df.groupby("protein"):
-        cids = dfp["complex_id"].astype(str).tolist()
-        cnames = dfp["complex_name"].astype(str).tolist()
-        rows.append(
-            {
-                "protein": prot,
-                "complex_ids": ";".join(cids),
-                "complex_names": ";".join(cnames),
-                "n_complexes": len(cids),
-            }
-        )
-    return (
-        pd.DataFrame(rows)
-        .sort_values(["n_complexes", "protein"], ascending=[False, True])
-        .reset_index(drop=True)
-    )
-
-
-def build_positive_pairs(complexes_df):
-    if complexes_df.empty:
-        return pd.DataFrame(columns=["protein_a", "protein_b", "complex_id", "complex_name"])
-
-    rows = []
-    for _, r in complexes_df.iterrows():
-        cid = r["complex_id"]
-        cname = r["complex_name"]
-        members = [x for x in str(r["member_hgnc"]).split(";") if x]
-        members = sorted(set(members))
-        for a, b in combinations(members, 2):
-            rows.append({"protein_a": a, "protein_b": b, "complex_id": cid, "complex_name": cname})
-    return pd.DataFrame(rows)
-
-
 def main():
+    """Filter human complexes, remove overlaps and save their membership tables."""
     args = parse_args()
     corum_json_path = args.corum_json
-    global_ppi_txt_path = args.global_ppi_path or DEFAULT_GLOBAL_PPI
+    global_ppi_txt_path = args.global_ppi_path
     out_dir = args.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -301,28 +269,17 @@ def main():
     print("[4/4] Writing CSVs")
     complexes_csv = out_dir / "corum_complexes_filtered.csv"
     memberships_csv = out_dir / "corum_memberships_filtered.csv"
-    prot2c_csv = out_dir / "protein_to_complexes.csv"
-    pairs_csv = out_dir / "corum_positive_pairs.csv"
 
     complexes_df.to_csv(complexes_csv, index=False)
     memberships_df.to_csv(memberships_csv, index=False)
 
-    prot2c_df = build_protein_to_complexes(memberships_df)
-    prot2c_df.to_csv(prot2c_csv, index=False)
-
-    pairs_df = build_positive_pairs(complexes_df)
-    pairs_df.to_csv(pairs_csv, index=False)
-
     print(f"      Complexes kept: {len(complexes_df):,}")
     print(f"      Membership rows: {len(memberships_df):,}")
-    print(f"      Proteins with >=1 complex label: {len(prot2c_df):,}")
-    print(f"      Positive co-complex pairs (per-complex, not deduped across complexes): {len(pairs_df):,}")
+    print(f"      Proteins with >=1 complex label: {memberships_df['protein'].nunique():,}")
 
     print("\n[OK] Wrote files:")
     print(f"  - {complexes_csv}")
     print(f"  - {memberships_csv}")
-    print(f"  - {prot2c_csv}")
-    print(f"  - {pairs_csv}")
 
 
 if __name__ == "__main__":

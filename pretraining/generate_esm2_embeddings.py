@@ -1,5 +1,10 @@
-"""Generate the ESM-2 protein features used by ProtScape."""
+"""Save BOS and mean-residue ESM-2 features for each protein.
 
+ESM-2: Evolutionary-scale prediction of atomic-level protein structure with a
+language model (Lin et al., 2023), https://doi.org/10.1126/science.ade2574.
+"""
+
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -16,107 +21,93 @@ EMBEDDING_DIM = 2560
 CHUNK_SIZE = 1024
 
 
-def validate_embeddings(path):
-    embeddings = pd.read_pickle(path)
-    required = {"gene_name", "ESM2-Embeddings"}
-    missing = required - set(embeddings.columns)
-    if missing:
-        raise ValueError(f"ESM-2 embedding file is missing columns: {sorted(missing)}")
-
-    for vector in embeddings["ESM2-Embeddings"]:
-        vector = np.asarray(vector)
-        if vector.shape != (EMBEDDING_DIM,) or not np.isfinite(vector).all():
-            raise ValueError(
-                f"ESM-2 embeddings must be finite {EMBEDDING_DIM}-dimensional vectors"
-            )
-
-
-def bos_embedding(sequence, model, batch_converter, device):
+def sequence_embeddings(sequence, model, batch_converter, device):
+    """Read BOS and average the residues, excluding BOS and EOS tokens."""
     with torch.no_grad():
         _, _, tokens = batch_converter([("protein", sequence)])
-        output = model(
-            tokens.to(device),
-            repr_layers=[MODEL_LAYER],
-            return_contacts=False,
-        )
-    return output["representations"][MODEL_LAYER][0, 0].float().cpu().numpy()
+        output = model(tokens.to(device), repr_layers=[MODEL_LAYER], return_contacts=False)
+        representations = output["representations"][MODEL_LAYER][0].float()
+        return {
+            "bos": representations[0].cpu().numpy(),
+            "mean": representations[1 : len(sequence) + 1].mean(dim=0).cpu().numpy(),
+        }
 
 
 def embed_sequence(sequence, model, batch_converter, device):
+    """Embed the whole sequence; use 1,024-residue chunks if it exceeds GPU memory."""
     try:
-        embedding = bos_embedding(sequence, model, batch_converter, device)
+        return sequence_embeddings(sequence, model, batch_converter, device)
     except RuntimeError as error:
         if device.type != "cuda" or "out of memory" not in str(error).lower():
             raise
         torch.cuda.empty_cache()
-        chunks = [
-            sequence[start : start + CHUNK_SIZE]
-            for start in range(0, len(sequence), CHUNK_SIZE)
-        ]
-        vectors = [
-            bos_embedding(chunk, model, batch_converter, device)
-            for chunk in chunks
-        ]
-        embedding = np.mean(vectors, axis=0)
 
-    embedding = np.asarray(embedding, dtype=np.float32)
-    if embedding.shape != (EMBEDDING_DIM,):
-        raise RuntimeError(
-            f"{MODEL_NAME} returned shape {embedding.shape}; "
-            f"expected ({EMBEDDING_DIM},)"
-        )
-    return embedding
+    chunks = [sequence[start : start + CHUNK_SIZE] for start in range(0, len(sequence), CHUNK_SIZE)]
+    embeddings = [sequence_embeddings(chunk, model, batch_converter, device) for chunk in chunks]
+    return {
+        # Keep equal chunk weights for BOS; residue means need length weights.
+        "bos": np.mean([embedding["bos"] for embedding in embeddings], axis=0),
+        "mean": np.average(
+            [embedding["mean"] for embedding in embeddings],
+            axis=0,
+            weights=[len(chunk) for chunk in chunks],
+        ).astype(np.float32),
+    }
 
 
 def main():
+    """Load the configured sequences and write the requested ESM-2 BOS/mean tables."""
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--pooling", choices=["bos", "mean", "both"], default="bos")
+    parser.add_argument("--device", default="auto", help="auto, cpu, or cuda:0")
+    args = parser.parse_args()
     with PATHS_FILE.open(encoding="utf-8") as handle:
         paths = yaml.safe_load(handle)
 
-    sequences_path = Path(paths["protein_sequences"]).expanduser()
-    output_path = Path(paths["esm2_embeddings"]).expanduser()
-
-    if output_path.is_file():
-        validate_embeddings(output_path)
-        print(f"Using existing ESM-2 embeddings: {output_path}")
+    modes = ["bos", "mean"] if args.pooling == "both" else [args.pooling]
+    output_paths = {
+        mode: Path(paths["esm2_embeddings" if mode == "bos" else "esm2_mean_embeddings"]).expanduser()
+        for mode in modes
+    }
+    for mode, path in output_paths.items():
+        if path.is_file():
+            print(f"Using ESM-2 {mode} embeddings: {path}")
+    output_paths = {mode: path for mode, path in output_paths.items() if not path.is_file()}
+    if not output_paths:
         return
-    if not sequences_path.is_file():
-        raise FileNotFoundError(f"Protein sequence table not found: {sequences_path}")
 
     import esm
 
-    sequences = pd.read_csv(sequences_path)
-    required = {"gene_name", "fasta_seq"}
-    missing = required - set(sequences.columns)
-    if missing:
-        raise KeyError(f"Protein sequence table is missing columns: {sorted(missing)}")
-    if sequences["fasta_seq"].isna().any():
-        raise ValueError("Protein sequence table contains missing sequences")
-
-    sequences["fasta_seq"] = sequences["fasta_seq"].astype(str).str.strip().str.upper()
-    if sequences["fasta_seq"].eq("").any():
-        raise ValueError("Protein sequence table contains empty sequences")
+    sequences = pd.read_csv(Path(paths["protein_sequences"]).expanduser())
+    sequences["fasta_seq"] = sequences["fasta_seq"].str.strip().str.upper()
+    if sequences["fasta_seq"].isna().any() or sequences["fasta_seq"].eq("").any():
+        raise ValueError("Protein sequence table contains missing or empty sequences")
     sequences["seq_length"] = sequences["fasta_seq"].str.len()
     if not sequences["seq_length"].is_monotonic_increasing:
         sequences = sequences.sort_values("seq_length").reset_index(drop=True)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(
+        "cuda" if args.device == "auto" and torch.cuda.is_available()
+        else "cpu" if args.device == "auto"
+        else args.device
+    )
     print(f"Loading {MODEL_NAME} on {device}")
     model, alphabet = esm.pretrained.esm2_t36_3B_UR50D()
     model = model.eval().to(device)
     batch_converter = alphabet.get_batch_converter()
+    vectors = {mode: [] for mode in output_paths}
+    for sequence in tqdm(sequences["fasta_seq"], desc="ESM-2 embeddings"):
+        embeddings = embed_sequence(sequence, model, batch_converter, device)
+        for mode in output_paths:
+            vectors[mode].append(embeddings[mode])
 
-    sequences["ESM2-Embeddings"] = [
-        embed_sequence(sequence, model, batch_converter, device)
-        for sequence in tqdm(sequences["fasta_seq"], desc="ESM-2 embeddings")
-    ]
-
-    embeddings = sequences[["gene_name", "ESM2-Embeddings"]]
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = output_path.with_suffix(output_path.suffix + ".tmp")
-    embeddings.to_pickle(temporary_path)
-    temporary_path.replace(output_path)
-    validate_embeddings(output_path)
-    print(f"Saved {len(sequences):,} protein embeddings to {output_path}")
+    for mode, path in output_paths.items():
+        embeddings = pd.DataFrame({"gene_name": sequences["gene_name"], "ESM2-Embeddings": vectors[mode]})
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = path.with_suffix(path.suffix + ".tmp")
+        embeddings.to_pickle(temporary_path)
+        temporary_path.replace(path)
+        print(f"Saved {len(embeddings):,} ESM-2 {mode} embeddings to {path}")
 
 
 if __name__ == "__main__":

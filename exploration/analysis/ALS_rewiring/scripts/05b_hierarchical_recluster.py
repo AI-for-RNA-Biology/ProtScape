@@ -67,7 +67,6 @@ Usage:
     python 05b_hierarchical_recluster.py --max-splits 3   # only peel off the 3 least-connected modules
 """
 import argparse
-import hashlib
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -108,16 +107,6 @@ def _find_elbow(y: np.ndarray) -> int:
     return int(np.argmax(distances))
 
 
-def _input_fingerprint(giant, module_of, mod_ids) -> str:
-    """Hash graph and partition inputs to identify the data used for a run."""
-    h = hashlib.sha256()
-    h.update(repr(sorted(giant.nodes())).encode())
-    h.update(repr(sorted(giant.edges())).encode())
-    h.update(repr(sorted(module_of.items())).encode())
-    h.update(repr(sorted(mod_ids)).encode())
-    return h.hexdigest()[:12]
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--max-splits", type=int, default=None,
@@ -133,7 +122,6 @@ def main():
     giant = io_utils.load_graph(config.INTERMEDIATE_DIR / "giant.pickle")
     module_of = io_utils.load_json(config.INTERMEDIATE_DIR / "module_of.json")
     mod_ids = io_utils.load_json(config.INTERMEDIATE_DIR / "mod_ids.json")
-    print(f"Input fingerprint: {_input_fingerprint(giant, module_of, mod_ids)}")
 
     # Step-0 (pre-split) connectivity snapshot - plotted as the "initial"
     # point in connectivity_vs_split.pdf below, same convention

@@ -22,38 +22,29 @@ DEFAULT_CORUM_DATASET_DIR = Path(PATHS["corum_dataset_dir"]).expanduser()
 DEFAULT_THERAPEUTIC_TARGET_DRUGBANK_TARGETS = Path(
     PATHS["therapeutic_target_drugbank_targets"]
 ).expanduser()
-DEFAULT_THERAPEUTIC_TARGET_EVIDENCE_DIR = Path(
-    PATHS["therapeutic_target_evidence_dir"]
+DEFAULT_THERAPEUTIC_TARGET_OT_ROOT = Path(
+    PATHS["therapeutic_target_ot_root"]
 ).expanduser()
 DEFAULT_THERAPEUTIC_TARGET_OT_RELEASE = PATHS["therapeutic_target_ot_release"]
-DEFAULT_THERAPEUTIC_TARGET_OT_DISEASES_DIR = Path(
-    PATHS["therapeutic_target_ot_diseases_dir"]
-).expanduser()
-DEFAULT_THERAPEUTIC_TARGET_OT_TARGETS_DIR = Path(
-    PATHS["therapeutic_target_ot_targets_dir"]
-).expanduser()
-DEFAULT_THERAPEUTIC_TARGET_OT_ASSOCIATIONS_DIR = Path(
-    PATHS["therapeutic_target_ot_associations_dir"]
-).expanduser()
 DEFAULT_THERAPEUTIC_TARGET_DATASET_DIR = Path(
     PATHS["therapeutic_target_dataset_dir"]
 ).expanduser()
 THERAPEUTIC_TARGET_IDS = (
-    "EFO_0003767",
-    "EFO_0000685",
-    "EFO_0000305",
-    "EFO_1001207",
-    "EFO_0000571",
-    "EFO_0000676",
-    "EFO_0001361",
-    "MONDO_0005148",
-    "MONDO_0007915",
-    "EFO_0000274",
-    "MONDO_0004979",
-    "EFO_0000341",
-    "EFO_1001249",
-    "EFO_0003884",
-    "MONDO_0005180",
+    "EFO_0003767",  # Inflammatory bowel disease
+    "EFO_0000685",  # Rheumatoid arthritis
+    "EFO_0000305",  # Breast carcinoma
+    "EFO_1001207",  # Systolic heart failure
+    "EFO_0000571",  # Lung adenocarcinoma
+    "EFO_0000676",  # Psoriasis
+    "EFO_0001361",  # Pulmonary arterial hypertension
+    "MONDO_0005148",  # Type 2 diabetes
+    "MONDO_0007915",  # Systemic lupus erythematosus
+    "EFO_0000274",  # Atopic eczema
+    "MONDO_0004979",  # Asthma
+    "EFO_0000341",  # COPD
+    "EFO_1001249",  # NASH
+    "EFO_0003884",  # Chronic kidney disease
+    "MONDO_0005180",  # Parkinson disease
 )
 
 
@@ -98,15 +89,13 @@ class Config:
     dropout: float = 0.0
     att_dropout: float = 0.0
     mil_mlp_dim: int = 256
-    ctx_proj_dim: Optional[int] = None
-    aem_lambda: float = 0.0
     pdl_pmax: float = 0.0
     pdl_proj_mode: str = "identity"
     pdl_proj_layers: int = 2
-    esm_proj_dim: Optional[int] = None
     use_class_weights: bool = True
 
     def get_inference_path(self) -> Path:
+        """Locate the contextual embeddings selected for this run."""
         return self.inference_root / self.inference_model
 
 def get_therapeutic_tasks(dataset_dir: Path) -> Dict[str, TaskConfig]:
@@ -125,6 +114,7 @@ def load_config(
     embedding_source: str = "esm",
     dataset_mode: str = "bulk",
 ) -> Config:
+    """Read configured paths and collect the selected downstream task inputs."""
     embedding_source = str(embedding_source).strip().lower()
     if embedding_source not in {"esm", "prostt5"}:
         raise ValueError(
@@ -180,13 +170,13 @@ def get_hc_embedding_paths(
     inference_path: Path,
     cell_embedding_file: str = "cell_embeddings.pt",
 ) -> Dict[str, Optional[Path]]:
-    """Return the canonical contextual protein and cell embedding exports."""
+    """Return the contextual protein and cell embeddings."""
     protein_embed = inference_path / "protein_embeddings.pt"
     cell_embed = inference_path / cell_embedding_file
     missing = [path for path in (protein_embed, cell_embed) if not path.is_file()]
     if missing:
         raise FileNotFoundError(
-            "Missing canonical inference embedding export(s): "
+            "Missing embedding file(s): "
             + ", ".join(str(path) for path in missing)
         )
 

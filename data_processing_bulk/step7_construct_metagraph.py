@@ -65,6 +65,7 @@ def normalize_cl_label(label: str) -> str:
 
 
 def load_celltype_ppi(ppi_dir: Path) -> List[Tuple[int, str]]:
+    """Read the cell-type index used by the PPI graph bundle."""
     list_path = Path(ppi_dir) / "ppi_celltype_list.csv"
     if not list_path.exists():
         raise FileNotFoundError(f"Missing PPI cell type list: {list_path}")
@@ -79,6 +80,7 @@ def load_celltype_ppi(ppi_dir: Path) -> List[Tuple[int, str]]:
 
 
 def filter_cci(cci_file: Path, celltype_ppi: Iterable[Tuple[int, str]]) -> nx.MultiGraph:
+    """Keep cell–cell interaction edges whose endpoints both have PPI graphs."""
     cci = nx.read_edgelist(cci_file, delimiter="\t", create_using=nx.MultiGraph)
     node_mapping = {}
     for node in cci.nodes():
@@ -97,7 +99,8 @@ def filter_cci(cci_file: Path, celltype_ppi: Iterable[Tuple[int, str]]) -> nx.Mu
     return cci
 
 
-def _load_tabula_label_map(ppi_dir: Optional[Path]) -> Dict[str, str]:
+def load_tabula_label_map(ppi_dir: Optional[Path]) -> Dict[str, str]:
+    """Load the saved Tabula-name to CL-ID mapping when available."""
     if ppi_dir is None:
         return {}
     mapping_file = Path(ppi_dir).parent / "tabula_celltype_to_cl_map.csv"
@@ -125,6 +128,7 @@ def read_tissue_metadata(
     ppi_dir: Optional[Path] = None,
     dataset: Optional[str] = None,
 ) -> Tuple[Dict[str, List[str]], List[str]]:
+    """Map cell-type metadata to the PPI labels and group each cell type by its observed tissues."""
     df = pd.read_csv(metadata_path, sep="\t" if Path(metadata_path).suffix == ".tsv" else ",")
     celltypes = sorted({normalize_cl_label(str(ct)) for ct in celltypes})
     dataset_name = (dataset or "").strip().lower()
@@ -149,7 +153,7 @@ def read_tissue_metadata(
                 f"{len(cl_id_to_human)} cell types from PPI filenames"
             )
         if dataset_name == "tabula":
-            tabula_label_to_cl = _load_tabula_label_map(ppi_dir)
+            tabula_label_to_cl = load_tabula_label_map(ppi_dir)
 
     if tissue_col not in df.columns:
         alternatives = ["tissue", "organ_tissue", "tissue_name", "roi"]
@@ -301,6 +305,7 @@ def all_descendants(G: nx.DiGraph, term: str) -> set:
 
 
 def extract_bto(unique_tissues: Iterable[str]) -> Tuple[nx.MultiDiGraph, Dict[str, str]]:
+    """Extract the BTO tissue hierarchy for the observed tissues and return their term mapping."""
     unique_tissues = list(unique_tissues)
     bto_G = obonet.read_obo(BTO_PATH)
     print(f"BTO: {bto_G.number_of_nodes()} nodes, {bto_G.number_of_edges()} edges")
@@ -350,6 +355,7 @@ def create_ct_graph(
     celltype2tissue: Dict[str, List[str]],
     tissue2bto: Dict[str, str],
 ) -> List[Tuple[str, str]]:
+    """Return unique cell–tissue edges, skipping tissues absent from the BTO mapping."""
     ct_edges: List[Tuple[str, str]] = []
     skipped_ct_tissue = 0
     duplicate_edges = 0
@@ -379,6 +385,7 @@ def write_metagraph(
     ct_edges: List[Tuple[str, str]],
     outfile: Path,
 ) -> nx.Graph:
+    """Combine cell and tissue graphs, remove duplicate edges and write the metagraph."""
     metagraph = nx.compose(nx.Graph(cci), nx.Graph(bto))
     metagraph.add_edges_from(ct_edges)
     print(
@@ -391,7 +398,8 @@ def write_metagraph(
     return metagraph
 
 
-def _reset_edgelist_dir(ppi_dir: Path) -> Path:
+def reset_edgelist_dir(ppi_dir: Path) -> Path:
+    """Recreate the generated PPI edge-list folder before copying the selected networks."""
     ppi_dir.mkdir(parents=True, exist_ok=True)
     edgelist_dir = ppi_dir / "ppi_edgelists"
     if edgelist_dir.exists():
@@ -400,11 +408,10 @@ def _reset_edgelist_dir(ppi_dir: Path) -> Path:
     return edgelist_dir
 
 
-def _copy_edgelist(source: Path, target: Path) -> None:
-    shutil.copy2(source, target)
 
 
-def _read_ppi_list(ppi_dir: Path) -> pd.DataFrame:
+def read_ppi_list(ppi_dir: Path) -> pd.DataFrame:
+    """Read the tab-separated context index and protein lists produced in Step 3."""
     return pd.read_csv(
         ppi_dir / "ppi_celltype_list.csv",
         sep="\t",
@@ -416,13 +423,13 @@ def _read_ppi_list(ppi_dir: Path) -> pd.DataFrame:
 def _prepare_als_files() -> DatasetFiles:
     root = Path(ALS_BULK_DIR)
     ppi_dir = root / "ppi"
-    edgelist_dir = _reset_edgelist_dir(ppi_dir)
+    edgelist_dir = reset_edgelist_dir(ppi_dir)
     source_dirs = [
         Path(ALS_MN_INTERMEDIATE) / "ppi",
         Path(ALS_ASTRO_INTERMEDIATE) / "ppi",
     ]
 
-    mn_df, astro_df = (_read_ppi_list(source_dir) for source_dir in source_dirs)
+    mn_df, astro_df = (read_ppi_list(source_dir) for source_dir in source_dirs)
     astro_df["index"] += len(mn_df)
     pd.concat([mn_df, astro_df], ignore_index=True).to_csv(
         ppi_dir / "ppi_celltype_list.csv",
@@ -438,7 +445,7 @@ def _prepare_als_files() -> DatasetFiles:
 
     for source_dir in source_dirs:
         for source in sorted((source_dir / "ppi_edgelists").glob("*.txt")):
-            _copy_edgelist(source, edgelist_dir / source.name)
+            shutil.copy2(source, edgelist_dir / source.name)
 
     metadata = pd.read_csv(root / "als_combined_metadata.csv")
     if "tissue" not in metadata.columns:
@@ -456,7 +463,8 @@ def _prepare_als_files() -> DatasetFiles:
     )
 
 
-def _ppi_filename_lookup(edgelist_dir: Path) -> Dict[str, str]:
+def ppi_filename_lookup(edgelist_dir: Path) -> Dict[str, str]:
+    """Index edge-list filenames by CL identifier and readable cell-type name."""
     lookup: Dict[str, str] = {}
     for path in sorted(edgelist_dir.glob("*.txt")):
         match = re.search(r"\[cl[_:](\d+)\]", path.stem, re.IGNORECASE)
@@ -478,19 +486,20 @@ def _ppi_filename_lookup(edgelist_dir: Path) -> Dict[str, str]:
     return lookup
 
 
-def _collect_merged_ppi_records(
+def collect_merged_ppi_records(
     source_ppi_dir: Path,
     prefix: str,
     output_edgelist_dir: Path,
 ) -> List[Tuple[str, object]]:
+    """Copy one dataset’s PPI graphs with a dataset prefix and return their index rows."""
     source_list = source_ppi_dir / "ppi_celltype_list.csv"
     if not source_list.exists():
         raise FileNotFoundError(f"PPI list not found for {prefix}: {source_list}")
 
     records: List[Tuple[str, object]] = []
     source_edgelists = source_ppi_dir / "ppi_edgelists"
-    filename_lookup = _ppi_filename_lookup(source_edgelists)
-    for _, row in _read_ppi_list(source_ppi_dir).iterrows():
+    filename_lookup = ppi_filename_lookup(source_edgelists)
+    for _, row in read_ppi_list(source_ppi_dir).iterrows():
         original = str(row["cell_type"])
         normalized = normalize_cl_label(original)
         source_filename = next(
@@ -513,7 +522,7 @@ def _collect_merged_ppi_records(
         if source_filename:
             source = source_edgelists / source_filename
             if source.exists():
-                _copy_edgelist(source, output_edgelist_dir / f"{merged_celltype}.txt")
+                shutil.copy2(source, output_edgelist_dir / f"{merged_celltype}.txt")
             else:
                 logging.warning("Missing PPI edgelist for %s: %s", original, source)
         else:
@@ -521,21 +530,23 @@ def _collect_merged_ppi_records(
     return records
 
 
-def _prepare_merged_ppis(ppi_dir: Path) -> None:
-    output_edgelists = _reset_edgelist_dir(ppi_dir)
+def prepare_merged_ppis(ppi_dir: Path) -> None:
+    """Combine HBCA and Tabula PPI indexes while retaining their distinct dataset contexts."""
+    output_edgelists = reset_edgelist_dir(ppi_dir)
     records: List[Tuple[str, object]] = []
     for source_dir, prefix in [
         (Path(HBCA_INTERMEDIATE) / "ppi", "HBCA"),
         (Path(TABULA_INTERMEDIATE) / "ppi", "TABULA"),
     ]:
-        records.extend(_collect_merged_ppi_records(source_dir, prefix, output_edgelists))
+        records.extend(collect_merged_ppi_records(source_dir, prefix, output_edgelists))
 
     with (ppi_dir / "ppi_celltype_list.csv").open("w") as handle:
         for index, (celltype, genes) in enumerate(records):
             handle.write(f"{index}\t{celltype}\t{genes}\n")
 
 
-def _normalize_tabula_label(value: object) -> str:
+def normalize_tabula_label(value: object) -> str:
+    """Normalize Unicode and punctuation for matching Tabula names across metadata tables."""
     if value is None or pd.isna(value):
         return ""
     cleaned = unicodedata.normalize("NFKD", str(value))
@@ -543,7 +554,8 @@ def _normalize_tabula_label(value: object) -> str:
     return re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", cleaned)).strip("_")
 
 
-def _create_merged_metadata() -> Path:
+def create_merged_metadata() -> Path:
+    """Write the combined HBCA/Tabula cell-type and tissue metadata used by the metagraph."""
     hbca = pd.read_csv(Path(HBCA_INTERMEDIATE) / "all_single_cell_metadata.csv")
     hbca["merged_cell_type"] = "HBCA__" + hbca[
         "hbca_cell_type_ontology_term_id"
@@ -564,7 +576,7 @@ def _create_merged_metadata() -> Path:
     else:
         logging.warning("Tabula mapping file not found: %s", mapping_file)
 
-    tabula["__norm_name"] = tabula["cell_ontology_class"].apply(_normalize_tabula_label)
+    tabula["__norm_name"] = tabula["cell_ontology_class"].apply(normalize_tabula_label)
     tabula["__cl_from_mapping"] = tabula["__norm_name"].map(tabula_mapping)
     if "cell_ontology_term_id" in tabula.columns:
         tabula["__cl_from_meta"] = tabula["cell_ontology_term_id"].apply(
@@ -590,21 +602,23 @@ def _create_merged_metadata() -> Path:
     return metadata_file
 
 
-def _prepare_merged_files() -> DatasetFiles:
+def prepare_merged_files() -> DatasetFiles:
+    """Prepare the merged PPI index and metadata, then return the metagraph input paths."""
     root = Path(MERGED_INTERMEDIATE)
     ppi_dir = root / "ppi"
-    _prepare_merged_ppis(ppi_dir)
+    prepare_merged_ppis(ppi_dir)
     return DatasetFiles(
         ppi_dir,
         Path(MERGED_CCI_EDGELIST),
-        _create_merged_metadata(),
+        create_merged_metadata(),
         "merged_cell_type",
         "merged_tissue",
         root / "metagraph.txt",
     )
 
 
-def _prepare_dataset_files(dataset: str) -> DatasetFiles:
+def prepare_dataset_files(dataset: str) -> DatasetFiles:
+    """Resolve the graph and metadata inputs for the requested dataset."""
     if dataset == "tabula":
         root = Path(TABULA_INTERMEDIATE)
         return DatasetFiles(
@@ -631,12 +645,13 @@ def _prepare_dataset_files(dataset: str) -> DatasetFiles:
     if dataset == "als":
         return _prepare_als_files()
     if dataset == "merged":
-        return _prepare_merged_files()
+        return prepare_merged_files()
     raise ValueError(f"Unknown dataset {dataset}")
 
 
 def process_dataset(dataset: str) -> None:
-    files = _prepare_dataset_files(dataset)
+    """Build one dataset’s cell–tissue metagraph from its PPI, CCI and tissue annotations."""
+    files = prepare_dataset_files(dataset)
     logging.info("Processing %s metagraph", dataset.upper())
 
     celltype_ppi = load_celltype_ppi(files.ppi_dir)
@@ -666,6 +681,7 @@ def process_dataset(dataset: str) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Read the dataset selection for metagraph construction."""
     parser = argparse.ArgumentParser(
         description="Construct metagraphs from PPIs, CCIs, and tissue mappings."
     )
@@ -679,6 +695,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(args: Optional[List[str]] = None) -> None:
+    """Construct the metagraph for the requested dataset or for each configured dataset."""
     parser = build_parser()
     parsed = parser.parse_args(args)
     datasets = ["tabula", "hbca", "als", "merged"] if parsed.dataset == "all" else [parsed.dataset]

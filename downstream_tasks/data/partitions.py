@@ -9,6 +9,7 @@ from ..training.cv_utils import SplitPlan, build_cv_splits
 
 
 def partition_path(task, label_csv, dataset_mode="bulk"):
+    """Locate the shared folds beside the label table."""
     root = Path(label_csv).parent
     suffix = "" if dataset_mode == "bulk" else f"_{dataset_mode}"
     if task == "corum":
@@ -66,6 +67,7 @@ def build_shared_split(genes, labels, embedding_loader, seed, n_splits,
 
 def load_training_partition(task, label_csv, loader, seed=42, n_splits=6,
                             dataset_mode="bulk"):
+    """Keep saved folds and compute label groups for minibatch sampling."""
     genes, labels, classes, plan = load_task_partition(
         task, label_csv, n_splits, dataset_mode
     )

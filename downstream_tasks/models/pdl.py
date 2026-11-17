@@ -1,3 +1,9 @@
+"""Progressively drop highly ranked context instances while keeping every bag nonempty.
+
+PDL: Regularizing Multiple Instance Learning with Progressive Dropout Layers
+(Zhu et al., 2023): https://arxiv.org/abs/2308.10112
+"""
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -27,6 +33,7 @@ class PDropout(nn.Module):
         batch: torch.Tensor = None,
         ptr: torch.Tensor = None,
     ) -> torch.Tensor:
+        """Drop contexts within each protein bag during training."""
         single_bag = batch is None and ptr is None
 
         if ptr is None and batch is not None:
@@ -53,7 +60,12 @@ class PDropout(nn.Module):
             batch = torch.zeros(inputs.shape[0], device=inputs.device, dtype=torch.long)
             ptr = torch.tensor([0, inputs.shape[0]], device=inputs.device, dtype=torch.long)
 
-        keep = self.sample_keep_mask(self.compute_importance(inputs), batch)
+        # Rank contexts by the mean projected feature activation.
+        if self.importance_mode == "abs_mean":
+            importances = torch.mean(torch.abs(inputs), dim=1, keepdim=True)
+        else:
+            importances = torch.mean(inputs, dim=1, keepdim=True)
+        keep = self.sample_keep_mask(torch.sigmoid(importances), batch)
         compacted_inputs = inputs[keep]
 
         if single_bag:
@@ -66,15 +78,8 @@ class PDropout(nn.Module):
         compacted_ptr[1:] = torch.cumsum(compacted_counts, dim=0)
         return compacted_inputs, compacted_batch, compacted_ptr
 
-    def compute_importance(self, inputs: torch.Tensor) -> torch.Tensor:
-        if self.importance_mode == "abs_mean":
-            importances = torch.mean(torch.abs(inputs), dim=1, keepdim=True)
-        else:
-            importances = torch.mean(inputs, dim=1, keepdim=True)
-        return torch.sigmoid(importances)
-
     def sample_keep_mask(self, importance: torch.Tensor, batch: torch.Tensor) -> torch.Tensor:
-        # use dense tensor for easier indexing
+        """Sample dropout within each bag, retaining its top instance if all were dropped."""
         dense_importance, mask = to_dense_batch(importance.view(-1), batch=batch)
         counts = mask.sum(dim=1)
         drop_probs = self.get_drop_probs(
@@ -102,6 +107,7 @@ class PDropout(nn.Module):
         device: torch.device,
         dtype: torch.dtype,
     ) -> torch.Tensor:
+        """Increase dropout logarithmically with the instance's importance rank."""
         positions = torch.arange(max_len, device=device, dtype=dtype).unsqueeze(0)
         counts_f = counts.unsqueeze(1).to(dtype)
         denom = torch.clamp(counts_f - 1, min=1)
@@ -124,6 +130,7 @@ class LinearScheduler:
         ) + start_value
 
     def step(self) -> None:
+        """Increase dropout along the fixed training schedule."""
         if self.i < len(self.drop_values):
             value = float(self.drop_values[self.i])
             for layer in self.dropout_layers:

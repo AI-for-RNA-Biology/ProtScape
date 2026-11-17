@@ -13,6 +13,7 @@ from .data.task_loaders import get_task_loader
 
 def prepare_task(task, label_csv, loader, seed=42, n_splits=6,
                  dataset_mode="bulk", gene_universe=None):
+    """Reuse saved folds or create a shared protein cohort for this dataset."""
     path = partition_path(task, label_csv, dataset_mode)
     if path.exists():
         load_task_partition(task, label_csv, n_splits, dataset_mode)
@@ -34,6 +35,7 @@ def prepare_task(task, label_csv, loader, seed=42, n_splits=6,
 
 
 def main():
+    """Prepare partitions for one task or all configured datasets."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inference-model", required=True)
     parser.add_argument("--task", default="all")
